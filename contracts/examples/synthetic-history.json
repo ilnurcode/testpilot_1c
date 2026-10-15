@@ -1,0 +1,1751 @@
+[
+  {
+    "run_id": "demo-run-0",
+    "configuration_id": "demo-sales",
+    "version": "1.0",
+    "synthetic": true,
+    "results": [
+      {
+        "test_id": "demo-01",
+        "status": "failed",
+        "duration_seconds": 70,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:01:10+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-02",
+        "status": "failed",
+        "duration_seconds": 45,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:00:45+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-03",
+        "status": "passed",
+        "duration_seconds": 90,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:01:30+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-04",
+        "status": "failed",
+        "duration_seconds": 55,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:00:55+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-05",
+        "status": "failed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:00:20+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-06",
+        "status": "passed",
+        "duration_seconds": 25,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:00:25+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-07",
+        "status": "failed",
+        "duration_seconds": 80,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:01:20+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-08",
+        "status": "failed",
+        "duration_seconds": 75,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:01:15+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-09",
+        "status": "passed",
+        "duration_seconds": 160,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:02:40+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-10",
+        "status": "failed",
+        "duration_seconds": 150,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:02:30+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-11",
+        "status": "failed",
+        "duration_seconds": 180,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:03:00+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-12",
+        "status": "passed",
+        "duration_seconds": 140,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:02:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-13",
+        "status": "failed",
+        "duration_seconds": 300,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:05:00+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-16",
+        "status": "failed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:00:20+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      }
+    ],
+    "defects": [
+      {
+        "defect_id": "demo-defect-0-1",
+        "test_id": "demo-01",
+        "severity": "critical",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-0-2",
+        "test_id": "demo-02",
+        "severity": "high",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-0-4",
+        "test_id": "demo-04",
+        "severity": "medium",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-0-5",
+        "test_id": "demo-05",
+        "severity": "medium",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-0-7",
+        "test_id": "demo-07",
+        "severity": "low",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-0-8",
+        "test_id": "demo-08",
+        "severity": "low",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-0-10",
+        "test_id": "demo-10",
+        "severity": "high",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-0-11",
+        "test_id": "demo-11",
+        "severity": "high",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-0-13",
+        "test_id": "demo-13",
+        "severity": "low",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-0-16",
+        "test_id": "demo-16",
+        "severity": "medium",
+        "state": "closed",
+        "description": "Учебный дефект"
+      }
+    ]
+  },
+  {
+    "run_id": "demo-run-1",
+    "configuration_id": "demo-sales",
+    "version": "1.0",
+    "synthetic": true,
+    "results": [
+      {
+        "test_id": "demo-01",
+        "status": "passed",
+        "duration_seconds": 70,
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "finished_at": "2026-01-02T00:01:10+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-02",
+        "status": "passed",
+        "duration_seconds": 45,
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "finished_at": "2026-01-02T00:00:45+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-03",
+        "status": "failed",
+        "duration_seconds": 90,
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "finished_at": "2026-01-02T00:01:30+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-04",
+        "status": "passed",
+        "duration_seconds": 55,
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "finished_at": "2026-01-02T00:00:55+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-05",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "finished_at": "2026-01-02T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-06",
+        "status": "failed",
+        "duration_seconds": 25,
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "finished_at": "2026-01-02T00:00:25+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-07",
+        "status": "passed",
+        "duration_seconds": 80,
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "finished_at": "2026-01-02T00:01:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-08",
+        "status": "passed",
+        "duration_seconds": 75,
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "finished_at": "2026-01-02T00:01:15+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-09",
+        "status": "failed",
+        "duration_seconds": 160,
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "finished_at": "2026-01-02T00:02:40+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-10",
+        "status": "passed",
+        "duration_seconds": 150,
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "finished_at": "2026-01-02T00:02:30+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-11",
+        "status": "passed",
+        "duration_seconds": 180,
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "finished_at": "2026-01-02T00:03:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-12",
+        "status": "failed",
+        "duration_seconds": 140,
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "finished_at": "2026-01-02T00:02:20+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-13",
+        "status": "passed",
+        "duration_seconds": 300,
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "finished_at": "2026-01-02T00:05:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-16",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "finished_at": "2026-01-02T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      }
+    ],
+    "defects": []
+  },
+  {
+    "run_id": "demo-run-2",
+    "configuration_id": "demo-sales",
+    "version": "1.0",
+    "synthetic": true,
+    "results": [
+      {
+        "test_id": "demo-01",
+        "status": "passed",
+        "duration_seconds": 70,
+        "started_at": "2026-01-03T00:00:00+00:00",
+        "finished_at": "2026-01-03T00:01:10+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-02",
+        "status": "passed",
+        "duration_seconds": 45,
+        "started_at": "2026-01-03T00:00:00+00:00",
+        "finished_at": "2026-01-03T00:00:45+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-03",
+        "status": "failed",
+        "duration_seconds": 90,
+        "started_at": "2026-01-03T00:00:00+00:00",
+        "finished_at": "2026-01-03T00:01:30+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-04",
+        "status": "passed",
+        "duration_seconds": 55,
+        "started_at": "2026-01-03T00:00:00+00:00",
+        "finished_at": "2026-01-03T00:00:55+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-05",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-03T00:00:00+00:00",
+        "finished_at": "2026-01-03T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-06",
+        "status": "failed",
+        "duration_seconds": 25,
+        "started_at": "2026-01-03T00:00:00+00:00",
+        "finished_at": "2026-01-03T00:00:25+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-07",
+        "status": "passed",
+        "duration_seconds": 80,
+        "started_at": "2026-01-03T00:00:00+00:00",
+        "finished_at": "2026-01-03T00:01:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-08",
+        "status": "passed",
+        "duration_seconds": 75,
+        "started_at": "2026-01-03T00:00:00+00:00",
+        "finished_at": "2026-01-03T00:01:15+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-09",
+        "status": "failed",
+        "duration_seconds": 160,
+        "started_at": "2026-01-03T00:00:00+00:00",
+        "finished_at": "2026-01-03T00:02:40+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-10",
+        "status": "passed",
+        "duration_seconds": 150,
+        "started_at": "2026-01-03T00:00:00+00:00",
+        "finished_at": "2026-01-03T00:02:30+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-11",
+        "status": "passed",
+        "duration_seconds": 180,
+        "started_at": "2026-01-03T00:00:00+00:00",
+        "finished_at": "2026-01-03T00:03:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-12",
+        "status": "failed",
+        "duration_seconds": 140,
+        "started_at": "2026-01-03T00:00:00+00:00",
+        "finished_at": "2026-01-03T00:02:20+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-13",
+        "status": "passed",
+        "duration_seconds": 300,
+        "started_at": "2026-01-03T00:00:00+00:00",
+        "finished_at": "2026-01-03T00:05:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-16",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-03T00:00:00+00:00",
+        "finished_at": "2026-01-03T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      }
+    ],
+    "defects": []
+  },
+  {
+    "run_id": "demo-run-3",
+    "configuration_id": "demo-sales",
+    "version": "1.0",
+    "synthetic": true,
+    "results": [
+      {
+        "test_id": "demo-01",
+        "status": "passed",
+        "duration_seconds": 70,
+        "started_at": "2026-01-04T00:00:00+00:00",
+        "finished_at": "2026-01-04T00:01:10+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-02",
+        "status": "passed",
+        "duration_seconds": 45,
+        "started_at": "2026-01-04T00:00:00+00:00",
+        "finished_at": "2026-01-04T00:00:45+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-03",
+        "status": "passed",
+        "duration_seconds": 90,
+        "started_at": "2026-01-04T00:00:00+00:00",
+        "finished_at": "2026-01-04T00:01:30+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-04",
+        "status": "passed",
+        "duration_seconds": 55,
+        "started_at": "2026-01-04T00:00:00+00:00",
+        "finished_at": "2026-01-04T00:00:55+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-05",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-04T00:00:00+00:00",
+        "finished_at": "2026-01-04T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-06",
+        "status": "passed",
+        "duration_seconds": 25,
+        "started_at": "2026-01-04T00:00:00+00:00",
+        "finished_at": "2026-01-04T00:00:25+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-07",
+        "status": "passed",
+        "duration_seconds": 80,
+        "started_at": "2026-01-04T00:00:00+00:00",
+        "finished_at": "2026-01-04T00:01:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-08",
+        "status": "passed",
+        "duration_seconds": 75,
+        "started_at": "2026-01-04T00:00:00+00:00",
+        "finished_at": "2026-01-04T00:01:15+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-09",
+        "status": "passed",
+        "duration_seconds": 160,
+        "started_at": "2026-01-04T00:00:00+00:00",
+        "finished_at": "2026-01-04T00:02:40+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-10",
+        "status": "passed",
+        "duration_seconds": 150,
+        "started_at": "2026-01-04T00:00:00+00:00",
+        "finished_at": "2026-01-04T00:02:30+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-11",
+        "status": "passed",
+        "duration_seconds": 180,
+        "started_at": "2026-01-04T00:00:00+00:00",
+        "finished_at": "2026-01-04T00:03:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-12",
+        "status": "passed",
+        "duration_seconds": 140,
+        "started_at": "2026-01-04T00:00:00+00:00",
+        "finished_at": "2026-01-04T00:02:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-13",
+        "status": "passed",
+        "duration_seconds": 300,
+        "started_at": "2026-01-04T00:00:00+00:00",
+        "finished_at": "2026-01-04T00:05:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-16",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-04T00:00:00+00:00",
+        "finished_at": "2026-01-04T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      }
+    ],
+    "defects": []
+  },
+  {
+    "run_id": "demo-run-4",
+    "configuration_id": "demo-sales",
+    "version": "1.0",
+    "synthetic": true,
+    "results": [
+      {
+        "test_id": "demo-01",
+        "status": "passed",
+        "duration_seconds": 70,
+        "started_at": "2026-01-05T00:00:00+00:00",
+        "finished_at": "2026-01-05T00:01:10+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-02",
+        "status": "passed",
+        "duration_seconds": 45,
+        "started_at": "2026-01-05T00:00:00+00:00",
+        "finished_at": "2026-01-05T00:00:45+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-03",
+        "status": "failed",
+        "duration_seconds": 90,
+        "started_at": "2026-01-05T00:00:00+00:00",
+        "finished_at": "2026-01-05T00:01:30+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-04",
+        "status": "passed",
+        "duration_seconds": 55,
+        "started_at": "2026-01-05T00:00:00+00:00",
+        "finished_at": "2026-01-05T00:00:55+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-05",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-05T00:00:00+00:00",
+        "finished_at": "2026-01-05T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-06",
+        "status": "failed",
+        "duration_seconds": 25,
+        "started_at": "2026-01-05T00:00:00+00:00",
+        "finished_at": "2026-01-05T00:00:25+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-07",
+        "status": "passed",
+        "duration_seconds": 80,
+        "started_at": "2026-01-05T00:00:00+00:00",
+        "finished_at": "2026-01-05T00:01:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-08",
+        "status": "passed",
+        "duration_seconds": 75,
+        "started_at": "2026-01-05T00:00:00+00:00",
+        "finished_at": "2026-01-05T00:01:15+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-09",
+        "status": "failed",
+        "duration_seconds": 160,
+        "started_at": "2026-01-05T00:00:00+00:00",
+        "finished_at": "2026-01-05T00:02:40+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-10",
+        "status": "passed",
+        "duration_seconds": 150,
+        "started_at": "2026-01-05T00:00:00+00:00",
+        "finished_at": "2026-01-05T00:02:30+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-11",
+        "status": "passed",
+        "duration_seconds": 180,
+        "started_at": "2026-01-05T00:00:00+00:00",
+        "finished_at": "2026-01-05T00:03:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-12",
+        "status": "failed",
+        "duration_seconds": 140,
+        "started_at": "2026-01-05T00:00:00+00:00",
+        "finished_at": "2026-01-05T00:02:20+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-13",
+        "status": "passed",
+        "duration_seconds": 300,
+        "started_at": "2026-01-05T00:00:00+00:00",
+        "finished_at": "2026-01-05T00:05:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-16",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-05T00:00:00+00:00",
+        "finished_at": "2026-01-05T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      }
+    ],
+    "defects": [
+      {
+        "defect_id": "demo-defect-4-3",
+        "test_id": "demo-03",
+        "severity": "high",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-4-6",
+        "test_id": "demo-06",
+        "severity": "medium",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-4-9",
+        "test_id": "demo-09",
+        "severity": "medium",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-4-12",
+        "test_id": "demo-12",
+        "severity": "medium",
+        "state": "closed",
+        "description": "Учебный дефект"
+      }
+    ]
+  },
+  {
+    "run_id": "demo-run-5",
+    "configuration_id": "demo-sales",
+    "version": "1.0",
+    "synthetic": true,
+    "results": [
+      {
+        "test_id": "demo-01",
+        "status": "passed",
+        "duration_seconds": 70,
+        "started_at": "2026-01-06T00:00:00+00:00",
+        "finished_at": "2026-01-06T00:01:10+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-02",
+        "status": "passed",
+        "duration_seconds": 45,
+        "started_at": "2026-01-06T00:00:00+00:00",
+        "finished_at": "2026-01-06T00:00:45+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-03",
+        "status": "failed",
+        "duration_seconds": 90,
+        "started_at": "2026-01-06T00:00:00+00:00",
+        "finished_at": "2026-01-06T00:01:30+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-04",
+        "status": "passed",
+        "duration_seconds": 55,
+        "started_at": "2026-01-06T00:00:00+00:00",
+        "finished_at": "2026-01-06T00:00:55+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-05",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-06T00:00:00+00:00",
+        "finished_at": "2026-01-06T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-06",
+        "status": "failed",
+        "duration_seconds": 25,
+        "started_at": "2026-01-06T00:00:00+00:00",
+        "finished_at": "2026-01-06T00:00:25+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-07",
+        "status": "passed",
+        "duration_seconds": 80,
+        "started_at": "2026-01-06T00:00:00+00:00",
+        "finished_at": "2026-01-06T00:01:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-08",
+        "status": "passed",
+        "duration_seconds": 75,
+        "started_at": "2026-01-06T00:00:00+00:00",
+        "finished_at": "2026-01-06T00:01:15+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-09",
+        "status": "failed",
+        "duration_seconds": 160,
+        "started_at": "2026-01-06T00:00:00+00:00",
+        "finished_at": "2026-01-06T00:02:40+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-10",
+        "status": "passed",
+        "duration_seconds": 150,
+        "started_at": "2026-01-06T00:00:00+00:00",
+        "finished_at": "2026-01-06T00:02:30+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-11",
+        "status": "passed",
+        "duration_seconds": 180,
+        "started_at": "2026-01-06T00:00:00+00:00",
+        "finished_at": "2026-01-06T00:03:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-12",
+        "status": "failed",
+        "duration_seconds": 140,
+        "started_at": "2026-01-06T00:00:00+00:00",
+        "finished_at": "2026-01-06T00:02:20+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-13",
+        "status": "passed",
+        "duration_seconds": 300,
+        "started_at": "2026-01-06T00:00:00+00:00",
+        "finished_at": "2026-01-06T00:05:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-16",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-06T00:00:00+00:00",
+        "finished_at": "2026-01-06T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      }
+    ],
+    "defects": []
+  },
+  {
+    "run_id": "demo-run-6",
+    "configuration_id": "demo-sales",
+    "version": "1.0",
+    "synthetic": true,
+    "results": [
+      {
+        "test_id": "demo-01",
+        "status": "passed",
+        "duration_seconds": 70,
+        "started_at": "2026-01-07T00:00:00+00:00",
+        "finished_at": "2026-01-07T00:01:10+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-02",
+        "status": "passed",
+        "duration_seconds": 45,
+        "started_at": "2026-01-07T00:00:00+00:00",
+        "finished_at": "2026-01-07T00:00:45+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-03",
+        "status": "passed",
+        "duration_seconds": 90,
+        "started_at": "2026-01-07T00:00:00+00:00",
+        "finished_at": "2026-01-07T00:01:30+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-04",
+        "status": "passed",
+        "duration_seconds": 55,
+        "started_at": "2026-01-07T00:00:00+00:00",
+        "finished_at": "2026-01-07T00:00:55+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-05",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-07T00:00:00+00:00",
+        "finished_at": "2026-01-07T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-06",
+        "status": "passed",
+        "duration_seconds": 25,
+        "started_at": "2026-01-07T00:00:00+00:00",
+        "finished_at": "2026-01-07T00:00:25+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-07",
+        "status": "passed",
+        "duration_seconds": 80,
+        "started_at": "2026-01-07T00:00:00+00:00",
+        "finished_at": "2026-01-07T00:01:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-08",
+        "status": "passed",
+        "duration_seconds": 75,
+        "started_at": "2026-01-07T00:00:00+00:00",
+        "finished_at": "2026-01-07T00:01:15+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-09",
+        "status": "passed",
+        "duration_seconds": 160,
+        "started_at": "2026-01-07T00:00:00+00:00",
+        "finished_at": "2026-01-07T00:02:40+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-10",
+        "status": "passed",
+        "duration_seconds": 150,
+        "started_at": "2026-01-07T00:00:00+00:00",
+        "finished_at": "2026-01-07T00:02:30+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-11",
+        "status": "passed",
+        "duration_seconds": 180,
+        "started_at": "2026-01-07T00:00:00+00:00",
+        "finished_at": "2026-01-07T00:03:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-12",
+        "status": "passed",
+        "duration_seconds": 140,
+        "started_at": "2026-01-07T00:00:00+00:00",
+        "finished_at": "2026-01-07T00:02:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-13",
+        "status": "passed",
+        "duration_seconds": 300,
+        "started_at": "2026-01-07T00:00:00+00:00",
+        "finished_at": "2026-01-07T00:05:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-16",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-07T00:00:00+00:00",
+        "finished_at": "2026-01-07T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      }
+    ],
+    "defects": []
+  },
+  {
+    "run_id": "demo-run-7",
+    "configuration_id": "demo-sales",
+    "version": "1.0",
+    "synthetic": true,
+    "results": [
+      {
+        "test_id": "demo-01",
+        "status": "failed",
+        "duration_seconds": 70,
+        "started_at": "2026-01-08T00:00:00+00:00",
+        "finished_at": "2026-01-08T00:01:10+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-02",
+        "status": "failed",
+        "duration_seconds": 45,
+        "started_at": "2026-01-08T00:00:00+00:00",
+        "finished_at": "2026-01-08T00:00:45+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-03",
+        "status": "failed",
+        "duration_seconds": 90,
+        "started_at": "2026-01-08T00:00:00+00:00",
+        "finished_at": "2026-01-08T00:01:30+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-04",
+        "status": "failed",
+        "duration_seconds": 55,
+        "started_at": "2026-01-08T00:00:00+00:00",
+        "finished_at": "2026-01-08T00:00:55+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-05",
+        "status": "failed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-08T00:00:00+00:00",
+        "finished_at": "2026-01-08T00:00:20+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-06",
+        "status": "failed",
+        "duration_seconds": 25,
+        "started_at": "2026-01-08T00:00:00+00:00",
+        "finished_at": "2026-01-08T00:00:25+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-07",
+        "status": "failed",
+        "duration_seconds": 80,
+        "started_at": "2026-01-08T00:00:00+00:00",
+        "finished_at": "2026-01-08T00:01:20+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-08",
+        "status": "failed",
+        "duration_seconds": 75,
+        "started_at": "2026-01-08T00:00:00+00:00",
+        "finished_at": "2026-01-08T00:01:15+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-09",
+        "status": "failed",
+        "duration_seconds": 160,
+        "started_at": "2026-01-08T00:00:00+00:00",
+        "finished_at": "2026-01-08T00:02:40+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-10",
+        "status": "failed",
+        "duration_seconds": 150,
+        "started_at": "2026-01-08T00:00:00+00:00",
+        "finished_at": "2026-01-08T00:02:30+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-11",
+        "status": "failed",
+        "duration_seconds": 180,
+        "started_at": "2026-01-08T00:00:00+00:00",
+        "finished_at": "2026-01-08T00:03:00+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-12",
+        "status": "failed",
+        "duration_seconds": 140,
+        "started_at": "2026-01-08T00:00:00+00:00",
+        "finished_at": "2026-01-08T00:02:20+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-13",
+        "status": "failed",
+        "duration_seconds": 300,
+        "started_at": "2026-01-08T00:00:00+00:00",
+        "finished_at": "2026-01-08T00:05:00+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-16",
+        "status": "failed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-08T00:00:00+00:00",
+        "finished_at": "2026-01-08T00:00:20+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      }
+    ],
+    "defects": []
+  },
+  {
+    "run_id": "demo-run-8",
+    "configuration_id": "demo-sales",
+    "version": "1.0",
+    "synthetic": true,
+    "results": [
+      {
+        "test_id": "demo-01",
+        "status": "passed",
+        "duration_seconds": 70,
+        "started_at": "2026-01-09T00:00:00+00:00",
+        "finished_at": "2026-01-09T00:01:10+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-02",
+        "status": "passed",
+        "duration_seconds": 45,
+        "started_at": "2026-01-09T00:00:00+00:00",
+        "finished_at": "2026-01-09T00:00:45+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-03",
+        "status": "failed",
+        "duration_seconds": 90,
+        "started_at": "2026-01-09T00:00:00+00:00",
+        "finished_at": "2026-01-09T00:01:30+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-04",
+        "status": "passed",
+        "duration_seconds": 55,
+        "started_at": "2026-01-09T00:00:00+00:00",
+        "finished_at": "2026-01-09T00:00:55+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-05",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-09T00:00:00+00:00",
+        "finished_at": "2026-01-09T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-06",
+        "status": "failed",
+        "duration_seconds": 25,
+        "started_at": "2026-01-09T00:00:00+00:00",
+        "finished_at": "2026-01-09T00:00:25+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-07",
+        "status": "passed",
+        "duration_seconds": 80,
+        "started_at": "2026-01-09T00:00:00+00:00",
+        "finished_at": "2026-01-09T00:01:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-08",
+        "status": "passed",
+        "duration_seconds": 75,
+        "started_at": "2026-01-09T00:00:00+00:00",
+        "finished_at": "2026-01-09T00:01:15+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-09",
+        "status": "failed",
+        "duration_seconds": 160,
+        "started_at": "2026-01-09T00:00:00+00:00",
+        "finished_at": "2026-01-09T00:02:40+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-10",
+        "status": "passed",
+        "duration_seconds": 150,
+        "started_at": "2026-01-09T00:00:00+00:00",
+        "finished_at": "2026-01-09T00:02:30+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-11",
+        "status": "passed",
+        "duration_seconds": 180,
+        "started_at": "2026-01-09T00:00:00+00:00",
+        "finished_at": "2026-01-09T00:03:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-12",
+        "status": "failed",
+        "duration_seconds": 140,
+        "started_at": "2026-01-09T00:00:00+00:00",
+        "finished_at": "2026-01-09T00:02:20+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-13",
+        "status": "passed",
+        "duration_seconds": 300,
+        "started_at": "2026-01-09T00:00:00+00:00",
+        "finished_at": "2026-01-09T00:05:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-16",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-09T00:00:00+00:00",
+        "finished_at": "2026-01-09T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      }
+    ],
+    "defects": [
+      {
+        "defect_id": "demo-defect-8-3",
+        "test_id": "demo-03",
+        "severity": "high",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-8-6",
+        "test_id": "demo-06",
+        "severity": "medium",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-8-9",
+        "test_id": "demo-09",
+        "severity": "medium",
+        "state": "closed",
+        "description": "Учебный дефект"
+      },
+      {
+        "defect_id": "demo-defect-8-12",
+        "test_id": "demo-12",
+        "severity": "medium",
+        "state": "closed",
+        "description": "Учебный дефект"
+      }
+    ]
+  },
+  {
+    "run_id": "demo-run-9",
+    "configuration_id": "demo-sales",
+    "version": "1.0",
+    "synthetic": true,
+    "results": [
+      {
+        "test_id": "demo-01",
+        "status": "passed",
+        "duration_seconds": 70,
+        "started_at": "2026-01-10T00:00:00+00:00",
+        "finished_at": "2026-01-10T00:01:10+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-02",
+        "status": "passed",
+        "duration_seconds": 45,
+        "started_at": "2026-01-10T00:00:00+00:00",
+        "finished_at": "2026-01-10T00:00:45+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-03",
+        "status": "passed",
+        "duration_seconds": 90,
+        "started_at": "2026-01-10T00:00:00+00:00",
+        "finished_at": "2026-01-10T00:01:30+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-04",
+        "status": "passed",
+        "duration_seconds": 55,
+        "started_at": "2026-01-10T00:00:00+00:00",
+        "finished_at": "2026-01-10T00:00:55+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-05",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-10T00:00:00+00:00",
+        "finished_at": "2026-01-10T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-06",
+        "status": "passed",
+        "duration_seconds": 25,
+        "started_at": "2026-01-10T00:00:00+00:00",
+        "finished_at": "2026-01-10T00:00:25+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-07",
+        "status": "passed",
+        "duration_seconds": 80,
+        "started_at": "2026-01-10T00:00:00+00:00",
+        "finished_at": "2026-01-10T00:01:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-08",
+        "status": "passed",
+        "duration_seconds": 75,
+        "started_at": "2026-01-10T00:00:00+00:00",
+        "finished_at": "2026-01-10T00:01:15+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-09",
+        "status": "passed",
+        "duration_seconds": 160,
+        "started_at": "2026-01-10T00:00:00+00:00",
+        "finished_at": "2026-01-10T00:02:40+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-10",
+        "status": "passed",
+        "duration_seconds": 150,
+        "started_at": "2026-01-10T00:00:00+00:00",
+        "finished_at": "2026-01-10T00:02:30+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-11",
+        "status": "passed",
+        "duration_seconds": 180,
+        "started_at": "2026-01-10T00:00:00+00:00",
+        "finished_at": "2026-01-10T00:03:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-12",
+        "status": "passed",
+        "duration_seconds": 140,
+        "started_at": "2026-01-10T00:00:00+00:00",
+        "finished_at": "2026-01-10T00:02:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-13",
+        "status": "passed",
+        "duration_seconds": 300,
+        "started_at": "2026-01-10T00:00:00+00:00",
+        "finished_at": "2026-01-10T00:05:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-16",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-10T00:00:00+00:00",
+        "finished_at": "2026-01-10T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      }
+    ],
+    "defects": []
+  },
+  {
+    "run_id": "demo-run-10",
+    "configuration_id": "demo-sales",
+    "version": "1.0",
+    "synthetic": true,
+    "results": [
+      {
+        "test_id": "demo-01",
+        "status": "passed",
+        "duration_seconds": 70,
+        "started_at": "2026-01-11T00:00:00+00:00",
+        "finished_at": "2026-01-11T00:01:10+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-02",
+        "status": "passed",
+        "duration_seconds": 45,
+        "started_at": "2026-01-11T00:00:00+00:00",
+        "finished_at": "2026-01-11T00:00:45+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-03",
+        "status": "failed",
+        "duration_seconds": 90,
+        "started_at": "2026-01-11T00:00:00+00:00",
+        "finished_at": "2026-01-11T00:01:30+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-04",
+        "status": "passed",
+        "duration_seconds": 55,
+        "started_at": "2026-01-11T00:00:00+00:00",
+        "finished_at": "2026-01-11T00:00:55+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-05",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-11T00:00:00+00:00",
+        "finished_at": "2026-01-11T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-06",
+        "status": "failed",
+        "duration_seconds": 25,
+        "started_at": "2026-01-11T00:00:00+00:00",
+        "finished_at": "2026-01-11T00:00:25+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-07",
+        "status": "passed",
+        "duration_seconds": 80,
+        "started_at": "2026-01-11T00:00:00+00:00",
+        "finished_at": "2026-01-11T00:01:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-08",
+        "status": "passed",
+        "duration_seconds": 75,
+        "started_at": "2026-01-11T00:00:00+00:00",
+        "finished_at": "2026-01-11T00:01:15+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-09",
+        "status": "failed",
+        "duration_seconds": 160,
+        "started_at": "2026-01-11T00:00:00+00:00",
+        "finished_at": "2026-01-11T00:02:40+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-10",
+        "status": "passed",
+        "duration_seconds": 150,
+        "started_at": "2026-01-11T00:00:00+00:00",
+        "finished_at": "2026-01-11T00:02:30+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-11",
+        "status": "passed",
+        "duration_seconds": 180,
+        "started_at": "2026-01-11T00:00:00+00:00",
+        "finished_at": "2026-01-11T00:03:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-12",
+        "status": "failed",
+        "duration_seconds": 140,
+        "started_at": "2026-01-11T00:00:00+00:00",
+        "finished_at": "2026-01-11T00:02:20+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-13",
+        "status": "passed",
+        "duration_seconds": 300,
+        "started_at": "2026-01-11T00:00:00+00:00",
+        "finished_at": "2026-01-11T00:05:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-16",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-11T00:00:00+00:00",
+        "finished_at": "2026-01-11T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      }
+    ],
+    "defects": []
+  },
+  {
+    "run_id": "demo-run-11",
+    "configuration_id": "demo-sales",
+    "version": "1.0",
+    "synthetic": true,
+    "results": [
+      {
+        "test_id": "demo-01",
+        "status": "passed",
+        "duration_seconds": 70,
+        "started_at": "2026-01-12T00:00:00+00:00",
+        "finished_at": "2026-01-12T00:01:10+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-02",
+        "status": "passed",
+        "duration_seconds": 45,
+        "started_at": "2026-01-12T00:00:00+00:00",
+        "finished_at": "2026-01-12T00:00:45+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-03",
+        "status": "failed",
+        "duration_seconds": 90,
+        "started_at": "2026-01-12T00:00:00+00:00",
+        "finished_at": "2026-01-12T00:01:30+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-04",
+        "status": "passed",
+        "duration_seconds": 55,
+        "started_at": "2026-01-12T00:00:00+00:00",
+        "finished_at": "2026-01-12T00:00:55+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-05",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-12T00:00:00+00:00",
+        "finished_at": "2026-01-12T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-06",
+        "status": "failed",
+        "duration_seconds": 25,
+        "started_at": "2026-01-12T00:00:00+00:00",
+        "finished_at": "2026-01-12T00:00:25+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-07",
+        "status": "passed",
+        "duration_seconds": 80,
+        "started_at": "2026-01-12T00:00:00+00:00",
+        "finished_at": "2026-01-12T00:01:20+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-08",
+        "status": "passed",
+        "duration_seconds": 75,
+        "started_at": "2026-01-12T00:00:00+00:00",
+        "finished_at": "2026-01-12T00:01:15+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-09",
+        "status": "failed",
+        "duration_seconds": 160,
+        "started_at": "2026-01-12T00:00:00+00:00",
+        "finished_at": "2026-01-12T00:02:40+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-10",
+        "status": "passed",
+        "duration_seconds": 150,
+        "started_at": "2026-01-12T00:00:00+00:00",
+        "finished_at": "2026-01-12T00:02:30+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-11",
+        "status": "passed",
+        "duration_seconds": 180,
+        "started_at": "2026-01-12T00:00:00+00:00",
+        "finished_at": "2026-01-12T00:03:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-12",
+        "status": "failed",
+        "duration_seconds": 140,
+        "started_at": "2026-01-12T00:00:00+00:00",
+        "finished_at": "2026-01-12T00:02:20+00:00",
+        "error": "Синтетическая ошибка",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-13",
+        "status": "passed",
+        "duration_seconds": 300,
+        "started_at": "2026-01-12T00:00:00+00:00",
+        "finished_at": "2026-01-12T00:05:00+00:00",
+        "error": "",
+        "artifacts": []
+      },
+      {
+        "test_id": "demo-16",
+        "status": "passed",
+        "duration_seconds": 20,
+        "started_at": "2026-01-12T00:00:00+00:00",
+        "finished_at": "2026-01-12T00:00:20+00:00",
+        "error": "",
+        "artifacts": []
+      }
+    ],
+    "defects": []
+  }
+]

@@ -1,0 +1,93 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "test_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[\\w.:-]+$",
+      "title": "Test Id",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 300,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f]+$",
+      "title": "Title",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "maxLength": 5000,
+      "title": "Description",
+      "type": "string"
+    },
+    "active": {
+      "default": true,
+      "title": "Active",
+      "type": "boolean"
+    },
+    "criticality": {
+      "default": "medium",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Criticality",
+      "type": "string"
+    },
+    "mandatory": {
+      "default": false,
+      "title": "Mandatory",
+      "type": "boolean"
+    },
+    "duration_seconds": {
+      "exclusiveMinimum": 0,
+      "maximum": 86400,
+      "title": "Duration Seconds",
+      "type": "number"
+    },
+    "configuration_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[\\w.:-]+$",
+      "title": "Configuration Id",
+      "type": "string"
+    },
+    "compatible_versions": {
+      "items": {
+        "maxLength": 300,
+        "minLength": 1,
+        "pattern": "^[^\\x00-\\x1f]+$",
+        "type": "string"
+      },
+      "maxItems": 100,
+      "title": "Compatible Versions",
+      "type": "array"
+    },
+    "executor_parameters": {
+      "additionalProperties": true,
+      "title": "Executor Parameters",
+      "type": "object"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+    },
+    "synthetic": {
+      "default": false,
+      "title": "Synthetic",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "test_id",
+    "title",
+    "duration_seconds",
+    "configuration_id"
+  ],
+  "title": "TestCase",
+  "type": "object"
+}

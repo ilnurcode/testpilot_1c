@@ -1,0 +1,395 @@
+[
+  {
+    "test": {
+      "test_id": "demo-01",
+      "title": "Оформление заказа",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "critical",
+      "mandatory": true,
+      "duration_seconds": 70,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-01"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "order",
+      "form"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-02",
+      "title": "Расчёт суммы",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "high",
+      "mandatory": false,
+      "duration_seconds": 45,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-02"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "sum",
+      "prices",
+      "discount"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-03",
+      "title": "Проведение заказа",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "high",
+      "mandatory": false,
+      "duration_seconds": 90,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-03"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "post",
+      "sales"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-04",
+      "title": "Сервис продаж",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "medium",
+      "mandatory": false,
+      "duration_seconds": 55,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-04"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "sales_module",
+      "audit"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-05",
+      "title": "Удалённый расчёт",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "medium",
+      "mandatory": false,
+      "duration_seconds": 20,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-05"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "legacy"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-06",
+      "title": "Событие записи",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "medium",
+      "mandatory": false,
+      "duration_seconds": 25,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-06"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "event"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-07",
+      "title": "Карточка контрагента",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "low",
+      "mandatory": false,
+      "duration_seconds": 80,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-07"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "client"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-08",
+      "title": "Номенклатура",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "low",
+      "mandatory": false,
+      "duration_seconds": 75,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-08"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "item"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-09",
+      "title": "Расширенная форма",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "medium",
+      "mandatory": false,
+      "duration_seconds": 160,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-09"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "form"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-10",
+      "title": "Полный расчёт",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "high",
+      "mandatory": false,
+      "duration_seconds": 150,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-10"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "sum",
+      "prices"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-11",
+      "title": "Отчёт продаж",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "high",
+      "mandatory": false,
+      "duration_seconds": 180,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-11"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "sales"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-12",
+      "title": "Журнал аудита",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "medium",
+      "mandatory": false,
+      "duration_seconds": 140,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-12"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "audit"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-13",
+      "title": "Нагрузочный заказ",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "low",
+      "mandatory": false,
+      "duration_seconds": 300,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-13"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "order",
+      "post"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-14",
+      "title": "Архивный сценарий",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": false,
+      "criticality": "low",
+      "mandatory": false,
+      "duration_seconds": 20,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-14"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "order"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-15",
+      "title": "Старая версия",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "high",
+      "mandatory": false,
+      "duration_seconds": 20,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [
+        "1.0"
+      ],
+      "executor_parameters": {
+        "scenario": "demo-15"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "sum"
+    ],
+    "state": "confirmed"
+  },
+  {
+    "test": {
+      "test_id": "demo-16",
+      "title": "Спорное покрытие",
+      "description": "Синтетический учебный сценарий; реальный запуск 1С не выполнялся",
+      "active": true,
+      "criticality": "medium",
+      "mandatory": false,
+      "duration_seconds": 20,
+      "configuration_id": "demo-sales",
+      "compatible_versions": [],
+      "executor_parameters": {
+        "scenario": "demo-16"
+      },
+      "metadata": {
+        "dataset": "synthetic"
+      },
+      "synthetic": true
+    },
+    "coverage": [
+      "discount"
+    ],
+    "state": "unconfirmed"
+  }
+]

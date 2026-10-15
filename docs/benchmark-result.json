@@ -1,0 +1,20 @@
+{
+  "synthetic": true,
+  "python": "3.12.14",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "graph_nodes": 10000,
+  "graph_edges": 9999,
+  "changed_seeds": 1,
+  "max_depth": 100,
+  "graph_seconds": 0.2314508769998156,
+  "affected_count": 101,
+  "star_graph_seconds": 0.3404697840001063,
+  "star_affected_count": 10000,
+  "tests": 1000,
+  "impact_objects": 500,
+  "plan_seconds": 0.2623790889999782,
+  "method": "greedy",
+  "coverage_available": 1.0,
+  "plan_status": "feasible",
+  "note": "Линейный граф: глубина 100, 101 затронутый; звезда: вся зона 10000. Один источник; не доказывает SLA многих источников и реальной 1С."
+}

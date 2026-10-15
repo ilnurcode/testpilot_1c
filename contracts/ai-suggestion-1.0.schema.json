@@ -1,0 +1,165 @@
+{
+  "$defs": {
+    "Case": {
+      "additionalProperties": false,
+      "properties": {
+        "quantity": {
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Quantity",
+          "type": "integer"
+        },
+        "price": {
+          "maximum": 1000000,
+          "minimum": 0,
+          "title": "Price",
+          "type": "number"
+        },
+        "discount": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Discount",
+          "type": "number"
+        },
+        "expected_total": {
+          "maximum": 1000000000,
+          "minimum": 0,
+          "title": "Expected Total",
+          "type": "number"
+        }
+      },
+      "required": [
+        "quantity",
+        "price",
+        "discount",
+        "expected_total"
+      ],
+      "title": "Case",
+      "type": "object"
+    },
+    "Proposal": {
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "maxLength": 300,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f]+$",
+          "title": "Title",
+          "type": "string"
+        },
+        "rationale": {
+          "maxLength": 300,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f]+$",
+          "title": "Rationale",
+          "type": "string"
+        },
+        "engine": {
+          "enum": [
+            "odata",
+            "playwright",
+            "manual"
+          ],
+          "title": "Engine",
+          "type": "string"
+        },
+        "object_ids": {
+          "items": {
+            "maxLength": 120,
+            "minLength": 1,
+            "pattern": "^[\\w.:-]+$",
+            "type": "string"
+          },
+          "maxItems": 30,
+          "minItems": 1,
+          "title": "Object Ids",
+          "type": "array"
+        },
+        "steps": {
+          "items": {
+            "maxLength": 300,
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f]+$",
+            "type": "string"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "title": "Steps",
+          "type": "array"
+        },
+        "expected_result": {
+          "maxLength": 300,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f]+$",
+          "title": "Expected Result",
+          "type": "string"
+        },
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/Case"
+          },
+          "maxItems": 3,
+          "title": "Cases",
+          "type": "array"
+        }
+      },
+      "required": [
+        "title",
+        "rationale",
+        "engine",
+        "object_ids",
+        "steps",
+        "expected_result"
+      ],
+      "title": "Proposal",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "maxLength": 300,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f]+$",
+      "title": "Summary",
+      "type": "string"
+    },
+    "selected_test_ids": {
+      "items": {
+        "maxLength": 120,
+        "minLength": 1,
+        "pattern": "^[\\w.:-]+$",
+        "type": "string"
+      },
+      "maxItems": 100,
+      "title": "Selected Test Ids",
+      "type": "array"
+    },
+    "proposals": {
+      "items": {
+        "$ref": "#/$defs/Proposal"
+      },
+      "maxItems": 6,
+      "minItems": 1,
+      "title": "Proposals",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "maxLength": 300,
+        "minLength": 1,
+        "pattern": "^[^\\x00-\\x1f]+$",
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "summary",
+    "proposals"
+  ],
+  "title": "Suggestion",
+  "type": "object"
+}

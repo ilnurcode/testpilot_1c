@@ -1,0 +1,203 @@
+{
+  "schema_version": "1.0",
+  "configuration_id": "demo-sales",
+  "version": "1.0",
+  "source": "synthetic:учебный JSON",
+  "synthetic": true,
+  "objects": [
+    {
+      "object_id": "order",
+      "type": "document",
+      "full_name": "Документ.ЗаказКлиента",
+      "parent_id": null,
+      "attributes": {
+        "revision": 1
+      }
+    },
+    {
+      "object_id": "client",
+      "type": "catalog",
+      "full_name": "Справочник.Контрагенты",
+      "parent_id": null,
+      "attributes": {
+        "revision": 1
+      }
+    },
+    {
+      "object_id": "item",
+      "type": "catalog",
+      "full_name": "Справочник.Номенклатура",
+      "parent_id": null,
+      "attributes": {
+        "revision": 1
+      }
+    },
+    {
+      "object_id": "prices",
+      "type": "information_register",
+      "full_name": "РегистрСведений.Цены",
+      "parent_id": null,
+      "attributes": {
+        "revision": 1
+      }
+    },
+    {
+      "object_id": "sales",
+      "type": "accumulation_register",
+      "full_name": "РегистрНакопления.Продажи",
+      "parent_id": null,
+      "attributes": {
+        "revision": 1
+      }
+    },
+    {
+      "object_id": "sales_module",
+      "type": "common_module",
+      "full_name": "ОбщийМодуль.Продажи",
+      "parent_id": null,
+      "attributes": {
+        "revision": 1
+      }
+    },
+    {
+      "object_id": "form",
+      "type": "form",
+      "full_name": "Документ.ЗаказКлиента.Форма",
+      "parent_id": "order",
+      "attributes": {
+        "revision": 1
+      }
+    },
+    {
+      "object_id": "post",
+      "type": "procedure",
+      "full_name": "Продажи.Проведение",
+      "parent_id": null,
+      "attributes": {
+        "revision": 1
+      }
+    },
+    {
+      "object_id": "sum",
+      "type": "function",
+      "full_name": "Продажи.РассчитатьСумму",
+      "parent_id": null,
+      "attributes": {
+        "revision": 1
+      }
+    },
+    {
+      "object_id": "event",
+      "type": "event_subscription",
+      "full_name": "Подписка.ПослеЗаписи",
+      "parent_id": null,
+      "attributes": {
+        "revision": 1
+      }
+    },
+    {
+      "object_id": "legacy",
+      "type": "procedure",
+      "full_name": "Продажи.СтарыйРасчёт",
+      "parent_id": null,
+      "attributes": {
+        "revision": 1
+      }
+    },
+    {
+      "object_id": "audit",
+      "type": "common_module",
+      "full_name": "ОбщийМодуль.Аудит",
+      "parent_id": null,
+      "attributes": {
+        "revision": 1
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "order",
+      "target": "sales_module",
+      "type": "uses",
+      "origin": "synthetic:ручная учебная карта",
+      "confidence": 1.0
+    },
+    {
+      "source": "form",
+      "target": "order",
+      "type": "belongs_to",
+      "origin": "synthetic:ручная учебная карта",
+      "confidence": 1.0
+    },
+    {
+      "source": "post",
+      "target": "sum",
+      "type": "calls",
+      "origin": "synthetic:ручная учебная карта",
+      "confidence": 1.0
+    },
+    {
+      "source": "sales_module",
+      "target": "post",
+      "type": "calls",
+      "origin": "synthetic:ручная учебная карта",
+      "confidence": 1.0
+    },
+    {
+      "source": "post",
+      "target": "sales",
+      "type": "uses",
+      "origin": "synthetic:ручная учебная карта",
+      "confidence": 1.0
+    },
+    {
+      "source": "sum",
+      "target": "prices",
+      "type": "uses",
+      "origin": "synthetic:ручная учебная карта",
+      "confidence": 1.0
+    },
+    {
+      "source": "order",
+      "target": "client",
+      "type": "uses",
+      "origin": "synthetic:ручная учебная карта",
+      "confidence": 1.0
+    },
+    {
+      "source": "order",
+      "target": "item",
+      "type": "uses",
+      "origin": "synthetic:ручная учебная карта",
+      "confidence": 1.0
+    },
+    {
+      "source": "event",
+      "target": "order",
+      "type": "subscribes_to",
+      "origin": "synthetic:ручная учебная карта",
+      "confidence": 1.0
+    },
+    {
+      "source": "sales_module",
+      "target": "audit",
+      "type": "calls",
+      "origin": "synthetic:ручная учебная карта",
+      "confidence": 1.0
+    },
+    {
+      "source": "audit",
+      "target": "sales_module",
+      "type": "calls",
+      "origin": "synthetic:ручная учебная карта",
+      "confidence": 1.0
+    },
+    {
+      "source": "post",
+      "target": "legacy",
+      "type": "calls",
+      "origin": "synthetic:ручная учебная карта",
+      "confidence": 1.0
+    }
+  ]
+}

@@ -1,0 +1,269 @@
+{
+  "$defs": {
+    "Change": {
+      "additionalProperties": false,
+      "properties": {
+        "object_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "title": "Object Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "added",
+            "removed",
+            "modified",
+            "unchanged"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "properties": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "Properties"
+        }
+      },
+      "required": [
+        "object_id",
+        "status",
+        "properties"
+      ],
+      "title": "Change",
+      "type": "object"
+    },
+    "DependencyPath": {
+      "additionalProperties": false,
+      "properties": {
+        "changed_object": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "title": "Changed Object",
+          "type": "string"
+        },
+        "affected_object": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "title": "Affected Object",
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "maxLength": 120,
+            "minLength": 1,
+            "pattern": "^[\\w.:-]+$",
+            "type": "string"
+          },
+          "maxItems": 101,
+          "minItems": 1,
+          "title": "Nodes",
+          "type": "array"
+        },
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/PathEdge"
+          },
+          "maxItems": 100,
+          "title": "Edges",
+          "type": "array"
+        },
+        "depth": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Depth",
+          "type": "integer"
+        },
+        "confirmed": {
+          "title": "Confirmed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "changed_object",
+        "affected_object",
+        "nodes",
+        "edges",
+        "depth",
+        "confirmed"
+      ],
+      "title": "DependencyPath",
+      "type": "object"
+    },
+    "PathEdge": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "title": "Target",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "calls",
+            "uses",
+            "belongs_to",
+            "subscribes_to",
+            "dynamic",
+            "external",
+            "unknown"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "origin": {
+          "maxLength": 300,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f]+$",
+          "title": "Origin",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "version": {
+          "maxLength": 300,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f]+$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "target",
+        "type",
+        "origin",
+        "version"
+      ],
+      "title": "PathEdge",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "package_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[\\w.:-]+$",
+      "title": "Package Id",
+      "type": "string"
+    },
+    "configuration_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[\\w.:-]+$",
+      "title": "Configuration Id",
+      "type": "string"
+    },
+    "base_version": {
+      "maxLength": 300,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f]+$",
+      "title": "Base Version",
+      "type": "string"
+    },
+    "target_version": {
+      "maxLength": 300,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f]+$",
+      "title": "Target Version",
+      "type": "string"
+    },
+    "analysis_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[\\w.:-]+$",
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "synthetic": {
+      "title": "Synthetic",
+      "type": "boolean"
+    },
+    "changed_objects": {
+      "items": {
+        "$ref": "#/$defs/Change"
+      },
+      "maxItems": 10000,
+      "title": "Changed Objects",
+      "type": "array"
+    },
+    "affected_objects": {
+      "items": {
+        "maxLength": 120,
+        "minLength": 1,
+        "pattern": "^[\\w.:-]+$",
+        "type": "string"
+      },
+      "maxItems": 10000,
+      "title": "Affected Objects",
+      "type": "array"
+    },
+    "dependency_paths": {
+      "items": {
+        "$ref": "#/$defs/DependencyPath"
+      },
+      "maxItems": 20000,
+      "title": "Dependency Paths",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
+    "checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Checksum",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "package_id",
+    "configuration_id",
+    "base_version",
+    "target_version",
+    "analysis_id",
+    "created_at",
+    "synthetic",
+    "changed_objects",
+    "affected_objects",
+    "dependency_paths",
+    "warnings",
+    "checksum"
+  ],
+  "title": "ImpactPackage",
+  "type": "object"
+}

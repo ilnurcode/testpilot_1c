@@ -1,0 +1,147 @@
+{
+  "$defs": {
+    "ExecutionTest": {
+      "additionalProperties": false,
+      "properties": {
+        "test_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "title": "Test Id",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        }
+      },
+      "required": [
+        "test_id",
+        "parameters"
+      ],
+      "title": "ExecutionTest",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "execution_job_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[\\w.:-]+$",
+      "title": "Execution Job Id",
+      "type": "string"
+    },
+    "test_plan_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[\\w.:-]+$",
+      "title": "Test Plan Id",
+      "type": "string"
+    },
+    "configuration_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[\\w.:-]+$",
+      "title": "Configuration Id",
+      "type": "string"
+    },
+    "version": {
+      "maxLength": 300,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f]+$",
+      "title": "Version",
+      "type": "string"
+    },
+    "synthetic": {
+      "title": "Synthetic",
+      "type": "boolean"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
+    },
+    "status": {
+      "enum": [
+        "awaiting_external_runner",
+        "reported"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "executor_connected": {
+      "const": false,
+      "title": "Executor Connected",
+      "type": "boolean"
+    },
+    "tests": {
+      "items": {
+        "$ref": "#/$defs/ExecutionTest"
+      },
+      "title": "Tests",
+      "type": "array"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Run Id"
+    }
+  },
+  "required": [
+    "schema_version",
+    "execution_job_id",
+    "test_plan_id",
+    "configuration_id",
+    "version",
+    "synthetic",
+    "created_at",
+    "started_at",
+    "finished_at",
+    "status",
+    "executor_connected",
+    "tests"
+  ],
+  "title": "ExecutionJob",
+  "type": "object"
+}

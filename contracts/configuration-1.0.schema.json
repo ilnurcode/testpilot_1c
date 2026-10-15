@@ -1,0 +1,191 @@
+{
+  "$defs": {
+    "Edge": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "title": "Target",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "calls",
+            "uses",
+            "belongs_to",
+            "subscribes_to",
+            "dynamic",
+            "external",
+            "unknown"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "origin": {
+          "maxLength": 300,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f]+$",
+          "title": "Origin",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "source",
+        "target",
+        "type",
+        "origin"
+      ],
+      "title": "Edge",
+      "type": "object"
+    },
+    "Object": {
+      "additionalProperties": false,
+      "properties": {
+        "object_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "title": "Object Id",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "document",
+            "catalog",
+            "information_register",
+            "accumulation_register",
+            "common_module",
+            "form",
+            "procedure",
+            "function",
+            "event_subscription"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "full_name": {
+          "maxLength": 300,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f]+$",
+          "title": "Full Name",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "minLength": 1,
+              "pattern": "^[\\w.:-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        }
+      },
+      "required": [
+        "object_id",
+        "type",
+        "full_name"
+      ],
+      "title": "Object",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "configuration_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[\\w.:-]+$",
+      "title": "Configuration Id",
+      "type": "string"
+    },
+    "version": {
+      "maxLength": 300,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f]+$",
+      "title": "Version",
+      "type": "string"
+    },
+    "source": {
+      "maxLength": 300,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f]+$",
+      "title": "Source",
+      "type": "string"
+    },
+    "synthetic": {
+      "default": false,
+      "title": "Synthetic",
+      "type": "boolean"
+    },
+    "imported_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Imported At"
+    },
+    "objects": {
+      "items": {
+        "$ref": "#/$defs/Object"
+      },
+      "maxItems": 10000,
+      "title": "Objects",
+      "type": "array"
+    },
+    "edges": {
+      "items": {
+        "$ref": "#/$defs/Edge"
+      },
+      "maxItems": 50000,
+      "title": "Edges",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "configuration_id",
+    "version",
+    "source",
+    "objects"
+  ],
+  "title": "Configuration",
+  "type": "object"
+}

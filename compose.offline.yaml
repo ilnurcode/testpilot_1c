@@ -1,0 +1,18 @@
+# В дополнение к compose.yaml; сначала скачайте wheels по README.
+services:
+  migrate:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile.offline
+  impact:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile.offline
+  intelligence:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile.offline
+  web:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile.offline

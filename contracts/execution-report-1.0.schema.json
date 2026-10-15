@@ -1,0 +1,193 @@
+{
+  "$defs": {
+    "DefectInput": {
+      "additionalProperties": false,
+      "properties": {
+        "defect_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "title": "Defect Id",
+          "type": "string"
+        },
+        "test_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "title": "Test Id",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "state": {
+          "default": "open",
+          "enum": [
+            "open",
+            "closed"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 5000,
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "defect_id",
+        "test_id",
+        "severity"
+      ],
+      "title": "DefectInput",
+      "type": "object"
+    },
+    "ResultInput": {
+      "additionalProperties": false,
+      "properties": {
+        "test_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "title": "Test Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "error",
+            "skipped"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "duration_seconds": {
+          "maximum": 86400,
+          "minimum": 0,
+          "title": "Duration Seconds",
+          "type": "number"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "finished_at": {
+          "format": "date-time",
+          "title": "Finished At",
+          "type": "string"
+        },
+        "error": {
+          "default": "",
+          "maxLength": 5000,
+          "title": "Error",
+          "type": "string"
+        },
+        "artifacts": {
+          "items": {
+            "maxLength": 1000,
+            "pattern": "^https://",
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Artifacts",
+          "type": "array"
+        }
+      },
+      "required": [
+        "test_id",
+        "status",
+        "duration_seconds",
+        "started_at",
+        "finished_at"
+      ],
+      "title": "ResultInput",
+      "type": "object"
+    },
+    "RunInput": {
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "configuration_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[\\w.:-]+$",
+          "title": "Configuration Id",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 300,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f]+$",
+          "title": "Version",
+          "type": "string"
+        },
+        "synthetic": {
+          "default": false,
+          "title": "Synthetic",
+          "type": "boolean"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/$defs/ResultInput"
+          },
+          "maxItems": 1000,
+          "minItems": 1,
+          "title": "Results",
+          "type": "array"
+        },
+        "defects": {
+          "items": {
+            "$ref": "#/$defs/DefectInput"
+          },
+          "maxItems": 1000,
+          "title": "Defects",
+          "type": "array"
+        }
+      },
+      "required": [
+        "run_id",
+        "configuration_id",
+        "version",
+        "results"
+      ],
+      "title": "RunInput",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "execution_job_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[\\w.:-]+$",
+      "title": "Execution Job Id",
+      "type": "string"
+    },
+    "run": {
+      "$ref": "#/$defs/RunInput"
+    }
+  },
+  "required": [
+    "execution_job_id",
+    "run"
+  ],
+  "title": "JobReport",
+  "type": "object"
+}
