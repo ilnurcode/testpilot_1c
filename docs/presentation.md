@@ -8,6 +8,8 @@
 
 ## Запуск в подготовленной cloud-среде
 
+Для запуска непосредственно из Windows используйте [PowerShell-инструкцию](windows.md). Команды ниже предназначены для Linux/cloud.
+
 ```bash
 cd /workspace/testpilot_1c
 ./scripts/start-presentation.sh

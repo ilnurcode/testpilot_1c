@@ -4,7 +4,7 @@
 
 ## Установка на Windows
 
-[Пошаговая инструкция для Windows 10/11 через WSL2 и Docker Desktop](docs/windows.md): установка, первый запуск, пароль, демонстрация, остановка и устранение ошибок.
+[Пошаговая инструкция для Windows 10/11 из PowerShell](docs/windows.md): Python 3.12 x64, Docker Desktop, затем `scripts/install.ps1` и `scripts/start.ps1`. Остановка — `scripts/stop.ps1`. Открывать Ubuntu не требуется; Docker может использовать WSL2 внутри. Прежний [вариант через Ubuntu/WSL2](docs/windows-wsl.md) сохранён отдельно.
 
 ## Презентационный режим
 

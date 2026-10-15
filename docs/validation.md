@@ -92,3 +92,11 @@ PostgreSQL перезапущен, локальные uvicorn остановле
 `scripts/presentation-browser-smoke.py` прошёл тот же путь кликами, загрузку PNG, восстановление после reload, отсутствие JS-ошибок и горизонтального скролла при 390 px. Скриншоты: .runtime/presentation-report.png, .runtime/presentation-mobile.png. Повторно прошли прежний HTTP smoke (305/330 секунд, 100% покрытия доступного синтетического набора), browser-smoke и projects-browser-smoke. Это не проверка живой 1С или её OData.
 
 После повторного запуска start-presentation.sh все три исходных файла и метаданные проекта совпали с предварительным снимком; JSON плана, подтверждения и результатов совпал целиком, SHA-256 двух PNG совпали. Проверено сохранение в действующей PostgreSQL после перезапуска приложений; восстановление нового cloud-снимка отдельно не проверено.
+
+## Запуск непосредственно из PowerShell
+
+Добавлены install.ps1, start.ps1, stop.ps1 и windows-common.ps1. Python и браузер работают на Windows, PostgreSQL — в Docker Desktop. Для Windows закреплён условный colorama; путь браузера без явного переопределения берётся у Playwright. Linux-путь сохраняется.
+
+Актуальный набор: 84 pytest с PostgreSQL прошли; после окончательного уточнения выбора браузера повторно прошли 2 платформенные проверки. На PowerShell 7.4.19 для Linux прошли Parser.ParseFile и tests/windows-smoke.ps1: чтение данных без интерпретации, коды выхода, пути с пробелами, защита от чужого/повторно использованного PID, вызов остановки дерева и повторная остановка. Win32 CIM и taskkill в этой проверке заменены контрольными объектами. Это не фактический запуск приложений на Windows; Windows PowerShell 5.1, Desktop/NTFS и Windows Chromium здесь не проверялись.
+
+После изменения выбора браузера повторно прошли Linux start-presentation.sh, HTTP smoke (305/330 секунд) и presentation-smoke: 2 passed, 2 failed на намеренной ошибке, 0 error, 2 PNG.

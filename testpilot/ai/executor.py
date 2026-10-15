@@ -8,8 +8,16 @@ from testpilot.contracts import now
 
 
 def browser_path():
-    configured=os.environ.get('TP_CHROMIUM_PATH','/usr/bin/chromium')
-    return configured if Path(configured).is_file() else None
+    configured=os.environ.get('TP_CHROMIUM_PATH')
+    if configured:
+        return configured if Path(configured).is_file() else None
+    if os.name=='nt':
+        # Playwright supplies its managed Chromium on native Windows.
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            path=p.chromium.executable_path
+        return path if Path(path).is_file() else None
+    return '/usr/bin/chromium' if Path('/usr/bin/chromium').is_file() else None
 
 
 def execute(suite,authorization):
