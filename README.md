@@ -6,6 +6,8 @@
 
 [Пошаговая инструкция для Windows 10/11 из PowerShell](docs/windows.md): Python 3.12 x64, Docker Desktop, затем `scripts/install.ps1` и `scripts/start.ps1`. Остановка — `scripts/stop.ps1`. Открывать Ubuntu не требуется; Docker может использовать WSL2 внутри. Прежний [вариант через Ubuntu/WSL2](docs/windows-wsl.md) сохранён отдельно.
 
+Готовое руководство для передачи на другой ПК: [PDF](docs/guides/TestPilot_1C_Windows_Guide.pdf) · [Word](docs/guides/TestPilot_1C_Windows_Guide.docx).
+
 ## Презентационный режим
 
 Проверенный запуск текущего этапа:
