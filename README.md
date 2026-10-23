@@ -2,11 +2,17 @@
 
 Рабочий учебный MVP: сравнение двух нормализованных конфигураций, объяснимое влияние по графу, HTTP-передача зоны, приоритизация и оптимизация регрессионного набора с сохранением в PostgreSQL. Два самостоятельных FastAPI API и русскоязычный web-интерфейс. **Исполнитель 1С не подключён.** Данные демонстрации явно помечены synthetic.
 
-## Установка на Windows
+## Самый простой запуск на Windows
 
-[Пошаговая инструкция для Windows 10/11 из PowerShell](docs/windows.md): Python 3.12 x64, Docker Desktop, затем `scripts/install.ps1` и `scripts/start.ps1`. Остановка — `scripts/stop.ps1`. Открывать Ubuntu не требуется; Docker может использовать WSL2 внутри. Прежний [вариант через Ubuntu/WSL2](docs/windows-wsl.md) сохранён отдельно.
+Подробные инструкции: [PDF](docs/guides/TestPilot_1C_Windows_Guide.pdf) и [Word](docs/guides/TestPilot_1C_Windows_Guide.docx).
 
-Готовое руководство для передачи на другой ПК: [PDF](docs/guides/TestPilot_1C_Windows_Guide.pdf) · [Word](docs/guides/TestPilot_1C_Windows_Guide.docx).
+1. Установите и откройте [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/), Linux containers.
+2. Скачайте [ZIP проекта](https://github.com/ilnurcode/testpilot_1c/archive/refs/heads/main.zip) и распакуйте папку.
+3. Дважды щёлкните `Run-TestPilot.bat`. Он соберёт и запустит весь стек, дождётся готовности и откроет браузер. Первый запуск скачает образы, Python-пакеты и Chromium и может занять несколько минут.
+4. Вход: `expert` / `TestPilotLocal123!` (если нет пользовательского файла .env).
+5. Для штатной остановки дважды щёлкните `Stop-TestPilot.bat`. PostgreSQL и файлы проекта сохраняются.
+
+Нужен только Docker Desktop, не нужны локальные Python/Git/Ubuntu/команды. Подробности и устранение ошибок — [руководство для Windows](docs/windows.md). Продвинутый вариант через локальный Python/PowerShell — [windows-powershell.md](docs/windows-powershell.md).
 
 ## Презентационный режим
 
@@ -27,7 +33,7 @@ cd /workspace/testpilot_1c
 
 CFE/CF/EPF/ERF/DT и ZIP принимаются на хранение до 64 МиБ. Анализ сейчас доступен для нормализованного JSON до 8 МиБ или ZIP с `configuration.json` в корне. Бинарные файлы получают честный статус «Ожидает разбора»: их автоматическое извлечение, установка и запуск в 1С не выполняются. Для внешней нейросети подготовлен OpenAI-совместимый API-адаптер; фактический вызов требует серверного ключа.
 
-Подробности, ограничения и API: [библиотека файлов](docs/uploads.md). Для обновления существующей установки выполните `alembic upgrade head` и перезапустите процессы, либо обычную Compose-сборку из инструкций ниже: сервис migrate применит актуальную ревизию 0004. Не удаляйте PostgreSQL volume.
+Подробности, ограничения и API: [библиотека файлов](docs/uploads.md). Compose-сервис migrate применяет актуальные Alembic-ревизии. Не удаляйте PostgreSQL volume.
 
 ## Состав
 
@@ -38,26 +44,23 @@ CFE/CF/EPF/ERF/DT и ZIP принимаются на хранение до 64 М
 - `migrations` — 0001: impact и аудит; 0002: test intelligence; 0003: проекты и постоянная библиотека файлов; 0004: планы проверок, скриншоты и учебный стенд.
 - `tests`, `scripts`, `docs` — проверки, демо, замеры и описание.
 
-Требования: Python 3.12+, Docker Engine с Compose v2, PostgreSQL 17 (Compose предоставляет его). SQLite не используется. Для браузерной проверки дополнительно нужны Playwright и Chromium.
+В Docker-варианте достаточно Docker Desktop с Compose v2; PostgreSQL 17 и Chromium ставятся внутри контейнеров. Для запуска Python-приложений непосредственно на хосте нужен Python 3.12+.
 
-## Быстрый запуск в обычной локальной среде
+## Ручной запуск Docker Compose
 
-Из корня проекта:
+Из папки проекта команда вручную, эквивалентная двойному щелчку по Windows-лаунчеру:
 
 ```bash
-python3 scripts/local_env.py
-# Скрипт создаёт .env со случайными паролями и правами 0600.
-# Если .env уже есть — сохраняет его. Настройки показаны в .env.example.
-docker compose up -d --build --wait
+docker compose up --build --detach --wait --wait-timeout 900 impact intelligence web
 ```
 
-Откройте в локальном браузере адрес `http://127.0.0.1:8000`. Логин `expert`, пароль — значение `TP_EXPERT_PASSWORD` из вашего локального `.env`. Для ограниченных ролей используйте `analyst` или `runner` с соответствующим паролем из `.env`. Не публикуйте файл и не используйте Basic Auth по открытому HTTP вне локальной машины.
+Откройте `http://127.0.0.1:8000`. Без собственного `.env` локальная учётная запись — `expert` / `TestPilotLocal123!`. Эти настройки подходят для локальной демонстрации и привязаны к loopback; не публикуйте порт наружу. Собственный `.env` может переопределить локальные пароли и API-ключ. PostgreSQL volume сохраняется после `docker compose down`; не удаляйте его опцией `-v`.
 
 OpenAPI каждого API: `/openapi.json`, интерактивная документация: `/docs` на портах 8001 и 8002. Web — порт 8000. Health: `/health` каждого процесса, проверяет PostgreSQL и наличие миграций. При запуске вне localhost нужен HTTPS reverse proxy.
 
-## Проверенный вариант для этой облачной среды
+## Разработка в облачной Linux-среде
 
-Docker build здесь не может разрешить внешний DNS. Зависимости скачиваются хостом через разрешённый HTTPS-маршрут, затем образ собирается без обращения к пакетному реестру. TLS и проверки пакетов не отключаются. Все данные кэша и служебная конфигурация размещаются в доступных для записи каталогах.
+В этой изолированной среде Docker build не может разрешить внешний DNS. Поэтому здесь использовался проверенный вариант: процессы Python на хосте и PostgreSQL в Docker. Он предназначен для разработки; его образ без Chromium нельзя использовать как проверку полного браузерного Docker-исполнителя.
 
 ```bash
 cd /workspace/testpilot_1c
@@ -77,7 +80,7 @@ set +a
 .venv/bin/python scripts/smoke.py
 ```
 
-`.wheelhouse` и `.env` исключены из Git. Колёса рассчитаны на архитектуру и Python машины скачивания (здесь Linux x86_64, CPython 3.12). Для другой платформы скачайте соответствующие wheels заново. Сетевой `Dockerfile` поставляется для обычной среды; успешная сборка здесь проверена с `scripts/Dockerfile.offline` и `compose.offline.yaml`.
+`.wheelhouse` и `.env` исключены из Git. Этот offline-вариант переносит Python-приложения в контейнеры, но не включает проверенный Chromium и не является целевым способом презентационного запуска. Обычный Windows-лаунчер собирает полный образ с Chromium; в изолированной облачной среде DNS пакетов из Docker build закрыт, поэтому эта сборка здесь не прошла.
 
 ## Полная демонстрация
 
@@ -143,10 +146,10 @@ docker compose exec -T impact python scripts/benchmark.py
 
 ```bash
 uv pip install --python .venv/bin/python playwright
-CHROMIUM_PATH=/usr/bin/chromium .venv/bin/python scripts/browser-smoke.py
+TP_CHROMIUM_PATH=/usr/bin/chromium .venv/bin/python scripts/browser-smoke.py
 ```
 
-Playwright — необязательная зависимость разработчика, не часть production-lock. Скрипт действительно выполняет демо, сравнение, граф, ML, план и экспертное подтверждение на учебных данных. Скриншот сохраняется в `.runtime/web-plan.png`.
+Playwright и Chromium входят в полный Docker-образ; на хосте Linux браузерный smoke требует установки Playwright и Chromium. Скрипт действительно выполняет демо, сравнение, граф, ML, план и экспертное подтверждение на учебных данных. Скриншот сохраняется в `.runtime/web-plan.png`.
 
 ## Сохранность и эксплуатация
 

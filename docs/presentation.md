@@ -8,7 +8,7 @@
 
 ## Запуск в подготовленной cloud-среде
 
-Для запуска непосредственно из Windows используйте [PowerShell-инструкцию](windows.md). Команды ниже предназначены для Linux/cloud.
+На Windows весь сервис запускается двойным щелчком по `Run-TestPilot.bat`; подробный сценарий — [в инструкции](windows.md). Команды ниже предназначены для Linux/cloud.
 
 ```bash
 cd /workspace/testpilot_1c

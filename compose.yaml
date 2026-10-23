@@ -1,11 +1,14 @@
+# Local single-user demo; host services bind to 127.0.0.1 only.
 name: testpilot
 x-app: &app
   build: .
-  env_file: .env
   environment: &environment
-    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-testpilot}:${POSTGRES_PASSWORD:?Задайте POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-testpilot}
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-testpilot}:${POSTGRES_PASSWORD:-TestPilot_Db_Local_Only_2026}@db:5432/${POSTGRES_DB:-testpilot}
     IMPACT_URL: http://impact:8001
     INTELLIGENCE_URL: http://intelligence:8002
+    TP_ANALYST_PASSWORD: ${TP_ANALYST_PASSWORD:-TestPilotAnalystLocal123!}
+    TP_EXPERT_PASSWORD: ${TP_EXPERT_PASSWORD:-TestPilotLocal123!}
+    TP_RUNNER_PASSWORD: ${TP_RUNNER_PASSWORD:-TestPilotRunnerLocal123!}
   depends_on:
     migrate:
       condition: service_completed_successfully
@@ -16,7 +19,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-testpilot}
       POSTGRES_DB: ${POSTGRES_DB:-testpilot}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Задайте POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-TestPilot_Db_Local_Only_2026}
     volumes: [pgdata:/var/lib/postgresql/data]
     ports: ["127.0.0.1:5432:5432"]
     healthcheck:
@@ -42,6 +45,18 @@ services:
       retries: 20
   intelligence:
     <<: *app
+    environment:
+      <<: *environment
+      WEB_URL: http://web:8000
+      TP_LLM_API_KEY: ${TP_LLM_API_KEY:-}
+      TP_LLM_BASE_URL: ${TP_LLM_BASE_URL:-https://api.openai.com/v1}
+      TP_LLM_MODEL: ${TP_LLM_MODEL:-gpt-4.1-mini}
+      TP_1C_ODATA_URL: ${TP_1C_ODATA_URL:-}
+      TP_1C_WEB_URL: ${TP_1C_WEB_URL:-}
+      TP_1C_USERNAME: ${TP_1C_USERNAME:-}
+      TP_1C_PASSWORD: ${TP_1C_PASSWORD:-}
+      TP_1C_AUTHORIZATION: ${TP_1C_AUTHORIZATION:-}
+      TP_1C_CA_FILE: ${TP_1C_CA_FILE:-}
     command: [uvicorn, testpilot.intelligence.api:app, --host, 0.0.0.0, --port, "8002"]
     ports: ["127.0.0.1:8002:8002"]
     healthcheck:
