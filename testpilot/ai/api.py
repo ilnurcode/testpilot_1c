@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter,Depends,HTTPException,Request
 from fastapi.responses import Response
 from sqlalchemy import select
@@ -9,6 +10,51 @@ from testpilot.ai import provider
 from testpilot.ai.executor import execute,browser_path
 
 router=APIRouter(prefix='/api/v1/ai',tags=['Нейросеть и проверки'])
+
+
+from pathlib import Path
+from testpilot.ai.models import LLMSettingsInput
+
+@router.get('/settings/llm')
+def get_llm_settings(actor=Depends(user)):
+    st = provider.status()
+    base = os.environ.get('TP_LLM_BASE_URL', 'https://api.openai.com/v1')
+    model = os.environ.get('TP_LLM_MODEL', 'gpt-4o-mini')
+    key = os.environ.get('TP_LLM_API_KEY', '')
+    return {
+        'base_url': base,
+        'model': model,
+        'has_key': bool(key),
+        'endpoint_host': st.get('endpoint_host'),
+        'configured': st.get('configured', False)
+    }
+
+@router.put('/settings/llm')
+def update_llm_settings(q: LLMSettingsInput, actor=Depends(expert)):
+    if q.base_url:
+        os.environ['TP_LLM_BASE_URL'] = q.base_url.strip()
+    if q.model:
+        os.environ['TP_LLM_MODEL'] = q.model.strip()
+    if q.api_key is not None and q.api_key.strip():
+        os.environ['TP_LLM_API_KEY'] = q.api_key.strip()
+
+    try:
+        env_path = Path('.env')
+        if env_path.exists():
+            content = env_path.read_text(encoding='utf-8')
+            lines = content.splitlines()
+            def set_var(key, val):
+                nonlocal lines
+                lines = [l for l in lines if not l.startswith(f"{key}=")]
+                lines.append(f"{key}={val}")
+            if q.base_url: set_var('TP_LLM_BASE_URL', q.base_url.strip())
+            if q.model: set_var('TP_LLM_MODEL', q.model.strip())
+            if q.api_key is not None and q.api_key.strip(): set_var('TP_LLM_API_KEY', q.api_key.strip())
+            env_path.write_text("\n".join(lines) + "\n", encoding='utf-8')
+    except Exception:
+        pass
+
+    return get_llm_settings(actor)
 
 @router.get('/status')
 def status(actor=Depends(user)):
@@ -89,6 +135,27 @@ def run_demo(sid:str,request:Request,actor=Depends(expert),s=Depends(session,sco
 
     data={**row.payload,'status':'completed','results':results,'counts':counts,'finished_at':now(),'executor':'synthetic_sales_http_and_playwright','executor_1c_connected':False}
     row.status='completed';row.payload=data;audit(s,'intelligence',actor,'execute_demo_suite',sid,counts)
+    return data
+
+
+
+@router.post('/suites/{sid}/run-1c')
+def run_1c(sid:str,actor=Depends(expert),s=Depends(session,scope='function')):
+    row=require(s.scalar(select(AISuiteRow).where(AISuiteRow.id==sid).with_for_update()))
+    if row.status=='completed':return row.payload
+    if row.status!='approved':raise HTTPException(409,'Сначала подтвердите сценарии и тестовые данные')
+    from testpilot.integration.probe import Profile
+    try:
+        profile = Profile.from_environment()
+    except Exception as e:
+        raise HTTPException(422, f'Параметры подключения к 1С не настроены в окружении: {e}')
+    from testpilot.ai.executor import execute_1c
+    results,shots=execute_1c(row.payload, profile)
+    for index,content in shots:
+        eid=uid();s.add(EvidenceRow(id=eid,suite_id=sid,content=content));results[index]['evidence_id']=eid
+    counts={state:sum(r['status']==state for r in results) for state in ('passed','failed','error','skipped')}
+    data={**row.payload,'status':'completed','results':results,'counts':counts,'finished_at':now(),'executor':'1c_odata_and_webclient','executor_1c_connected':True}
+    row.status='completed';row.payload=data;audit(s,'intelligence',actor,'execute_1c_suite',sid,counts)
     return data
 
 @router.get('/evidence/{eid}')

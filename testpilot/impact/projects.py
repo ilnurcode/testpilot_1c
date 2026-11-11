@@ -1,4 +1,6 @@
 """Проекты и неизменяемая библиотека файлов. Бинарные форматы сохраняются без имитации разбора."""
+import asyncio
+import os
 import hashlib
 import io
 import stat
@@ -18,9 +20,10 @@ from testpilot.contracts import Model,Text,Configuration,ImpactPackage
 from testpilot.db import (session,ProjectRow,UploadRow,UploadAnalysisRow,VersionRow,AnalysisRow,AffectedRow,audit,uid)
 from testpilot.impact.imports import store_version
 from testpilot.impact.algorithms import analyze
+from testpilot.integration.probe import probe, Profile, validated_url
 
 router=APIRouter(prefix='/api/v1/projects',tags=['Проекты и загрузки'])
-ALLOWED={'.json','.zip','.cfe','.cf','.epf','.erf','.dt'}
+ALLOWED={'.json','.xml','.zip','.cfe','.cf','.epf','.erf','.dt'}
 Kind=Literal['extension','processing','report','configuration','database']
 MAX_FILE=64*1024*1024
 
@@ -32,6 +35,12 @@ class AnalysisInput(Model):
     baseline_id: str|None='saved'
     max_depth: int=Field(default=10,ge=0,le=100)
 
+
+class ConnectionInput(Model):
+    odata_url: str|None=None
+    web_url: str|None=None
+    auth_username: str|None=None
+    auth_password: str|None=None
 
 def project_or_404(s,pid,lock=False):
     q=select(ProjectRow).where(ProjectRow.id==pid)
@@ -53,7 +62,7 @@ def upload_dict(r):
 def project_dict(s,p):
     count,size=s.execute(select(func.count(UploadRow.id),func.coalesce(func.sum(UploadRow.size_bytes),0)).where(UploadRow.project_id==p.id)).one()
     last=s.scalar(metadata_query().where(UploadRow.project_id==p.id).order_by(UploadRow.number.desc()).limit(1))
-    return {'id':p.id,'name':p.name,'description':p.description,'configuration_id':p.configuration_id,'created_by':p.created_by,'created_at':p.created_at,'upload_count':count,'size_bytes':int(size),'latest_upload':upload_dict(last) if last else None}
+    return {'id':p.id,'name':p.name,'description':p.description,'configuration_id':p.configuration_id,'created_by':p.created_by,'created_at':p.created_at,'upload_count':count,'size_bytes':int(size),'latest_upload':upload_dict(last) if last else None,'connection_settings':{'odata_url':p.odata_url,'web_url':p.web_url,'auth_username':p.auth_username,'has_password':bool(p.auth_password)}}
 
 
 def filename_validated(name):
@@ -74,6 +83,12 @@ def inspect_file(raw,suffix):
     if suffix=='.json':
         if len(raw)>8*1024*1024:raise HTTPException(413,'Нормализованный JSON должен быть не больше 8 МиБ')
         return decode_configuration(raw),'Модель проверена и готова к анализу.'
+    if suffix=='.xml':
+        try:
+            from testpilot.impact.xml_adapter import XMLEdtAdapter
+            return XMLEdtAdapter().parse(raw),'Модель XML/EDT 1С успешно разобрана.'
+        except Exception as e:
+            raise HTTPException(422,f'Ошибка разбора XML выгрузки 1С: {e}')
     if suffix=='.zip':
         try:
             with ZipFile(io.BytesIO(raw)) as z:
@@ -93,8 +108,22 @@ def inspect_file(raw,suffix):
                     with z.open(info) as f:content=f.read(8*1024*1024+1)
                     if len(content)>8*1024*1024:raise HTTPException(413,'configuration.json превышает 8 МиБ')
                     return decode_configuration(content),'Нормализованная модель configuration.json извлечена из ZIP и проверена.'
+                if any(n.lower().endswith('.xml') for n in names):
+                    try:
+                        from testpilot.impact.xml_adapter import XMLEdtAdapter
+                        return XMLEdtAdapter().parse(raw),'Выгрузка 1С XML/EDT из архива успешно разобрана.'
+                    except Exception:
+                        pass
                 return None,'Архив сохранён. Для анализа исходников нужен адаптер их формата; configuration.json в корне отсутствует.'
         except (BadZipFile,RuntimeError,NotImplementedError):raise HTTPException(422,'Архив повреждён или использует неподдерживаемое сжатие')
+    if suffix in ('.cfe', '.epf', '.erf', '.cf'):
+        try:
+            from testpilot.impact.binary_adapter import Binary1CAdapter
+            model = Binary1CAdapter().parse(raw, filename=f"upload{suffix}")
+            if model and model.objects:
+                return model, f'Бинарный контейнер {suffix.upper()[1:]} успешно разобран, извлечены объекты и связи.'
+        except Exception:
+            pass
     return None,'Файл сохранён. Разбор этого формата требует проверенного адаптера или агента 1С; анализ ещё не выполнялся.'
 
 
@@ -164,7 +193,7 @@ def download(pid:str,upload_id:str,actor=Depends(user),s=Depends(session,scope='
 
 
 @router.post('/{pid}/uploads/{upload_id}/analyze')
-def analyze_upload(pid:str,upload_id:str,q:AnalysisInput,actor=Depends(analyst),s=Depends(session,scope='function')):
+async def analyze_upload(pid:str,upload_id:str,q:AnalysisInput,actor=Depends(analyst),s=Depends(session,scope='function')):
     project_or_404(s,pid);target_upload=upload_or_404(s,pid,upload_id)
     if not target_upload.version_id:raise HTTPException(409,{'message':'Файл сохранён, но ещё не разобран. Нужен адаптер формата или нормализованный JSON.','status':target_upload.status})
     target=s.get(VersionRow,target_upload.version_id)
@@ -179,7 +208,7 @@ def analyze_upload(pid:str,upload_id:str,q:AnalysisInput,actor=Depends(analyst),
         base=None;mode='full'
         base_payload={**target.payload,'version':'__no_previous_version__','objects':[],'edges':[]}
     parameters={'configuration_id':target.configuration_id,'base_version':base_payload['version'],'target_version':target.version,'max_depth':q.max_depth,'edge_types':['calls','uses','belongs_to','subscribes_to'],'direction':'impact','mode':mode,'project_id':pid,'upload_id':upload_id,'baseline_upload_id':previous.id if previous else None}
-    changes,package=analyze(base_payload,target.payload,parameters)
+    changes,package=await asyncio.to_thread(analyze,base_payload,target.payload,parameters)
     package['warnings'].append('Анализ ограничен загруженной моделью. Связи с типовой конфигурацией доступны только если они представлены в модели.')
     if mode=='full':package['warnings'].append('Предыдущая версия не выбрана: вся модель включена в первичный анализ. Это не сравнение с реальной прошлой версией.')
     from testpilot.contracts import checksum
@@ -194,3 +223,116 @@ def analyze_upload(pid:str,upload_id:str,q:AnalysisInput,actor=Depends(analyst),
     audit(s,'impact',actor,'analyze_upload',aid,{'project_id':pid,'mode':mode})
     names={o['object_id']:o['full_name'] for d in (base_payload,target.payload) for o in d['objects']}
     return {'mode':mode,'analysis_id':aid,'changes':changes,'package':package,'parameters':parameters,'object_names':names}
+
+
+@router.put('/{pid}/connection')
+def update_connection(pid:str,q:ConnectionInput,actor=Depends(analyst),s=Depends(session,scope='function')):
+    p=project_or_404(s,pid,lock=True)
+    if q.odata_url and q.odata_url.strip():
+        try:p.odata_url=validated_url(q.odata_url.strip())
+        except ValueError as e:raise HTTPException(422,f'Некорректный odata_url: {e}')
+    else:p.odata_url=None
+    if q.web_url and q.web_url.strip():
+        try:p.web_url=validated_url(q.web_url.strip())
+        except ValueError as e:raise HTTPException(422,f'Некорректный web_url: {e}')
+    else:p.web_url=None
+    p.auth_username=q.auth_username.strip() if q.auth_username and q.auth_username.strip() else None
+    if q.auth_password is not None:
+        p.auth_password=q.auth_password if q.auth_password else None
+    if not p.auth_username:
+        p.auth_password=None
+    s.flush()
+    audit(s,'impact',actor,'update_connection',p.id,{'has_odata':bool(p.odata_url),'has_web':bool(p.web_url),'has_username':bool(p.auth_username)})
+    return {'ok':True,'connection_settings':{'odata_url':p.odata_url,'web_url':p.web_url,'auth_username':p.auth_username,'has_password':bool(p.auth_password)}}
+
+
+@router.post('/{pid}/connection/probe')
+async def probe_connection(pid:str,actor=Depends(analyst),s=Depends(session,scope='function')):
+    p=project_or_404(s,pid)
+    odata_url=p.odata_url or os.environ.get('TP_1C_ODATA_URL')
+    if not odata_url:
+        raise HTTPException(400,'URL публикации OData не настроен в проекте и не задан в TP_1C_ODATA_URL')
+    web_url=p.web_url or os.environ.get('TP_1C_WEB_URL') or None
+    username=p.auth_username or os.environ.get('TP_1C_USERNAME') or None
+    password=p.auth_password or os.environ.get('TP_1C_PASSWORD') or None
+    authorization=os.environ.get('TP_1C_AUTHORIZATION') or None if not username else None
+    ca_file=os.environ.get('TP_1C_CA_FILE') or None
+    try:
+        profile=Profile(odata_url=odata_url,web_url=web_url,username=username,password=password,authorization=authorization,ca_file=ca_file)
+    except ValueError as e:
+        raise HTTPException(422,f'Ошибка конфигурации подключения: {e}')
+    try:
+        return await asyncio.to_thread(probe,profile)
+    except Exception as e:
+        return {'odata':{'status':'connection_error','message':str(e)},'web':{'status':'connection_error','message':str(e)},'code_changes_detected':False,'tests_executed':0,'warnings':[f'Ошибка диагностики: {e}']}
+
+
+@router.get('/{pid}/connection/enable-odata-script')
+def enable_odata_script(pid:str,actor=Depends(user),s=Depends(session,scope='function')):
+    p=project_or_404(s,pid)
+    script=(
+        "// =============================================================================\n"
+        f"// TestPilot 1C: Скрипт включения состава стандартного интерфейса OData\n"
+        f"// Проект: {p.name} (ID: {p.id})\n"
+        "// Инструкция по выполнению:\n"
+        "// 1. Откройте 1С:Предприятие в режиме предприятия под пользователем с полными правами.\n"
+        "// 2. Откройте внешнюю обработку или консоль кода.\n"
+        "// 3. Выполните приведенный ниже BSL-код.\n"
+        "// 4. После выполнения состав сущностей станет доступен через REST OData.\n"
+        "// =============================================================================\n\n"
+        "Процедура ВключитьСоставOData()\n"
+        "    СоставOData = Новый Массив;\n\n"
+        "    // Справочники\n"
+        "    Для Каждого Мета Из Метаданные.Справочники Цикл\n"
+        "        СоставOData.Добавить(Мета.ПолноеИмя());\n"
+        "    КонецЦикла;\n\n"
+        "    // Документы\n"
+        "    Для Каждого Мета Из Метаданные.Документы Цикл\n"
+        "        СоставOData.Добавить(Мета.ПолноеИмя());\n"
+        "    КонецЦикла;\n\n"
+        "    // Регистры сведений\n"
+        "    Для Каждого Мета Из Метаданные.РегистрыСведений Цикл\n"
+        "        СоставOData.Добавить(Мета.ПолноеИмя());\n"
+        "    КонецЦикла;\n\n"
+        "    // Регистры накопления\n"
+        "    Для Каждого Мета Из Метаданные.РегистрыНакопления Цикл\n"
+        "        СоставOData.Добавить(Мета.ПолноеИмя());\n"
+        "    КонецЦикла;\n\n"
+        "    // Регистры бухгалтерии\n"
+        "    Для Каждого Мета Из Метаданные.РегистрыБухгалтерии Цикл\n"
+        "        СоставOData.Добавить(Мета.ПолноеИмя());\n"
+        "    КонецЦикла;\n\n"
+        "    // Регистры расчета\n"
+        "    Для Каждого Мета Из Метаданные.РегистрыРасчета Цикл\n"
+        "        СоставOData.Добавить(Мета.ПолноеИмя());\n"
+        "    КонецЦикла;\n\n"
+        "    // Планы счетов\n"
+        "    Для Каждого Мета Из Метаданные.ПланыСчетов Цикл\n"
+        "        СоставOData.Добавить(Мета.ПолноеИмя());\n"
+        "    КонецЦикла;\n\n"
+        "    // Планы видов характеристик\n"
+        "    Для Каждого Мета Из Метаданные.ПланыВидовХарактеристик Цикл\n"
+        "        СоставOData.Добавить(Мета.ПолноеИмя());\n"
+        "    КонецЦикла;\n\n"
+        "    // Бизнес-процессы\n"
+        "    Для Каждого Мета Из Метаданные.БизнесПроцессы Цикл\n"
+        "        СоставOData.Добавить(Мета.ПолноеИмя());\n"
+        "    КонецЦикла;\n\n"
+        "    // Задачи\n"
+        "    Для Каждого Мета Из Метаданные.Задачи Цикл\n"
+        "        СоставOData.Добавить(Мета.ПолноеИмя());\n"
+        "    КонецЦикла;\n\n"
+        "    // Установка состава стандартного интерфейса OData\n"
+        "    УстановитьСоставСтандартногоИнтерфейсаOData(СоставOData);\n\n"
+        '    Сообщить("Состав стандартного интерфейса OData успешно обновлен. Опубликовано объектов: " + Строка(СоставOData.Количество()));\n'
+        "КонецПроцедуры\n\n"
+        "ВключитьСоставOData();\n"
+    )
+    return Response(
+        content=script,
+        media_type='text/plain; charset=utf-8',
+        headers={
+            'Content-Disposition': 'attachment; filename="enable_odata.bsl"',
+            'X-Content-Type-Options': 'nosniff',
+        }
+    )

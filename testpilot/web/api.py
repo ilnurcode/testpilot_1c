@@ -45,3 +45,6 @@ async def demo(request:Request,actor=Depends(expert)):
 
 from testpilot.web.presentation import router as presentation_router
 app.include_router(presentation_router)
+
+from testpilot.web.audit_api import router as audit_router
+app.include_router(audit_router)

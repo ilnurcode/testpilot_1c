@@ -154,6 +154,10 @@ class ProjectRow(Base):
     created_by: Mapped[str]=mapped_column(String(100))
     created_at: Mapped[str]=mapped_column(String(50),default=now)
     next_number: Mapped[int]=mapped_column(Integer,default=0)
+    odata_url: Mapped[str|None] = mapped_column(String(500), nullable=True)
+    web_url: Mapped[str|None] = mapped_column(String(500), nullable=True)
+    auth_username: Mapped[str|None] = mapped_column(String(120), nullable=True)
+    auth_password: Mapped[str|None] = mapped_column(String(120), nullable=True)
 
 class UploadRow(Base):
     __tablename__='impact_uploads'

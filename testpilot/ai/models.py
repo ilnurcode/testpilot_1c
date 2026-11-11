@@ -2,11 +2,20 @@ from typing import Literal
 from pydantic import Field,model_validator
 from testpilot.contracts import Model,Text,Identifier
 
+from pydantic import ConfigDict
+
 class Case(Model):
-    quantity:int=Field(ge=1,le=1000)
-    price:float=Field(ge=0,le=1000000)
-    discount:float=Field(ge=0,le=100)
-    expected_total:float=Field(ge=0,le=1000000000)
+    model_config = ConfigDict(extra='allow', allow_inf_nan=False)
+    # Поля учебного стенда продаж (для обратной совместимости)
+    quantity: int | None = Field(default=None, ge=1, le=1000)
+    price: float | None = Field(default=None, ge=0, le=1000000)
+    discount: float | None = Field(default=None, ge=0, le=100)
+    expected_total: float | None = Field(default=None, ge=0, le=1000000000)
+    # Универсальные поля для произвольных метаданных 1С
+    entity: str | None = None
+    fields: dict = Field(default_factory=dict)
+    expected: str | float | int | dict | None = None
+    steps: list[dict] = Field(default_factory=list)
 
 class Proposal(Model):
     title:Text
@@ -38,3 +47,8 @@ class GenerateRequest(Model):
 class Decision(Model):
     reason:Text
     selected_proposals:list[int]=Field(min_length=1,max_length=6)
+
+class LLMSettingsInput(Model):
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None

@@ -33,7 +33,7 @@ def test_no_redirects_or_false_success(status,expected):
     assert len(seen)==1 and result['odata']['status']==expected
 
 
-@pytest.mark.parametrize('content',[b'<html>Login</html>',b'not xml',b'<!DOCTYPE x><x/>',METADATA.decode().encode('utf-16'),b'x'*(MAX_BYTES+1)])
+@pytest.mark.parametrize('content',[b'<html>Login</html>',b'not xml',b'<!DOCTYPE x><x/>',METADATA.decode().encode('utf-16'),b'x'*(MAX_BYTES+1)],ids=['html','not_xml','doctype','utf16','oversized'])
 def test_invalid_or_unsafe_metadata(content):
     with pytest.raises(ValueError):parse_metadata(content)
 

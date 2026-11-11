@@ -14,3 +14,14 @@
 Контракты: `contracts/execution-job-1.0.schema.json`, `execution-report-1.0.schema.json`, `test-run-1.0.schema.json`. Поле `executor_connected=false` остаётся честным статусом данного MVP даже после импорта вручную присланного отчёта.
 
 Уточнённый целевой процесс с расширениями и Playwright — [connected-workflow.md](connected-workflow.md). Добавленная CLI-диагностика `python -m testpilot.integration.probe` проверяет только публикацию; она ещё не является исполнителем тестов.
+
+
+## Реализованные адаптеры интеграции (Фазы 1-3)
+
+В кодовой базе добавлены ключевые модули сопряжения с 1С:
+1. `testpilot.impact.xml_adapter.XMLEdtAdapter`: безопасный разбор XML/EDT выгрузок метаданных 1С (`.xml` и `.zip`), защита от XXE/DOCTYPE, извлечение объектов (`Catalog`, `Document`, `InformationRegister`, `AccumulationRegister`, `CommonModule`, `EventSubscription`) и связей по реквизитам в нормализованную модель `Configuration` 1.0.
+2. `testpilot.integration.odata.ODataClient`: клиент OData 1С (чтение `$metadata`, выборка сущностей с `$filter`/`$select`, создание, изменение и удаление тестовых записей, белый список таблиц `ALLOWED_PREFIXES`, CLI `python -m testpilot.integration.odata`).
+3. `testpilot.integration.webclient.WebClientRunner`: Playwright-раннер для веб-клиента 1С:Предприятие 8.3 (авторизация, ожидание готовности интерфейса 1С, клики, заполнение реквизитов, проверки значений и фиксация скриншотов).
+4. `testpilot.impact.v8_container.V8Container` и `testpilot.impact.binary_adapter.Binary1CAdapter`: прямой разбор бинарных расширений (.cfe), внешних обработок (.epf), отчётов (.erf) и конфигураций (.cf). Распаковка блоков составного файла 1С v8, декомпрессия Deflate-потоков, распознавание директив расширений (`&Вместо`, `&Перед`, `&После`, `&ИзменениеИКонтроль`), извлечение вызовов метаданных и построение графа области влияния.
+
+*Примечание по проверке:* Все адаптеры валидированы изолированными модульными тестами (100 passed). Доступ к живой публикации проверен на физической базе DemoEnterprise20.

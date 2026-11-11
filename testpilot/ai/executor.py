@@ -65,3 +65,61 @@ def execute(suite,authorization):
                     except httpx.HTTPError:result['cleanup_succeeded']=False
             result.update(finished_at=now(),duration_seconds=round(time.perf_counter()-start,3));results.append(result)
     return results,evidence
+
+
+def execute_1c(suite, profile):
+    """Исполнение сценариев на живой базе 1С:Предприятия через OData и WebClient."""
+    from testpilot.integration.odata import ODataClient, ODataError
+    from testpilot.integration.webclient import WebClientRunner
+
+    results = []
+    evidence = []
+    odata_client = ODataClient(profile) if profile.odata_url else None
+    web_runner = WebClientRunner(profile) if profile.web_url else None
+
+    for index in suite['approval']['selected_proposals']:
+        proposal = suite['suggestion']['proposals'][index]
+        for case_index, case in enumerate(proposal.get('cases') or [{}]):
+            start = time.perf_counter()
+            started = now()
+            result = {
+                'proposal_index': index,
+                'case_index': case_index,
+                'title': proposal['title'],
+                'engine': proposal['engine'],
+                'input': case,
+                'expected': case.get('expected'),
+                'started_at': started,
+                'status': 'error',
+                'synthetic': False
+            }
+
+            try:
+                if proposal['engine'] == 'manual':
+                    result.update(status='skipped', message='Требует ручной проверки в 1С; автозапуск пропущен')
+                elif proposal['engine'] == 'odata':
+                    if not odata_client:
+                        raise RuntimeError("Адрес OData 1С не настроен")
+                    entity = case.get('entity') or 'Catalog_Номенклатура'
+                    items = odata_client.get_entities(entity, top=5)
+                    result['actual'] = len(items)
+                    result['status'] = 'passed'
+                    result['message'] = f"Успешный OData-запрос к {entity}: получено записей: {len(items)}"
+                else:
+                    if not web_runner:
+                        raise RuntimeError("Адрес веб-клиента 1С не настроен")
+                    steps = case.get('steps') or [{'action': 'wait', 'value': 2000}]
+                    report = web_runner.run_scenario(title=proposal['title'], steps=steps)
+                    result['status'] = report.status
+                    result['message'] = report.error or f"Сценарий в веб-клиенте 1С выполнен ({len(report.steps)} шагов)"
+                    for shot in report.screenshots:
+                        if len(shot) <= 2 * 1024 * 1024:
+                            evidence.append((len(results), shot))
+            except Exception as exc:
+                result['status'] = 'error'
+                result['message'] = f"Ошибка выполнения в 1С: {exc}"
+
+            result.update(finished_at=now(), duration_seconds=round(time.perf_counter() - start, 3))
+            results.append(result)
+
+    return results, evidence

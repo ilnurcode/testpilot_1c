@@ -72,3 +72,24 @@ def test_real_projects_cannot_use_demo_executor(clients,monkeypatch):
     r=c.post('/api/v1/ai/suites',json={'package_id':p['package_id'],'project_id':'unit','provider':'llm','consent':True});sid=r.json()['suite_id']
     assert c.post(f'/api/v1/ai/suites/{sid}/approve',json={'reason':'Unit','selected_proposals':[0]}).status_code==200
     assert c.post(f'/api/v1/ai/suites/{sid}/run-demo').status_code==409
+
+
+def test_llm_settings_api(clients):
+    _, c = clients
+    # 1. Чтение настроек
+    st = c.get('/api/v1/ai/settings/llm').json()
+    assert 'base_url' in st and 'model' in st and 'has_key' in st
+
+    # 2. Обновление настроек с вводом нового ключа
+    payload = {
+        'base_url': 'https://api.openai.com/v1',
+        'model': 'gpt-4o-mini',
+        'api_key': 'sk-test-secret-key-123'
+    }
+    r = c.put('/api/v1/ai/settings/llm', json=payload)
+    assert r.status_code == 200, r.text
+    res = r.json()
+    assert res['model'] == 'gpt-4o-mini'
+    assert res['has_key'] is True
+    # Убеждаемся, что секретный ключ не отдаётся наружу
+    assert 'sk-test-secret-key-123' not in json.dumps(res)

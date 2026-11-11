@@ -143,3 +143,82 @@ def test_invalid_labels_do_not_break_database_transaction(clients):
     assert upload(c,p,b'file','file.cfe',component='bad\x00value').status_code==422
     assert upload(c,p,b'file','file.cfe',label='bad\nvalue').status_code==422
     assert c.get(f'/api/v1/projects/{p}').json()['upload_count']==0
+
+
+def test_upload_and_analyze_1c_xml(clients):
+    c,_=clients;p=project(c)
+    xml_data = b"""<?xml version="1.0" encoding="UTF-8"?>
+<ConfigDumpInfo xmlns="http://v8.1c.ru/8.3/MDClasses">
+    <Catalog name="Catalog1"><name>Catalog1</name></Catalog>
+    <Document name="Doc1"><name>Doc1</name></Document>
+</ConfigDumpInfo>"""
+    r = upload(c, p, xml_data, 'dump.xml', label='1.0')
+    assert r.status_code == 200, r.text
+    info = r.json()
+    assert info['status'] == 'ready'
+    assert info['summary']['object_count'] == 2
+
+    # Анализ загруженного XML
+    ar = c.post(f'/api/v1/projects/{p}/uploads/{info["id"]}/analyze', json={})
+    assert ar.status_code == 200, ar.text
+    res = ar.json()
+    assert res['mode'] == 'full'
+    assert len(res['package']['affected_objects']) == 2
+
+
+def test_upload_and_analyze_binary_cfe(clients):
+    from tests.test_binary_adapter import build_mock_v8_container
+    c,_=clients;p=project(c)
+    bsl = """
+&Вместо("ПровестиЗаказ")
+Процедура Расш_ПровестиЗаказ()
+    Док = Документы.РеализацияТоваровУслуг.ПустаяСсылка();
+КонецПроцедуры
+""".encode('utf-8')
+    raw_cfe = build_mock_v8_container({'ExtensionModule': bsl})
+    r = upload(c, p, raw_cfe, 'Extension.cfe', label='1.0')
+    assert r.status_code == 200, r.text
+    info = r.json()
+    assert info['status'] == 'ready'
+    assert info['summary']['object_count'] >= 2
+
+    # Запуск анализа области влияния для CFE
+    ar = c.post(f'/api/v1/projects/{p}/uploads/{info["id"]}/analyze', json={})
+    assert ar.status_code == 200, ar.text
+    res = ar.json()
+    assert res['mode'] == 'full'
+    assert len(res['package']['affected_objects']) >= 2
+
+
+def test_project_connection_settings_and_script(clients):
+    c, _ = clients
+    p = project(c, 'Проект с 1С')
+    
+    # 1. Проверяем наличие connection_settings
+    proj = c.get(f'/api/v1/projects/{p}').json()
+    assert 'connection_settings' in proj
+    assert proj['connection_settings']['odata_url'] is None
+
+    # 2. Обновляем параметры подключения
+    payload = {
+        'odata_url': 'http://localhost/DemoEnterprise20/odata/standard.odata',
+        'web_url': 'http://localhost/DemoEnterprise20/ru_RU',
+        'auth_username': 'Администратор',
+        'auth_password': '123'
+    }
+    r = c.put(f'/api/v1/projects/{p}/connection', json=payload)
+    assert r.status_code == 200, r.text
+    res = r.json()
+    assert res['ok'] is True
+    assert res['connection_settings']['odata_url'] == payload['odata_url']
+    assert res['connection_settings']['has_password'] is True
+
+    # 3. Скачивание BSL скрипта включения OData
+    sr = c.get(f'/api/v1/projects/{p}/connection/enable-odata-script')
+    assert sr.status_code == 200
+    assert 'УстановитьСоставСтандартногоИнтерфейсаOData' in sr.text
+    assert 'enable_odata.bsl' in sr.headers.get('content-disposition', '')
+
+    # 4. Проверка невалидного URL
+    bad = c.put(f'/api/v1/projects/{p}/connection', json={'odata_url': 'ftp://bad-url'})
+    assert bad.status_code == 422
