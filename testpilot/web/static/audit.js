@@ -136,9 +136,9 @@ function renderAuditResult(summary) {
   `;
 
   if (!summary.issues || summary.issues.length === 0) {
-    html += \`<p class="success" style="margin-top: 12px;">✓ Уязвимостей и нарушений стандартов v8std не обнаружено.</p>\`;
+    html += '<p class="success" style="margin-top: 12px;">✓ Уязвимостей и нарушений стандартов v8std не обнаружено.</p>';
   } else {
-    html += \`<div style="display: flex; flex-direction: column; gap: 10px; margin-top: 16px;">\`;
+    html += '<div style="display: flex; flex-direction: column; gap: 10px; margin-top: 16px;">';
     summary.issues.forEach((iss, idx) => {
       const isCrit = iss.severity === 'CRITICAL';
       const isHigh = iss.severity === 'HIGH';
@@ -157,10 +157,10 @@ function renderAuditResult(summary) {
         </div>
       `;
     });
-    html += `</div>`;
+    html += '</div>';
   }
 
-  html += `</div>`;
+  html += '</div>';
   target.innerHTML = html;
   target.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
