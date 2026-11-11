@@ -69,7 +69,7 @@ class WebClientRunner:
         start_time = time.perf_counter()
 
         def _run(p):
-            path = browser_path()
+            path = browser_path(p)
             if not path:
                 raise RuntimeError("Chromium не найден для запуска веб-клиента 1С")
 
@@ -111,15 +111,38 @@ class WebClientRunner:
                     
                     try:
                         if action == 'click':
-                            # Поиск по тексту или селектору
-                            loc = page.locator(f'button:has-text("{target}"), a:has-text("{target}"), {target}').first
-                            loc.click()
+                            clicked = False
+                            for loc in (
+                                page.get_by_text(target, exact=True).first,
+                                page.get_by_text(target, exact=False).first,
+                            ):
+                                try:
+                                    if loc.is_visible(timeout=2000):
+                                        loc.click()
+                                        clicked = True
+                                        break
+                                except Exception:
+                                    pass
+                            if not clicked:
+                                page.locator(target).first.click()
                         elif action == 'fill':
-                            loc = page.locator(f'input[name*="{target}"], input[id*="{target}"], {target}').first
-                            loc.fill(str(val))
+                            filled = False
+                            for loc in (
+                                page.get_by_label(target).first,
+                                page.locator(f'input[name*="{target}"], input[id*="{target}"], textarea[name*="{target}"]').first,
+                            ):
+                                try:
+                                    if loc.is_visible(timeout=2000):
+                                        loc.fill(str(val))
+                                        filled = True
+                                        break
+                                except Exception:
+                                    pass
+                            if not filled:
+                                page.locator(target).first.fill(str(val))
                         elif action == 'assert_text':
-                            loc = page.locator(f':has-text("{target}")')
-                            if not loc.is_visible():
+                            loc = page.get_by_text(target).first
+                            if not loc.is_visible(timeout=3000):
                                 raise AssertionError(f"Текст '{target}' не обнаружен на форме 1С")
                         elif action == 'wait':
                             page.wait_for_timeout(float(val or 1000))

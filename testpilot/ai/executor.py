@@ -7,12 +7,15 @@ import httpx
 from testpilot.contracts import now
 
 
-def browser_path():
+def browser_path(playwright_instance=None):
     configured=os.environ.get('TP_CHROMIUM_PATH')
     if configured:
         return configured if Path(configured).is_file() else None
     if os.name!='nt' and Path('/usr/bin/chromium').is_file():
         return '/usr/bin/chromium'
+    if playwright_instance is not None:
+        path=playwright_instance.chromium.executable_path
+        return path if Path(path).is_file() else None
     # Playwright supplies its managed Chromium on Windows and minimal containers.
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
