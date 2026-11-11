@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.17">
+  <AccumulationRegister name="ТоварыНаСкладах">
+    <Properties>
+      <Name>ТоварыНаСкладах</Name>
+      <Synonym>Товары на складах</Synonym>
+    </Properties>
+    <ChildObjects>
+      <Attribute name="Номенклатура">
+        <Type>Catalog.Номенклатура</Type>
+      </Attribute>
+    </ChildObjects>
+  </AccumulationRegister>
+</MetaDataObject>

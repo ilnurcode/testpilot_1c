@@ -32,7 +32,7 @@ async def gateway(service:str,path:str,request:Request,actor=Depends(user)):
         raise HTTPException(404,'Неизвестный API')
     base=os.environ.get('IMPACT_URL','http://127.0.0.1:8001') if service=='impact' else os.environ.get('INTELLIGENCE_URL','http://127.0.0.1:8002')
     try:
-        async with httpx.AsyncClient(timeout=120) as c:
+        async with httpx.AsyncClient(timeout=300) as c:
             r=await c.request(request.method,base+'/'+path,params=request.query_params,content=await request.body(),headers={'Authorization':request.headers['authorization'],'Content-Type':request.headers.get('content-type','application/json')})
     except httpx.HTTPError:raise HTTPException(503,'Сервис временно недоступен')
     headers={k:v for k,v in r.headers.items() if k.lower() in ('content-type','content-disposition','x-content-type-options','x-checksum-sha256')}

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.17">
+  <Catalog name="Номенклатура">
+    <Properties>
+      <Name>Номенклатура</Name>
+      <Synonym>Номенклатура</Synonym>
+    </Properties>
+    <ChildObjects>
+      <Attribute name="Артикул">
+        <Type>xs:string</Type>
+      </Attribute>
+    </ChildObjects>
+  </Catalog>
+</MetaDataObject>

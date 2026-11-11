@@ -79,14 +79,14 @@ def decode_configuration(raw):
         raise HTTPException(422,{'message':'Неверный нормализованный JSON конфигурации','fields':[{'path':list(x['loc']),'message':x['msg']} for x in e.errors()]})
 
 
-def inspect_file(raw,suffix):
+def inspect_file(raw,suffix,default_cfg_id='c1_extracted',default_version='1.0.0'):
     if suffix=='.json':
         if len(raw)>8*1024*1024:raise HTTPException(413,'Нормализованный JSON должен быть не больше 8 МиБ')
         return decode_configuration(raw),'Модель проверена и готова к анализу.'
     if suffix=='.xml':
         try:
             from testpilot.impact.xml_adapter import XMLEdtAdapter
-            return XMLEdtAdapter().parse(raw),'Модель XML/EDT 1С успешно разобрана.'
+            return XMLEdtAdapter().parse(raw, configuration_id=default_cfg_id, version=default_version),'Модель XML/EDT 1С успешно разобрана.'
         except Exception as e:
             raise HTTPException(422,f'Ошибка разбора XML выгрузки 1С: {e}')
     if suffix=='.zip':
@@ -111,7 +111,7 @@ def inspect_file(raw,suffix):
                 if any(n.lower().endswith('.xml') for n in names):
                     try:
                         from testpilot.impact.xml_adapter import XMLEdtAdapter
-                        return XMLEdtAdapter().parse(raw),'Выгрузка 1С XML/EDT из архива успешно разобрана.'
+                        return XMLEdtAdapter().parse(raw, configuration_id=default_cfg_id, version=default_version),'Выгрузка 1С XML/EDT из архива успешно разобрана.'
                     except Exception:
                         pass
                 return None,'Архив сохранён. Для анализа исходников нужен адаптер их формата; configuration.json в корне отсутствует.'
@@ -119,7 +119,7 @@ def inspect_file(raw,suffix):
     if suffix in ('.cfe', '.epf', '.erf', '.cf'):
         try:
             from testpilot.impact.binary_adapter import Binary1CAdapter
-            model = Binary1CAdapter().parse(raw, filename=f"upload{suffix}")
+            model = Binary1CAdapter().parse(raw, filename=f"upload{suffix}", configuration_id=default_cfg_id, version=default_version)
             if model and model.objects:
                 return model, f'Бинарный контейнер {suffix.upper()[1:]} успешно разобран, извлечены объекты и связи.'
         except Exception:
@@ -162,7 +162,9 @@ def upload_file(pid:str,raw:bytes=Depends(upload_body),filename:str=Query(min_le
     p=project_or_404(s,pid,lock=True)
     old=s.scalar(metadata_query().where(UploadRow.project_id==pid,UploadRow.component==component,UploadRow.kind==kind,UploadRow.checksum==digest))
     if old:return {**upload_dict(old),'idempotent':True}
-    model,message=inspect_file(raw,suffix)
+    cfg_hint=p.configuration_id or f'proj-{pid[:8]}'
+    ver_hint=(label or '').strip() or f'1.0.{p.next_number+1}'
+    model,message=inspect_file(raw,suffix,default_cfg_id=cfg_hint,default_version=ver_hint)
     previous=None
     if baseline_id=='auto':
         previous=s.scalar(metadata_query().where(UploadRow.project_id==pid,UploadRow.kind==kind,UploadRow.component==component).order_by(UploadRow.number.desc()).limit(1))
@@ -246,15 +248,23 @@ def update_connection(pid:str,q:ConnectionInput,actor=Depends(analyst),s=Depends
     return {'ok':True,'connection_settings':{'odata_url':p.odata_url,'web_url':p.web_url,'auth_username':p.auth_username,'has_password':bool(p.auth_password)}}
 
 
+def _resolve_probe_url(url: str | None) -> str | None:
+    if not url:
+        return url
+    from pathlib import Path
+    if Path('/.dockerenv').exists():
+        return url.replace('://localhost', '://host.docker.internal').replace('://127.0.0.1', '://host.docker.internal')
+    return url
+
 @router.post('/{pid}/connection/probe')
 async def probe_connection(pid:str,actor=Depends(analyst),s=Depends(session,scope='function')):
     p=project_or_404(s,pid)
-    odata_url=p.odata_url or os.environ.get('TP_1C_ODATA_URL')
+    odata_url=_resolve_probe_url(p.odata_url or os.environ.get('TP_1C_ODATA_URL'))
     if not odata_url:
         raise HTTPException(400,'URL публикации OData не настроен в проекте и не задан в TP_1C_ODATA_URL')
-    web_url=p.web_url or os.environ.get('TP_1C_WEB_URL') or None
+    web_url=_resolve_probe_url(p.web_url or os.environ.get('TP_1C_WEB_URL') or None)
     username=p.auth_username or os.environ.get('TP_1C_USERNAME') or None
-    password=p.auth_password or os.environ.get('TP_1C_PASSWORD') or None
+    password=(p.auth_password if p.auth_password is not None else os.environ.get('TP_1C_PASSWORD', '')) if username else None
     authorization=os.environ.get('TP_1C_AUTHORIZATION') or None if not username else None
     ca_file=os.environ.get('TP_1C_CA_FILE') or None
     try:

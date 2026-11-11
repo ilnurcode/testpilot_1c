@@ -39,7 +39,7 @@ class Profile:
     def __post_init__(self):
         validated_url(self.odata_url)
         if self.web_url: validated_url(self.web_url)
-        if bool(self.username)!=bool(self.password):
+        if (self.username is not None and self.password is None) or (self.password is not None and not self.username):
             raise ValueError('Для Basic Auth нужны оба значения TP_1C_USERNAME и TP_1C_PASSWORD')
         if self.authorization and self.username:
             raise ValueError('Выберите один способ аутентификации: Authorization или username/password')
@@ -93,7 +93,7 @@ def probe(profile,transport=None):
             'code_changes_detected':False,'tests_executed':0,
             'warnings':['OData $metadata не содержит исходный BSL-код и не выявляет изменения расширений.',
                         'Доступность веб-страницы не подтверждает успешный вход или совместимость Playwright-сценариев.']}
-    with httpx.Client(timeout=15,verify=verify,follow_redirects=False,transport=transport) as client:
+    with httpx.Client(timeout=30,verify=verify,follow_redirects=False,transport=transport) as client:
         try:
             status,body=read_bounded(client,validated_url(profile.odata_url)+'/$metadata',headers,auth)
             if status==200:

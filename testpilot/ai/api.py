@@ -69,6 +69,8 @@ def create(q:GenerateRequest,actor=Depends(analyst),s=Depends(session,scope='fun
     if q.provider=='llm':
         if not q.consent:raise HTTPException(422,'Подтвердите передачу контекста проекта внешнему провайдеру')
         suggestion,model=provider.generate(package,rows,q.object_names,q.model_context)
+    elif q.provider=='local':
+        suggestion=provider.generate_local_1c_tests(package,rows,q.object_names);model='local-rules'
     else:suggestion=provider.demo_suggestion(package);model=None
     valid_ids={t.id for t in catalog}
     if not set(suggestion.selected_test_ids)<=valid_ids:raise HTTPException(502,'Нейросеть предложила неизвестные или несовместимые тесты')
@@ -139,16 +141,41 @@ def run_demo(sid:str,request:Request,actor=Depends(expert),s=Depends(session,sco
 
 
 
+def _docker_host_url(url: str | None) -> str | None:
+    if not url:
+        return url
+    if Path('/.dockerenv').exists():
+        return url.replace('://localhost', '://host.docker.internal').replace('://127.0.0.1', '://host.docker.internal')
+    return url
+
 @router.post('/suites/{sid}/run-1c')
 def run_1c(sid:str,actor=Depends(expert),s=Depends(session,scope='function')):
     row=require(s.scalar(select(AISuiteRow).where(AISuiteRow.id==sid).with_for_update()))
     if row.status=='completed':return row.payload
     if row.status!='approved':raise HTTPException(409,'Сначала подтвердите сценарии и тестовые данные')
     from testpilot.integration.probe import Profile
+    from testpilot.db import ProjectRow
+    proj = s.get(ProjectRow, row.project_id)
     try:
-        profile = Profile.from_environment()
+        if proj and (proj.odata_url or proj.web_url):
+            odata_url = _docker_host_url(proj.odata_url or os.environ.get('TP_1C_ODATA_URL', ''))
+            web_url = _docker_host_url(proj.web_url or os.environ.get('TP_1C_WEB_URL') or None)
+            uname = proj.auth_username or os.environ.get('TP_1C_USERNAME') or None
+            pwd = (proj.auth_password if proj.auth_password is not None else '') if uname else None
+            auth_hdr = os.environ.get('TP_1C_AUTHORIZATION') or None if not uname else None
+            profile = Profile(odata_url=odata_url, web_url=web_url, username=uname, password=pwd, authorization=auth_hdr)
+        else:
+            env_prof = Profile.from_environment()
+            profile = Profile(
+                odata_url=_docker_host_url(env_prof.odata_url),
+                web_url=_docker_host_url(env_prof.web_url),
+                username=env_prof.username,
+                password=env_prof.password,
+                authorization=env_prof.authorization,
+                ca_file=env_prof.ca_file,
+            )
     except Exception as e:
-        raise HTTPException(422, f'Параметры подключения к 1С не настроены в окружении: {e}')
+        raise HTTPException(422, f'Параметры подключения к 1С не настроены: {e}')
     from testpilot.ai.executor import execute_1c
     results,shots=execute_1c(row.payload, profile)
     for index,content in shots:

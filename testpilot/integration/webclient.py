@@ -1,3 +1,4 @@
+import base64
 """Playwright-адаптер для автоматизации сценариев в веб-клиенте 1С:Предприятие."""
 import time
 from dataclasses import dataclass, field
@@ -26,30 +27,57 @@ class ScenarioReport:
     error: str | None = None
     screenshots: list[bytes] = field(default_factory=list)
 
+
+def _safe_screenshot(context, page) -> bytes:
+    try:
+        cdp = context.new_cdp_session(page)
+        res = cdp.send('Page.captureScreenshot', {'format': 'png'})
+        cdp.detach()
+        return base64.b64decode(res['data'])
+    except Exception:
+        return page.screenshot(full_page=False, animations='disabled', timeout=15000)
+
 class WebClientRunner:
     """Исполнитель сценариев в веб-клиенте 1С:Предприятие 8.3."""
 
-    def __init__(self, profile: Profile, headless: bool = True, default_timeout: float = 15000.0):
+    def __init__(self, profile: Profile, headless: bool = True, default_timeout: float = 30000.0):
         self.profile = profile
         self.headless = headless
         self.default_timeout = default_timeout
         self.web_url = (profile.web_url or profile.odata_url).rstrip('/')
 
     def handle_login(self, page) -> None:
-        """Обработка стандартного окна авторизации веб-клиента 1С."""
-        # 1C Web-клиент часто показывает форму входа с выбором пользователя или полями ввода
+        """Обработка стандартного окна авторизации веб-клиента 1С (8.3 и 8.5)."""
         try:
-            user_input = page.locator('input[id*="userName"], input[name*="userName"], #userName')
-            if user_input.is_visible(timeout=2000):
+            # Платформа 8.5 (#authWindow_basic_login) или 8.3 (#userName)
+            user_input = page.locator('#authWindow_basic_login, input[id*="userName"], input[name*="userName"], #userName').first
+            try:
+                user_input.wait_for(state='visible', timeout=12000)
+                has_login = True
+            except Exception:
+                has_login = False
+            if has_login:
                 if self.profile.username:
                     user_input.fill(self.profile.username)
-                pwd_input = page.locator('input[type="password"]')
-                if pwd_input.is_visible() and self.profile.password:
+                pwd_input = page.locator('#authWindow_basic_password, input[type="password"]').first
+                if pwd_input.is_visible(timeout=1000) and self.profile.password:
                     pwd_input.fill(self.profile.password)
-                ok_btn = page.locator('button[id*="ok"], button:has-text("Войти"), button:has-text("OK")')
-                if ok_btn.is_visible():
+                ok_btn = page.get_by_role("button", name="Войти").first
+                if not ok_btn.is_visible(timeout=500):
+                    ok_btn = page.locator('button[id*="ok"], button:has-text("OK")').first
+                if ok_btn.is_visible(timeout=1000):
                     ok_btn.click()
-                page.wait_for_load_state('networkidle', timeout=self.default_timeout)
+                try:
+                    page.wait_for_function(
+                        '''() => {
+                            const txt = document.body.innerText || '';
+                            return txt.includes('Продажи') || txt.includes('Главное') || txt.includes('Закупки') || txt.includes('Начальная страница') || txt.includes('Не найдена лицензия') || txt.includes('вход в приложение невозможен') || txt.includes('Выполнить запуск');
+                        }''',
+                        timeout=45000
+                    )
+                except Exception:
+                    pass
+                page.wait_for_timeout(1500)
         except Exception:
             pass
 
@@ -57,7 +85,7 @@ class WebClientRunner:
         """Ожидание готовности интерфейса 1С:Предприятия."""
         # Ждём исчезновения оверлеев загрузки и появления рабочей области
         try:
-            page.wait_for_selector('.waitingOverlay, .blockUI', state='detached', timeout=self.default_timeout)
+            page.wait_for_selector('.waitingOverlay, .blockUI', state='hidden', timeout=2000)
         except Exception:
             pass
 
@@ -73,7 +101,7 @@ class WebClientRunner:
             if not path:
                 raise RuntimeError("Chromium не найден для запуска веб-клиента 1С")
 
-            browser = p.chromium.launch(executable_path=path, headless=self.headless, args=['--no-sandbox'])
+            browser = p.chromium.launch(executable_path=path, headless=self.headless, args=['--no-sandbox', '--disable-dev-shm-usage'])
             try:
                 context = browser.new_context(
                     viewport={'width': 1280, 'height': 800},
@@ -85,11 +113,23 @@ class WebClientRunner:
 
                 # Шаг 0: Открытие URL веб-клиента
                 step_start = time.perf_counter()
-                page.goto(self.web_url)
+                page.goto(self.web_url, wait_until='domcontentloaded', timeout=45000)
                 self.handle_login(page)
                 self.wait_for_1c(page)
+                body_txt = page.locator('body').inner_text() or ''
+                if 'Не найдена лицензия' in body_txt or 'вход в приложение невозможен' in body_txt:
+                    shot = _safe_screenshot(context, page)
+                    report.steps.append(StepResult(
+                        step_number=0, action='open_url', target=self.web_url, value=None,
+                        status='failed', message='1С отклонила запуск сеанса: ' + body_txt.replace('\n', ' ')[:240],
+                        duration_seconds=round(time.perf_counter() - step_start, 3), screenshot=shot
+                    ))
+                    report.screenshots.append(shot)
+                    report.status = 'failed'
+                    report.error = 'Платформа 1С заблокировала вход в веб-клиент: ' + body_txt.replace('\n', ' ')[:240]
+                    return report
                 
-                shot = page.screenshot(full_page=False)
+                shot = _safe_screenshot(context, page)
                 report.steps.append(StepResult(
                     step_number=0,
                     action='open_url',
@@ -151,7 +191,7 @@ class WebClientRunner:
 
                         self.wait_for_1c(page)
                         s_duration = round(time.perf_counter() - s_start, 3)
-                        shot = page.screenshot(full_page=False)
+                        shot = _safe_screenshot(context, page)
                         report.steps.append(StepResult(
                             step_number=idx,
                             action=action,
@@ -166,7 +206,7 @@ class WebClientRunner:
 
                     except Exception as step_exc:
                         s_duration = round(time.perf_counter() - s_start, 3)
-                        shot = page.screenshot(full_page=False)
+                        shot = _safe_screenshot(context, page)
                         report.steps.append(StepResult(
                             step_number=idx,
                             action=action,
@@ -183,6 +223,11 @@ class WebClientRunner:
                         break
 
             finally:
+                try:
+                    page.close(run_before_unload=True)
+                    time.sleep(0.5)
+                except Exception:
+                    pass
                 browser.close()
 
         try:

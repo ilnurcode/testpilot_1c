@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.17">
+  <Document name="ЗаказКлиента">
+    <Properties>
+      <Name>ЗаказКлиента</Name>
+      <Synonym>Заказ клиента</Synonym>
+    </Properties>
+    <ChildObjects>
+      <Attribute name="ОсновнаяНоменклатура">
+        <Type>Catalog.Номенклатура</Type>
+      </Attribute>
+      <Attribute name="СервисИнтеграции">
+        <Type>CommonModule.ИнтеграцияСлужебный</Type>
+      </Attribute>
+    </ChildObjects>
+  </Document>
+</MetaDataObject>

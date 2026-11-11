@@ -39,7 +39,7 @@ class Suggestion(Model):
 class GenerateRequest(Model):
     package_id:Identifier
     project_id:str=Field(max_length=36)
-    provider:Literal['llm','demo']='demo'
+    provider:Literal['llm','demo','local']='local'
     consent:bool=False
     model_context:list[dict]=Field(default_factory=list,max_length=100)
     object_names:dict[str,str]=Field(default_factory=dict,max_length=10000)

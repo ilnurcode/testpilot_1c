@@ -110,7 +110,11 @@ async function auditPage() {
 }
 
 function renderAuditResult(summary) {
-  const target = $('#auditResult');
+  return renderAuditResultInto(summary, '#auditResult');
+}
+
+function renderAuditResultInto(summary, selector) {
+  const target = $(selector);
   if (!target) return;
 
   const passed = summary.passed;

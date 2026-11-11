@@ -32,14 +32,13 @@ class XMLEdtAdapter:
     def parse(self, content: bytes, configuration_id: str = 'c1_extracted', version: str = '1.0.0') -> Configuration:
         if len(content) > MAX_XML_BYTES:
             raise ValueError(f"Размер XML превышает максимально допустимый ({MAX_XML_BYTES} байт)")
-        
-        # Проверка на наличие ZIP
+
         if content.startswith(b'PK\x03\x04'):
             return self._parse_zip(content, configuration_id, version)
 
         return self._parse_xml_bytes(content, configuration_id, version)
 
-    def _parse_xml_bytes(self, content: bytes, configuration_id: str, version: str) -> Configuration:
+    def _extract_from_xml(self, content: bytes) -> tuple[list[Object], list[Edge]]:
         lower = content[:2048].lower()
         if b'<!doctype' in lower or b'<!entity' in lower:
             raise ValueError("Небезопасный XML: запрещены объявления DOCTYPE и ENTITY")
@@ -49,12 +48,10 @@ class XMLEdtAdapter:
         except Exception as e:
             raise ValueError(f"Ошибка парсинга XML метаданных 1С: {e}")
 
-        objects = []
-        edges = []
-        seen_ids = set()
+        objects: list[Object] = []
+        edges: list[Edge] = []
+        seen_ids: set[str] = set()
 
-        # Поиск метаданных в структуре 1C (ConfigDumpInfo, MetaDataObject, Configuration)
-        # 1. Поиск элементов верхнего уровня
         for elem in root.iter():
             tag = elem.tag.split('}')[-1].lower()
             if tag in TYPE_MAPPING:
@@ -65,22 +62,20 @@ class XMLEdtAdapter:
                     continue
                 seen_ids.add(obj_id)
                 full_name = f"{tag.capitalize()}.{name}"
-                
-                # Поиск реквизитов и типов связей
+
                 attrs = {}
                 for attr_elem in elem.findall('.//{*}Attribute') + elem.findall('.//Attribute'):
                     attr_name = attr_elem.attrib.get('name') or attr_elem.findtext('{*}name')
                     attr_type = attr_elem.findtext('.//{*}Type') or attr_elem.findtext('.//Type')
                     if attr_name:
                         attrs[attr_name] = attr_type or 'Unknown'
-                        # Если тип ссылается на другой объект метаданных
                         if attr_type:
-                            target_match = re.search(r'(Catalog|Document|InformationRegister)\.([\w]+)', attr_type, re.IGNORECASE)
+                            target_match = re.search(r'(Catalog|Document|InformationRegister|AccumulationRegister|CommonModule)\.([\w]+)', attr_type, re.IGNORECASE)
                             if target_match:
                                 target_type = target_match.group(1).lower()
                                 target_name = target_match.group(2).lower()
                                 target_id = sanitize_id(f"{TYPE_MAPPING.get(target_type, 'catalog')}.{target_name}")
-                                if target_id in seen_ids and target_id != obj_id:
+                                if target_id != obj_id:
                                     edges.append(Edge(source=obj_id, target=target_id, type='uses', origin='AttributeType', confidence=0.9))
 
                 objects.append(Object(
@@ -94,7 +89,10 @@ class XMLEdtAdapter:
         if not objects:
             raise ValueError("В XML-документе не обнаружено поддерживаемых объектов метаданных 1С")
 
-        # Очистка рёбер, ссылающихся на несуществующие объекты
+        return objects, edges
+
+    def _parse_xml_bytes(self, content: bytes, configuration_id: str, version: str) -> Configuration:
+        objects, edges = self._extract_from_xml(content)
         valid_ids = {o.object_id for o in objects}
         edges = [e for e in edges if e.source in valid_ids and e.target in valid_ids]
 
@@ -114,22 +112,22 @@ class XMLEdtAdapter:
                 xml_files = [name for name in z.namelist() if name.lower().endswith('.xml') and not name.startswith('__')]
                 if not xml_files:
                     raise ValueError("В архиве не найдено XML-файлов метаданных 1С")
-                
+
                 combined_objects = []
                 combined_edges = []
                 seen_ids = set()
 
-                for name in xml_files[:50]:  # Ограничение до 50 файлов для безопасности
+                for name in xml_files[:50]:
                     data = z.read(name)
                     if b'<!doctype' in data[:2048].lower() or b'<!entity' in data[:2048].lower():
                         continue
                     try:
-                        cfg = self._parse_xml_bytes(data, configuration_id, version)
-                        for o in cfg.objects:
+                        objs, edges = self._extract_from_xml(data)
+                        for o in objs:
                             if o.object_id not in seen_ids:
                                 seen_ids.add(o.object_id)
                                 combined_objects.append(o)
-                        for e in cfg.edges:
+                        for e in edges:
                             combined_edges.append(e)
                     except ValueError:
                         continue
