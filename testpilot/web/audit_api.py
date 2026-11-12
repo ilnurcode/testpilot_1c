@@ -70,6 +70,29 @@ def scan_upload_endpoint(data: dict[str, Any], actor=Depends(user), s=Depends(se
     raw = row.content
     filename = row.filename.lower()
 
+    if filename.endswith((".cfe", ".epf", ".erf", ".cf")) or raw.startswith(b"\r\n") or raw.startswith(b"\n"):
+        try:
+            from testpilot.impact.v8_container import V8Container
+            container = V8Container(raw)
+            if container.is_valid():
+                files = container.extract_files()
+                all_issues = []
+                scanned = 0
+                for name, stream_data in files.items():
+                    for enc in ('utf-8', 'utf-16le', 'cp1251'):
+                        try:
+                            stream_txt = stream_data.decode(enc)
+                            if any(k in stream_txt for k in ("Процедура", "Функция", "Запрос", "Procedure", "Function", "Query")):
+                                all_issues.extend(_engine.scan_code(stream_txt, name))
+                                scanned += 1
+                            break
+                        except UnicodeDecodeError:
+                            pass
+                if scanned > 0:
+                    return _summarize(all_issues, scanned)
+        except Exception:
+            pass
+
     if filename.endswith(".zip") or raw.startswith(b"PK\x03\x04"):
         try:
             all_issues = []
@@ -77,8 +100,8 @@ def scan_upload_endpoint(data: dict[str, Any], actor=Depends(user), s=Depends(se
             with ZipFile(io.BytesIO(raw)) as z:
                 for name in z.namelist():
                     if name.lower().endswith((".bsl", ".os", ".xml")):
-                        text = z.read(name).decode("utf-8-sig", errors="replace")
-                        all_issues.extend(_engine.scan_code(text, name))
+                        zip_txt = z.read(name).decode("utf-8-sig", errors="replace")
+                        all_issues.extend(_engine.scan_code(zip_txt, name))
                         scanned += 1
             return _summarize(all_issues, scanned)
         except BadZipFile:
