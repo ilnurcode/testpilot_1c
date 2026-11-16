@@ -111,12 +111,12 @@ async function loadProjectRuns(projectId){
   const rows=await api('intelligence',`ai/suites?project_id=${encodeURIComponent(projectId)}&limit=20`);
   const count=$('#projectRunsCount');if(count)count.textContent=rows.length?`${rows.length} ${pluralRU(rows.length,'прогон','прогона','прогонов')}`:'';
   if(!rows.length){host.innerHTML='<p class="caption">Прогонов проверок пока нет: запустите проверку на странице «Нейросеть и проверки».</p>';return}
-  host.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Модель</th><th>Статус</th><th>Пройдено / Расхождений / Ошибок / Пропущено</th><th></th></tr></thead><tbody>${rows.map(projectRunRow).join('')}</tbody></table></div>`;
+  host.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Модель</th><th>Статус</th><th>Пройдено / Расхождений / Ошибок / Пропущено</th><th>Изменения</th><th></th></tr></thead><tbody>${rows.map(projectRunRow).join('')}</tbody></table></div>`;
  }catch(err){host.innerHTML=`<p class="warning">Не удалось загрузить прогоны: ${E(err.message)}</p>`}
 }
 function projectRunRow(r){
  const counts=r.counts||{};
- return `<tr><td>${E(dateText(r.created_at))}</td><td>${E(projectRunModel(r))}</td><td><span class="badge ${r.status==='completed'?'ready':'pending'}">${E(projectRunStatus(r.status))}</span></td><td>${counts.passed||0} / ${counts.failed||0} / ${counts.error||0} / ${counts.skipped||0}</td><td><a class="secondary" href="#ai/${encodeURIComponent(r.suite_id)}">Открыть прогон</a></td></tr>`
+ return `<tr><td>${E(dateText(r.created_at))}</td><td>${E(projectRunModel(r))}</td><td><span class="badge ${r.status==='completed'?'ready':'pending'}">${E(projectRunStatus(r.status))}</span></td><td>${counts.passed||0} / ${counts.failed||0} / ${counts.error||0} / ${counts.skipped||0}</td><td>${r.mutating_count?`<span class="badge warning">изменяет</span>`:'—'}</td><td><a class="secondary" href="#ai/${encodeURIComponent(r.suite_id)}">Открыть прогон</a></td></tr>`
 }
 function projectRunModel(r){return r.model||({demo:'Учебные правила',local:'Встроенный генератор',codex:'Codex CLI',llm:'Нейросеть через API'}[r.provider]||r.provider||'—')}
 function projectRunStatus(s){return {draft:'Ожидает проверки',approved:'Подтверждён',completed:'Проверки завершены'}[s]||s}
