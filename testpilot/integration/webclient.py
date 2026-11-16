@@ -4,8 +4,22 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlsplit
 from testpilot.ai.executor import browser_path
 from testpilot.integration.probe import Profile, container_access_url
+
+
+def _origin(url: str) -> tuple[str, str, int] | None:
+    try:
+        parsed = urlsplit(url)
+        scheme = parsed.scheme.lower()
+        host = (parsed.hostname or '').lower()
+        port = parsed.port or (443 if scheme == 'https' else 80 if scheme == 'http' else None)
+    except ValueError:
+        return None
+    if scheme not in {'http', 'https'} or not host or port is None:
+        return None
+    return scheme, host, port
 
 @dataclass
 class StepResult:
@@ -126,6 +140,16 @@ class WebClientRunner:
         self.default_timeout = default_timeout
         self.web_url = container_access_url(profile.web_url or profile.odata_url).rstrip('/')
 
+    def _checked_navigation_url(self, target: str) -> str:
+        base = f"{self.web_url.rstrip('/')}/"
+        navigation_url = container_access_url(urljoin(base, target or base))
+        target_origin = _origin(navigation_url)
+        configured_origin = _origin(self.web_url)
+        if target_origin is None or target_origin != configured_origin:
+            raise ValueError("Отказано в open_url: origin целевого URL не совпадает с origin веб-клиента проекта")
+        return navigation_url
+
+
     def handle_login(self, page) -> None:
         """Обработка стандартного окна авторизации веб-клиента 1С (8.3 и 8.5)."""
         try:
@@ -236,7 +260,8 @@ class WebClientRunner:
                         if action not in self.SUPPORTED_ACTIONS:
                             raise ValueError(f"Неизвестное действие шага: {action}")
                         if action == 'open_url':
-                            page.goto(target or self.web_url, wait_until='domcontentloaded', timeout=45000)
+                            navigation_url = self._checked_navigation_url(target)
+                            page.goto(navigation_url, wait_until='domcontentloaded', timeout=45000)
                             self.handle_login(page)
                             self.wait_for_1c(page)
                             step_message = 'Веб-клиент 1С загружен'

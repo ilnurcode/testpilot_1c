@@ -266,3 +266,19 @@ def test_suite_rejects_unknown_engine_with_proposal_index(clients, monkeypatch):
     _, response = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
     assert response.status_code == 422
     assert 'Предложение 0' in response.text and 'unsupported-engine' in response.text
+
+
+def test_suite_rejects_generated_open_url_before_persistence(clients, monkeypatch):
+    p = package()
+    suggestion = _suite_plan(
+        p,
+        'playwright',
+        [{'steps': [{'action': 'open_url', 'target': 'https://evil.example/'}]}],
+    )
+    c, response = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
+    assert response.status_code == 422
+    assert (
+        "Предложение 0, case 0, шаг 0: действие open_url не допускается в сгенерированном плане; "
+        "вход в веб-клиент выполняет исполнитель"
+    ) in response.text
+    assert c.get('/api/v1/ai/suites?project_id=unit-project').json() == []

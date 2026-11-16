@@ -107,6 +107,11 @@ def _validate_proposals(suggestion):
                 )
             for step_index, step in enumerate(case.steps):
                 action = step.get('action') if isinstance(step, dict) else None
+                if action == 'open_url':
+                    raise HTTPException(
+                        422,
+                        f"Предложение {proposal_index}, case {case_index}, шаг {step_index}: действие open_url не допускается в сгенерированном плане; вход в веб-клиент выполняет исполнитель",
+                    )
                 if not isinstance(action, str) or action not in WebClientRunner.SUPPORTED_ACTIONS:
                     raise HTTPException(
                         422,
