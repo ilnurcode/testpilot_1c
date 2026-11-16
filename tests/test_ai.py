@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 import httpx
 import pytest
@@ -479,3 +481,119 @@ def test_rerun_infrastructure_failure_marks_new_suite_error(clients, monkeypatch
     stored = c.get(f"/api/v1/ai/suites/{failed['suite_id']}").json()
     assert stored['status'] == 'error' and stored['message'] == failed['message']
     assert c.get(f"/api/v1/ai/suites/{source['suite_id']}").json() == before
+
+
+def _executed_suite(clients, monkeypatch):
+    impact, c, project, p = _project_with_package(clients)
+    assert impact.put(
+        f"/api/v1/projects/{project['id']}/connection",
+        json={'odata_url': 'https://1c.example.test/odata/standard.odata'},
+    ).status_code == 200
+    created = _create_demo_suite(c, p, project['id'])
+    assert c.post(
+        f"/api/v1/ai/suites/{created['suite_id']}/approve",
+        json={'reason': 'Отчёт о прогоне', 'selected_proposals': [0, 1]},
+    ).status_code == 200
+
+    from testpilot.ai import executor as executor_module
+
+    def fake_execute(suite, profile):
+        return ([
+            {'proposal_index': 0, 'case_index': 0, 'engine': 'playwright', 'title': 'Проверка интерфейса',
+             'status': 'passed', 'message': 'Раздел «Продажи» подтверждён', 'duration_seconds': 1.25,
+             'started_at': 'unit', 'web_url': 'http://host.docker.internal:8088/DemoTrd'},
+            {'proposal_index': 1, 'case_index': 0, 'engine': 'odata', 'title': 'Проверка OData',
+             'status': 'failed', 'message': 'Сущность OData не найдена (HTTP 404)', 'duration_seconds': 0.5,
+             'started_at': 'unit', 'actual': None},
+        ], [(0, b'\x89PNG-unit')])
+
+    monkeypatch.setattr(executor_module, 'execute_1c', fake_execute)
+    run = c.post(f"/api/v1/ai/suites/{created['suite_id']}/run-1c")
+    assert run.status_code == 200, run.text
+    return c, project, run.json()
+
+
+def test_run_report_markdown_contains_result_and_evidence(clients, monkeypatch):
+    c, project, run = _executed_suite(clients, monkeypatch)
+    response = c.get(f"/api/v1/ai/suites/{run['suite_id']}/report")
+
+    assert response.status_code == 200, response.text
+    assert response.headers['content-type'].startswith('text/markdown')
+    assert f'run-{run["suite_id"]}.md' in response.headers['content-disposition']
+    body = response.text
+    assert body.startswith('# Отчёт о прогоне проверок')
+    assert f'Проект: {project["name"]}' in body
+    assert f'Пакет: {run["package_id"]}' in body
+    assert '- Пройдено: 1' in body and '- Расхождений: 1' in body
+    assert 'Раздел «Продажи» подтверждён' in body
+    assert f"evidence {run['results'][0]['evidence_id']}" in body
+    assert '### 1.' in body and '### 2.' in body
+    assert 'Результатов нет' not in body
+
+
+def test_run_report_csv_has_header_and_row_per_approved_proposal(clients, monkeypatch):
+    c, project, run = _executed_suite(clients, monkeypatch)
+    response = c.get(f"/api/v1/ai/suites/{run['suite_id']}/report", params={'format': 'csv'})
+
+    assert response.status_code == 200, response.text
+    assert response.headers['content-type'].startswith('text/csv')
+    assert response.content.startswith(
+        'Предложение;Движок;Проверка;Статус;Сообщение;Длительность, мс;Evidence'.encode('utf-8'))
+    rows = list(csv.reader(io.StringIO(response.content.decode('utf-8'), newline=''), delimiter=';'))
+    assert rows[0] == ['Предложение', 'Движок', 'Проверка', 'Статус', 'Сообщение', 'Длительность, мс', 'Evidence']
+    assert len(rows) == len(run['approval']['selected_proposals']) + 1 == 3
+    assert rows[1][3] == 'passed' and rows[1][6] == run['results'][0]['evidence_id']
+    assert rows[1][5] == '1250'
+    assert rows[2][3] == 'failed' and 'HTTP 404' in rows[2][4]
+
+
+def test_run_report_rejects_unknown_format(clients, monkeypatch):
+    c, project, run = _executed_suite(clients, monkeypatch)
+    assert c.get(f"/api/v1/ai/suites/{run['suite_id']}/report", params={'format': 'xml'}).status_code == 400
+
+
+def test_run_report_unknown_suite_is_404(clients):
+    impact, c, project, p = _project_with_package(clients)
+    response = c.get('/api/v1/ai/suites/00000000-0000-0000-0000-000000000000/report')
+    assert response.status_code == 404
+
+
+def test_run_report_without_run_marks_no_results(clients):
+    impact, c, project, p = _project_with_package(clients)
+    created = _create_demo_suite(c, p, project['id'])
+    assert c.post(f"/api/v1/ai/suites/{created['suite_id']}/approve",
+                  json={'reason': 'Без прогона', 'selected_proposals': [0]}).status_code == 200
+
+    response = c.get(f"/api/v1/ai/suites/{created['suite_id']}/report")
+    assert response.status_code == 200, response.text
+    assert 'Результатов нет: прогон ещё не выполнялся.' in response.text
+    assert '- Пройдено: 0' in response.text
+
+    csv_response = c.get(f"/api/v1/ai/suites/{created['suite_id']}/report", params={'format': 'csv'})
+    rows = list(csv.reader(io.StringIO(csv_response.content.decode('utf-8'), newline=''), delimiter=';'))
+    assert len(rows) == 2 and rows[1][3] == 'нет данных'
+
+
+def test_run_report_and_audit_report_share_render_primitives(clients, monkeypatch):
+    from fastapi.responses import Response
+
+    from testpilot.ai import api as ai_api
+    from testpilot.web import audit_report, report_render, run_report
+
+    assert audit_report.csv_document is report_render.csv_document
+    assert run_report.csv_document is report_render.csv_document
+    assert audit_report.markdown_cell is report_render.markdown_cell
+    assert run_report.attachment is report_render.attachment
+
+    c, project, run = _executed_suite(clients, monkeypatch)
+    seen = []
+
+    def spy(suite, project_name, format):
+        seen.append((suite.get('suite_id'), project_name, format))
+        return Response('rendered', media_type='text/plain')
+
+    monkeypatch.setattr(ai_api, 'render_run_report', spy)
+    response = c.get(f"/api/v1/ai/suites/{run['suite_id']}/report", params={'format': 'csv'})
+
+    assert response.status_code == 200 and response.text == 'rendered'
+    assert seen == [(run['suite_id'], project['name'], 'csv')]

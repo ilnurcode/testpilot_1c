@@ -8,6 +8,7 @@ from testpilot.contracts import now,RunInput
 from testpilot.ai.models import GenerateRequest,Decision,CodexStatus
 from testpilot.ai import provider,codex
 from testpilot.ai.executor import execute,browser_path
+from testpilot.web.run_report import render_run_report
 
 router=APIRouter(prefix='/api/v1/ai',tags=['Нейросеть и проверки'])
 
@@ -299,6 +300,14 @@ def run_1c(sid:str,actor=Depends(expert),s=Depends(session,scope='function')):
     if row.status=='completed':return row.payload
     if row.status!='approved':raise HTTPException(409,'Сначала подтвердите сценарии и тестовые данные')
     return _execute_1c_row(row,actor,s)
+
+
+@router.get('/suites/{sid}/report')
+def run_report(sid:str,format:str='md',actor=Depends(user),s=Depends(session,scope='function'))->Response:
+    """Отчёт о прогоне сохранённого плана: только чтение сохранённых данных."""
+    row=require(s.get(AISuiteRow,sid),'Сохранённый план не найден')
+    project=s.get(ProjectRow,row.project_id)
+    return render_run_report(row.payload,project.name if project else row.project_id,format)
 
 
 @router.post('/suites/{sid}/rerun')
