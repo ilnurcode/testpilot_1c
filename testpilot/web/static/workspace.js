@@ -43,7 +43,7 @@ function uploadTable(p){return table(['Файл / версия','Компоне�
  `<div class="filename-cell"><span class="file-pill">${E(u.filename.split('.').pop().toUpperCase())}</span><span><strong>${E(u.label)}</strong><small>${E(u.filename)} · ${sizeText(u.size_bytes)}</small></span></div>`,
  `${E(u.component)}<span class="version-sub">${E(kindNames[u.kind])}</span>`,
  `<span class="badge ${u.baseline_id?'blue':''}">${u.baseline_id?'Изменения':'Полный анализ'}</span>`,
- `<span>${statusBadge(u)}${u.has_audit?`<div id="uploadAudit-${E(u.id)}"></div>`:''}</span>`,
+ `<span>${statusBadge(u)}${u.has_audit?`<div id="uploadAudit-${E(u.id)}"></div><a class="secondary" href="/api/v1/audit/uploads/${E(u.id)}/report" download>Скачать отчёт</a>`:''}</span>`,
  `${E(dateText(u.created_at))}<span class="version-sub">${E(u.created_by)}</span>`,
  `<div class="table-actions"><button class="secondary inspect-upload" data-upload="${E(u.id)}">${u.status==='ready'?'Выбрать':'О файле'}</button><a href="/gateway/impact/api/v1/projects/${E(p.id)}/uploads/${E(u.id)}/download" aria-label="Скачать ${E(u.filename)}">↓ Скачать</a></div>`]))}
 async function loadSavedUploadAudits(p){

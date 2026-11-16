@@ -48,3 +48,6 @@ app.include_router(presentation_router)
 
 from testpilot.web.audit_api import router as audit_router
 app.include_router(audit_router)
+
+from testpilot.web.audit_report_api import router as audit_report_router
+app.include_router(audit_report_router)
