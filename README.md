@@ -67,15 +67,15 @@ CFE/CF/EPF/ERF/DT и ZIP принимаются на хранение до 64 М
 
 Ограничения DemoTrd: `$metadata` содержит 0 EntitySet, поэтому отсутствующие OData-сущности возвращают честный HTTP 404. Бинарный `.cfe` без BSL получает `metadata_only`, а аудит — `no_bsl_modules` с `passed=false`. В контейнере адреса `localhost` и `127.0.0.1` сначала маршрутизируются как `host.docker.internal`, а при `ConnectError` (и только при нём) запрос повторяется по исходному адресу — публикация внутри того же контейнера остаётся доступной. Явно заданный хост не переписывается. Живая проверка чтения OData без демо-базы: `tests/fixtures/odata_stub.py`.
 
-Пул тестов: `docker compose exec -T intelligence python -m pytest tests/ -q` — 180 passed, 1 skipped.
+Пул тестов: `docker compose exec -T intelligence python -m pytest tests/ -q` — 278 passed, 1 skipped.
 
 ## Состав
 
 - `testpilot/impact` — импорт, версии, сравнение, NetworkX-граф, пути влияния, отчёт и доставка.
 - `testpilot/intelligence` — каталог/покрытие, история/дефекты, скоринг, оптимизация, ML и будущий runner-контракт.
-- `testpilot/web` — девять рабочих разделов; данные только из публичных API.
+- `testpilot/web` — десять рабочих разделов; данные только из публичных API.
 - `contracts` — JSON Schema 1.0 и синтетические примеры; общие Pydantic-модели в `testpilot/contracts.py`.
-- `migrations` — 0001: impact и аудит; 0002: test intelligence; 0003: проекты и постоянная библиотека файлов; 0004: планы проверок, скриншоты и учебный стенд.
+- `migrations` — 0001: impact и аудит; 0002: test intelligence; 0003: проекты и постоянная библиотека файлов; 0004: планы проверок, скриншоты и учебный стенд; 0005: подключение проекта к 1С; 0006: сохранённый результат аудита загрузки; 0007: журнал аудитов вставленного кода.
 - `tests`, `scripts`, `docs` — проверки, демо, замеры и описание.
 
 В Docker-варианте достаточно Docker Desktop с Compose v2; PostgreSQL 17 и Chromium ставятся внутри контейнеров. Для запуска Python-приложений непосредственно на хосте нужен Python 3.12+.
@@ -90,7 +90,7 @@ docker compose up --build --detach --wait --wait-timeout 900 impact intelligence
 
 Откройте `http://127.0.0.1:8000`. Без собственного `.env` локальная учётная запись — `expert` / `TestPilotLocal123!`. Эти настройки подходят для локальной демонстрации и привязаны к loopback; не публикуйте порт наружу. Собственный `.env` может переопределить локальные пароли и API-ключ. PostgreSQL volume сохраняется после `docker compose down`; не удаляйте его опцией `-v`.
 
-OpenAPI каждого API: `/openapi.json`, интерактивная документация: `/docs` на портах 8001 и 8002. Web — порт 8000. Health: `/health` каждого процесса, проверяет PostgreSQL и наличие миграций. При запуске вне localhost нужен HTTPS reverse proxy.
+OpenAPI каждого API: `/openapi.json`, интерактивная документация: `/docs` на портах 8001 и 8002. Web — порт 8000. Health: `/health` каждого процесса проверяет PostgreSQL и ревизию миграций и отдаёт `executor_1c_env` (только env-профиль `TP_1C_*`) и `projects_with_connection` (проекты с подключением в БД); прогоны идут по настройкам проекта. При запуске вне localhost нужен HTTPS reverse proxy.
 
 ## Codex CLI: вход через ChatGPT
 
@@ -135,6 +135,8 @@ API: `GET /api/v1/ai/codex/status`, `POST /api/v1/ai/codex/login`, `POST /api/v1
 ### Прогон плана на базе 1С: режимы и согласие
 
 `POST /api/v1/ai/suites/{id}/run-1c` и `.../rerun` по умолчанию защищают эвристически: `click` по кнопкам «Записать», «Провести», «Создать», «Удалить», «Отменить проведение», «Пометить на удаление», «Скопировать», «Изменить» и любой `fill` требуют явного `allow_mutations=true`, иначе 422 с указанием предложения и шага. Эвристика неполна: «ОК», «Подтвердить», пользовательские подписи, клики по строкам и иконкам не распознаются. Полное отсутствие побочных эффектов гарантирует только `strict_read_only=true` — там разрешены лишь `assert_text`, `assert_section`, `wait`, `open_url`, а любой `click`/`fill` даёт 422. Риск виден заранее в карточке плана (бейдж «⚠ изменяет данные (эвристика)»), подтверждение плана пометка не блокирует. Подробности и таблица режимов: [docs/api.md](docs/api.md).
+
+История прогонов проекта — `GET /api/v1/ai/suites?project_id=…`, отчёт о прогоне — `GET /api/v1/ai/suites/{id}/report?format=md|csv`, повтор сохранённого плана — `POST /api/v1/ai/suites/{id}/rerun`, удаление проекта — `DELETE /api/v1/projects/{id}?confirm=<id>`. Тесты запускаются на push и pull_request в GitHub Actions (`.github/workflows/tests.yml`).
 
 
 ## Разработка в облачной Linux-среде

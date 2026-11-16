@@ -16,6 +16,14 @@
 | POST | analyses/{id}/deliver | Повторяемая HTTP-доставка по INTELLIGENCE_URL |
 | GET | graph | configuration_id, version_name, limit≤500, focus, depth≤10, node_type, edge_type, direction=incoming/outgoing/both |
 | GET | audit | Последние 200 действий |
+| POST / GET | projects | Создание / список проектов |
+| GET / DELETE | projects/{project_id} | Карточка с загрузками и анализами / удаление одной транзакцией (`?confirm=<project_id>`, без него 409) |
+| POST | projects/{project_id}/uploads | Тело файла + `filename`, `kind`, `component`, `label`, `baseline_id` |
+| GET | projects/{project_id}/uploads/{upload_id}/download | Исходные байты загрузки |
+| POST | projects/{project_id}/uploads/{upload_id}/analyze | Анализ загрузки относительно baseline |
+| PUT | projects/{project_id}/connection | `odata_url`, `web_url`, учётные данные 1С |
+| POST | projects/{project_id}/connection/probe | Read-only проверка публикации OData и веб-клиента (отчёт содержит фактический адрес) |
+| GET | projects/{project_id}/connection/enable-odata-script | Скрипт включения OData для 1С |
 
 Объекты имеют явный object_id, type, full_name, parent_id, attributes. Родитель валидируется; принадлежность в графе задавайте явным ребром `belongs_to`. Циклы вызовов разрешены; цикл parent_id запрещён. Связи только между существующими узлами. Для внешних/динамических ссылок используйте `external`/`dynamic` между известными сущностями, с соответствующим происхождением; неполученные внешние объекты не выдумываются автоматически.
 
@@ -47,6 +55,24 @@
 Снятие mandatory/понижение critical: PUT tests/{id}?reason=обоснование, роль expert. critical при создании автоматически mandatory. Для статусов coverage confirmed/rejected нужен expert; unconfirmed доступен analyst. PUT карточки требует полный TestCase; перенос между конфигурациями/происхождениями запрещён. Совместимость — явный список допустимых строк версий; пустой список означает все версии конфигурации (не semver-диапазон).
 
 История: run_id, configuration_id, version, synthetic, results[], defects[]. Только `passed/failed/error/skipped`, даты с timezone, duration_seconds≥0. Повторный идентичный run_id идемпотентен; иной отчёт — 409. Дефекты immutable и относятся к тестам этого прогона. `synthetic` истории обязан соответствовать каталогу.
+
+## AI-план и прогон (Intelligence 8002)
+
+| Метод | Путь `/api/v1/…` | Назначение |
+|---|---|---|
+| POST / GET | ai/suites | Генерация плана (`provider`, для внешних — `consent`) / история прогонов проекта (`?project_id=…&limit=`) |
+| GET | ai/suites/{id} | Полный план; у каждого предложения поле `mutating` |
+| POST | ai/suites/{id}/approve | Подтверждение выбранных предложений (expert) |
+| POST | ai/suites/{id}/run-1c | Прогон на базе 1С по настройкам проекта; флаги `allow_mutations`, `strict_read_only` |
+| POST | ai/suites/{id}/rerun | Повтор сохранённого плана новой записью suite (исходная не меняется) |
+| GET | ai/suites/{id}/report?format=md/csv | Отчёт о прогоне: md по кейсам, csv — одна строка на результат |
+| POST | ai/suites/{id}/run-demo | Прогон на синтетическом стенде presentation-sales |
+| GET | ai/status, ai/settings/llm, ai/codex/status | Состояние провайдеров и Codex |
+| PUT | ai/settings/llm, ai/codex/login, ai/codex/logout | Настройки API и вход Codex (expert) |
+| GET | ai/evidence/{id} | PNG-скриншот прогона |
+
+История отдаёт сводку без `suggestion`/`payload`: `suite_id`, `package_id`, `model`, `provider`, `status`, `counts`, `created_at`, `finished_at`, `approved_count`, `mutating_count`.
+Отчёты отдаются вложением `run-<suite_id>.md|csv` и строятся только из сохранённых данных; для прогона без результатов вместо строк кейсов стоит пометка «результата нет».
 
 ## Checksum и обмен
 
