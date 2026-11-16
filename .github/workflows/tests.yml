@@ -1,0 +1,54 @@
+name: tests
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pytest:
+    name: pytest (PostgreSQL 17, Python 3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: testpilot
+          POSTGRES_PASSWORD: testpilot
+          POSTGRES_DB: testpilot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U testpilot -d testpilot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg://testpilot:testpilot@localhost:5432/testpilot
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements.lock
+
+      - name: Установка зависимостей
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install -r requirements.lock
+
+      - name: Браузер для сценариев веб-клиента
+        run: python -m playwright install --with-deps chromium
+
+      - name: Миграции
+        run: alembic upgrade head
+
+      - name: Тесты
+        run: python -m pytest tests/ -q
