@@ -179,6 +179,8 @@ export DOCKER_CONFIG="$HOME/.docker"
 
 ## Настройка внешней нейросети — необязательно
 
+**Альтернатива API-ключу — Codex CLI с ChatGPT sign-in.** Для host-запуска внутри WSL отдельно установите Node.js 22 и `@openai/codex@0.167.2`; используйте один отдельный абсолютный `CODEX_HOME` при CLI login и запуске intelligence. При входе из UI требуется device code login, разрешённый в ChatGPT Security/политиках workspace. Для Docker CLI уже включён в обычный образ, а auth хранится только в named volume intelligence; копировать Windows/WSL `~/.codex` не нужно. Порядок входа/выхода, квоты и передача контекста — [README](../README.md#codex-cli-вход-через-chatgpt).
+
 Откройте локальный .env командой `nano .env` и добавьте настройки своего OpenAI-совместимого провайдера:
 
 ```dotenv

@@ -20,6 +20,17 @@ TYPE_MAPPING = {
     'общиймодуль': 'common_module',
     'eventsubscription': 'event_subscription',
     'подписканасобытие': 'event_subscription',
+    # Внешние отчеты и обработки: отдельного типа в контракте нет,
+    # поэтому регистрируем корневой объект как модуль, чтобы работали
+    # аудит и анализ влияния по выгрузке EPF/ERF в файлы.
+    'externalreport': 'common_module',
+    'внешнийотчет': 'common_module',
+    'report': 'common_module',
+    'отчет': 'common_module',
+    'externaldataprocessor': 'common_module',
+    'внешняяобработка': 'common_module',
+    'dataprocessor': 'common_module',
+    'обработка': 'common_module',
 }
 
 def sanitize_id(val: str) -> str:

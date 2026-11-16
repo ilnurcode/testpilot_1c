@@ -36,10 +36,19 @@ class Suggestion(Model):
     proposals:list[Proposal]=Field(min_length=1,max_length=6)
     warnings:list[Text]=Field(default_factory=list,max_length=20)
 
+class CodexStatus(Model):
+    available:bool
+    authenticated:bool
+    state:Literal['unavailable','signed_out','pending','authenticated','error']
+    model:str|None=None
+    verification_uri:str|None=None
+    user_code:str|None=None
+    message:str
+
 class GenerateRequest(Model):
     package_id:Identifier
     project_id:str=Field(max_length=36)
-    provider:Literal['llm','demo','local']='local'
+    provider:Literal['llm','codex','demo','local']='local'
     consent:bool=False
     model_context:list[dict]=Field(default_factory=list,max_length=100)
     object_names:dict[str,str]=Field(default_factory=dict,max_length=10000)

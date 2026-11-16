@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+from testpilot.ai.codex import shutdown as shutdown_codex
 import csv
 import io
 from datetime import datetime, timezone
@@ -10,7 +12,15 @@ from testpilot.db import (session, PackageRow, TestRow, CoverageRow, RunRow, Res
 from testpilot.intelligence.algorithms import statistics, score_test, optimize, coverage_summary
 from testpilot.intelligence import ml
 
-app=app('TestPilot 1C — формирование регрессии')
+@asynccontextmanager
+async def lifespan(application):
+    try:
+        yield
+    finally:
+        shutdown_codex()
+
+
+app=app('TestPilot 1C — формирование регрессии', lifespan=lifespan)
 
 def test_payload(row): return {**row.payload,'active':row.active,'mandatory':row.mandatory}
 

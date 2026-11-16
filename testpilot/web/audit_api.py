@@ -14,7 +14,9 @@ router = APIRouter(prefix="/api/v1/audit", tags=["Аудит и v8std"])
 _engine = ScannerEngine()
 
 
-def _summarize(issues, total_files: int) -> dict[str, Any]:
+def _summarize(issues, total_files: int, *, status: str = "scanned", message: str | None = None,
+               sources_checked: int | None = None) -> dict[str, Any]:
+    """Сводка аудита. status отличает реальную проверку от случая, когда проверять было нечего."""
     sev_counts: dict[str, int] = {}
     cat_counts: dict[str, int] = {}
     for issue in issues:
@@ -28,7 +30,16 @@ def _summarize(issues, total_files: int) -> dict[str, Any]:
         passed=(sev_counts.get(Severity.CRITICAL.value, 0) == 0 and sev_counts.get(Severity.HIGH.value, 0) == 0),
         issues=issues,
     )
-    return summary.to_dict()
+    result = summary.to_dict()
+    result.update({"status": status, "message": message, "sources_checked": sources_checked})
+    return result
+
+
+def _no_sources(status: str, message: str) -> dict[str, Any]:
+    """Результат без проверенных исходников: это не «пройдено», а «нечего проверять»."""
+    result = _summarize([], 0, status=status, message=message, sources_checked=0)
+    result["passed"] = False
+    return result
 
 
 @router.post("/scan")
@@ -40,16 +51,20 @@ async def scan_endpoint(data: dict[str, Any]) -> dict[str, Any]:
 
     if code:
         issues = _engine.scan_code(code, "web_input.bsl")
-        return _summarize(issues, 1)
+        return _summarize(issues, 1, sources_checked=1)
 
     if path_str:
         p = Path(path_str).resolve()
         if p.is_file():
             issues = _engine.scan_file(p)
-            return _summarize(issues, 1)
+            return _summarize(issues, 1, sources_checked=1)
         elif p.is_dir():
             summary = _engine.scan_directory(p, min_severity=min_sev)
-            return summary.to_dict()
+            if not summary.total_files:
+                return _no_sources("no_sources", "В каталоге не найдено файлов .bsl/.os для проверки.")
+            result = summary.to_dict()
+            result.update({"status": "scanned", "message": None, "sources_checked": summary.total_files})
+            return result
         else:
             raise HTTPException(400, f"Указанный путь не найден: {p}")
 
@@ -70,29 +85,6 @@ def scan_upload_endpoint(data: dict[str, Any], actor=Depends(user), s=Depends(se
     raw = row.content
     filename = row.filename.lower()
 
-    if filename.endswith((".cfe", ".epf", ".erf", ".cf")) or raw.startswith(b"\r\n") or raw.startswith(b"\n"):
-        try:
-            from testpilot.impact.v8_container import V8Container
-            container = V8Container(raw)
-            if container.is_valid():
-                files = container.extract_files()
-                all_issues = []
-                scanned = 0
-                for name, stream_data in files.items():
-                    for enc in ('utf-8', 'utf-16le', 'cp1251'):
-                        try:
-                            stream_txt = stream_data.decode(enc)
-                            if any(k in stream_txt for k in ("Процедура", "Функция", "Запрос", "Procedure", "Function", "Query")):
-                                all_issues.extend(_engine.scan_code(stream_txt, name))
-                                scanned += 1
-                            break
-                        except UnicodeDecodeError:
-                            pass
-                if scanned > 0:
-                    return _summarize(all_issues, scanned)
-        except Exception:
-            pass
-
     if filename.endswith(".zip") or raw.startswith(b"PK\x03\x04"):
         try:
             all_issues = []
@@ -103,13 +95,39 @@ def scan_upload_endpoint(data: dict[str, Any], actor=Depends(user), s=Depends(se
                         zip_txt = z.read(name).decode("utf-8-sig", errors="replace")
                         all_issues.extend(_engine.scan_code(zip_txt, name))
                         scanned += 1
-            return _summarize(all_issues, scanned)
         except BadZipFile:
             raise HTTPException(422, "Поврежденный ZIP-архив")
+        if not scanned:
+            return _no_sources("no_sources",
+                               "Архив прочитан, но файлов .bsl/.os/.xml в нём нет: проверять нечего, аудит не выполнялся.")
+        return _summarize(all_issues, scanned, sources_checked=scanned)
+
+    if filename.endswith((".cfe", ".epf", ".erf", ".cf")) or raw.startswith((b"\r\n", b"\n")):
+        from testpilot.impact.v8_container import V8Container
+        from testpilot.impact.binary_adapter import bsl_sources
+        container = V8Container(raw)
+        if not container.is_valid():
+            return _no_sources("not_a_container",
+                               "Файл сохранён, но это не контейнер 1С v8: внутренних потоков для проверки нет. "
+                               "Загрузите ZIP выгрузки исходников (1cv8.exe DESIGNER /DumpConfigToFiles).")
+        try:
+            streams = container.extract_files()
+        except Exception:
+            return _no_sources("container_error",
+                               "Контейнер 1С не удалось прочитать: внутренняя структура повреждена или не поддерживается.")
+        sources = bsl_sources(streams)
+        if not sources:
+            return _no_sources("no_bsl_modules",
+                               f"Контейнер 1С прочитан: внутренних потоков — {len(streams)}, "
+                               "модулей BSL в них не найдено. Проверять исходники нечего, аудит не выполнялся.")
+        all_issues = []
+        for name, text in sources.items():
+            all_issues.extend(_engine.scan_code(text, name))
+        return _summarize(all_issues, len(sources), sources_checked=len(sources))
 
     text = raw.decode("utf-8-sig", errors="replace")
     issues = _engine.scan_code(text, row.filename)
-    return _summarize(issues, 1)
+    return _summarize(issues, 1, sources_checked=1)
 
 
 @router.get("/rules")

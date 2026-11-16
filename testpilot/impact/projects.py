@@ -79,14 +79,26 @@ def decode_configuration(raw):
         raise HTTPException(422,{'message':'Неверный нормализованный JSON конфигурации','fields':[{'path':list(x['loc']),'message':x['msg']} for x in e.errors()]})
 
 
+def binary_extraction_hint(suffix):
+    """Как получить исходники, если бинарный контейнер не дал модулей BSL."""
+    if suffix in ('.cfe', '.cf'):
+        return ('выполните в базе, где объект уже установлен, '
+                '1cv8.exe DESIGNER /F "<база>" /DumpConfigToFiles "<каталог>"'
+                + (' -Extension "<имя расширения>"' if suffix == '.cfe' else '')
+                + ', затем загрузите ZIP этого каталога для аудита, анализа влияния и тестов.')
+    return ('выполните 1cv8.exe DESIGNER /F "<база>" '
+            f'/DumpExternalDataProcessorOrReportToFiles "<каталог>" "<файл{suffix}>" '
+            'и загрузите ZIP этого каталога для аудита, анализа влияния и тестов.')
+
+
 def inspect_file(raw,suffix,default_cfg_id='c1_extracted',default_version='1.0.0'):
     if suffix=='.json':
         if len(raw)>8*1024*1024:raise HTTPException(413,'Нормализованный JSON должен быть не больше 8 МиБ')
-        return decode_configuration(raw),'Модель проверена и готова к анализу.'
+        return decode_configuration(raw),'Модель проверена и готова к анализу.','ready'
     if suffix=='.xml':
         try:
             from testpilot.impact.xml_adapter import XMLEdtAdapter
-            return XMLEdtAdapter().parse(raw, configuration_id=default_cfg_id, version=default_version),'Модель XML/EDT 1С успешно разобрана.'
+            return XMLEdtAdapter().parse(raw, configuration_id=default_cfg_id, version=default_version),'Модель XML/EDT 1С успешно разобрана.','ready'
         except Exception as e:
             raise HTTPException(422,f'Ошибка разбора XML выгрузки 1С: {e}')
     if suffix=='.zip':
@@ -107,24 +119,40 @@ def inspect_file(raw,suffix,default_cfg_id='c1_extracted',default_version='1.0.0
                     if info.file_size>8*1024*1024:raise HTTPException(413,'configuration.json превышает 8 МиБ')
                     with z.open(info) as f:content=f.read(8*1024*1024+1)
                     if len(content)>8*1024*1024:raise HTTPException(413,'configuration.json превышает 8 МиБ')
-                    return decode_configuration(content),'Нормализованная модель configuration.json извлечена из ZIP и проверена.'
+                    return decode_configuration(content),'Нормализованная модель configuration.json извлечена из ZIP и проверена.','ready'
                 if any(n.lower().endswith('.xml') for n in names):
                     try:
                         from testpilot.impact.xml_adapter import XMLEdtAdapter
-                        return XMLEdtAdapter().parse(raw, configuration_id=default_cfg_id, version=default_version),'Выгрузка 1С XML/EDT из архива успешно разобрана.'
+                        return XMLEdtAdapter().parse(raw, configuration_id=default_cfg_id, version=default_version),'Выгрузка 1С XML/EDT из архива успешно разобрана.','ready'
                     except Exception:
                         pass
-                return None,'Архив сохранён. Для анализа исходников нужен адаптер их формата; configuration.json в корне отсутствует.'
+                return None,'Архив сохранён. Для анализа исходников нужен адаптер их формата; configuration.json в корне отсутствует.','requires_adapter'
         except (BadZipFile,RuntimeError,NotImplementedError):raise HTTPException(422,'Архив повреждён или использует неподдерживаемое сжатие')
     if suffix in ('.cfe', '.epf', '.erf', '.cf'):
+        report = None
+        model = None
         try:
             from testpilot.impact.binary_adapter import Binary1CAdapter
-            model = Binary1CAdapter().parse(raw, filename=f"upload{suffix}", configuration_id=default_cfg_id, version=default_version)
-            if model and model.objects:
-                return model, f'Бинарный контейнер {suffix.upper()[1:]} успешно разобран, извлечены объекты и связи.'
-        except Exception:
-            pass
-    return None,'Файл сохранён. Разбор этого формата требует проверенного адаптера или агента 1С; анализ ещё не выполнялся.'
+            model, report = Binary1CAdapter().parse_with_report(raw, filename=f"upload{suffix}", configuration_id=default_cfg_id, version=default_version)
+        except (ValueError, OSError):
+            report = None
+        if report is not None and report.has_bsl and model and model.objects:
+            return model, (f'Бинарный контейнер {suffix.upper()[1:]} прочитан и разобран: модулей BSL — {len(report.bsl_modules)}, '
+                           f'объектов — {len(model.objects)}, связей — {len(model.edges)}.'), 'ready'
+        if report is not None:
+            # Контейнер прочитан, но исходников в нём нет: версия не создаётся, чтобы не выдавать
+            # метаданные контейнера за разобранные модули и связи.
+            return None, (f'Бинарный контейнер {suffix.upper()[1:]} прочитан: найдено внутренних потоков (метаданных) — {report.streams}, '
+                          'модулей BSL не извлечено. Объекты и связи из кода не построены, версия не создана. '
+                          'Метаданные без модулей не дают области влияния; чтобы получить исходники, '
+                          + binary_extraction_hint(suffix)), 'metadata_only'
+    if suffix in ('.cfe', '.cf'):
+        return None,('Двоичный файл сохранён. Модули BSL внутри него автоматически не разбираются: '  # noqa: E501
+                     + binary_extraction_hint(suffix)), 'requires_adapter'
+    if suffix in ('.epf', '.erf'):
+        return None,('Двоичный файл сохранён. Модули BSL внутри него автоматически не разбираются: '  # noqa: E501
+                     + binary_extraction_hint(suffix)), 'requires_adapter'
+    return None,'Файл сохранён. Разбор этого формата требует проверенного адаптера или агента 1С; анализ ещё не выполнялся.','requires_adapter'
 
 
 @router.post('')
@@ -164,7 +192,7 @@ def upload_file(pid:str,raw:bytes=Depends(upload_body),filename:str=Query(min_le
     if old:return {**upload_dict(old),'idempotent':True}
     cfg_hint=p.configuration_id or f'proj-{pid[:8]}'
     ver_hint=(label or '').strip() or f'1.0.{p.next_number+1}'
-    model,message=inspect_file(raw,suffix,default_cfg_id=cfg_hint,default_version=ver_hint)
+    model,message,file_status=inspect_file(raw,suffix,default_cfg_id=cfg_hint,default_version=ver_hint)
     previous=None
     if baseline_id=='auto':
         previous=s.scalar(metadata_query().where(UploadRow.project_id==pid,UploadRow.kind==kind,UploadRow.component==component).order_by(UploadRow.number.desc()).limit(1))
@@ -183,7 +211,7 @@ def upload_file(pid:str,raw:bytes=Depends(upload_body),filename:str=Query(min_le
     title=(label or '').strip() or f'Загрузка {p.next_number}'
     conflict=s.scalar(metadata_query().where(UploadRow.project_id==pid,UploadRow.kind==kind,UploadRow.component==component,UploadRow.label==title))
     if conflict:raise HTTPException(409,'Название версии уже используется. Укажите другое название; предыдущий файл не изменён.')
-    row=UploadRow(id=uid(),project_id=pid,number=p.next_number,filename=filename,kind=kind,component=component,label=title,size_bytes=len(raw),checksum=digest,content=raw,status='ready' if model else 'requires_adapter',message=message,version_id=version_id,baseline_id=previous.id if previous else None,created_by=actor,summary=summary)
+    row=UploadRow(id=uid(),project_id=pid,number=p.next_number,filename=filename,kind=kind,component=component,label=title,size_bytes=len(raw),checksum=digest,content=raw,status='ready' if model else file_status,message=message,version_id=version_id,baseline_id=previous.id if previous else None,created_by=actor,summary=summary)
     s.add(row);s.flush();audit(s,'impact',actor,'upload_file',row.id,{'project_id':pid,'filename':filename,'checksum':digest,'baseline_id':row.baseline_id})
     return {**upload_dict(row),'idempotent':False}
 

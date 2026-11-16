@@ -80,3 +80,82 @@ def test_error_handling_statuses():
 
     with pytest.raises(ODataError, match="Объект заблокирован"):
         make_client(400, {'odata.error': {'message': {'value': 'Объект заблокирован'}}}).get_entities('Catalog_Товары')
+
+
+def test_executor_fails_for_missing_entity_even_when_metadata_is_available(monkeypatch):
+    from testpilot.ai.executor import execute_1c
+    import testpilot.integration.odata as odata
+
+    requests = []
+    metadata = b'''<?xml version="1.0" encoding="utf-8"?>
+    <edmx:Edmx xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx">
+      <edmx:DataServices />
+    </edmx:Edmx>'''
+
+    def handler(request):
+        requests.append(request.url.path)
+        if request.url.path.endswith('/$metadata'):
+            return httpx.Response(200, content=metadata)
+        assert request.url.path.endswith('/Catalog_Отсутствует')
+        return httpx.Response(404)
+
+    client = ODataClient(PROFILE, transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(odata, 'ODataClient', lambda profile: client)
+    suite = {
+        'approval': {'selected_proposals': [0]},
+        'suggestion': {'proposals': [{
+            'title': 'Проверка сущности', 'engine': 'odata',
+            'cases': [{'entity': 'Catalog_Отсутствует', 'expected': 'доступна'}],
+        }]},
+    }
+
+    results, evidence = execute_1c(suite, PROFILE)
+
+    assert len(results) == 1
+    assert results[0]['status'] == 'failed'
+    assert 'Catalog_Отсутствует' in results[0]['message']
+    assert '404' in results[0]['message']
+    assert 'actual' not in results[0]
+    assert evidence == []
+    assert requests == ['/trade/odata/standard.odata/Catalog_Отсутствует']
+
+
+def test_executor_checks_metadata_without_entity(monkeypatch):
+    from testpilot.ai.executor import execute_1c
+    import testpilot.integration.odata as odata
+
+    requests = []
+    metadata = b'''<?xml version="1.0" encoding="utf-8"?>
+    <edmx:Edmx xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx">
+      <edmx:DataServices>
+        <Schema xmlns="http://schemas.microsoft.com/ado/2008/09/edm">
+          <EntityContainer Name="Demo">
+            <EntitySet Name="Catalogs" EntityType="Demo.Catalog" />
+          </EntityContainer>
+        </Schema>
+      </edmx:DataServices>
+    </edmx:Edmx>'''
+
+    def handler(request):
+        requests.append(request.url.path)
+        assert request.url.path.endswith('/$metadata')
+        return httpx.Response(200, content=metadata)
+
+    client = ODataClient(PROFILE, transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(odata, 'ODataClient', lambda profile: client)
+    suite = {
+        'approval': {'selected_proposals': [0]},
+        'suggestion': {'proposals': [{
+            'title': 'Доступность OData $metadata', 'engine': 'odata',
+            'cases': [{'check': 'metadata', 'expected': 'HTTP 200 OK'}],
+        }]},
+    }
+
+    results, evidence = execute_1c(suite, PROFILE)
+
+    assert len(results) == 1
+    assert results[0]['status'] == 'passed'
+    assert results[0]['actual'] == 1
+    assert 'EntitySet — 1' in results[0]['message']
+    assert evidence == []
+    assert requests == ['/trade/odata/standard.odata/$metadata']

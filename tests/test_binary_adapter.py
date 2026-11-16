@@ -100,3 +100,39 @@ def test_binary_adapter_parses_cfe_extension():
     origins = {e.origin for e in cfg.edges}
     assert '&Вместо' in origins
     assert 'BSL_Call' in origins
+
+
+def test_report_lists_extracted_bsl_modules():
+    bsl = 'Процедура Тест()\n\tСообщить("ok");\nКонецПроцедуры'.encode('utf-8')
+    raw = build_mock_v8_container({'Module.bsl': bsl, 'configinfo': b'manifest-only'})
+    model, report = Binary1CAdapter().parse_with_report(raw, 'Ext.cfe')
+
+    assert report.container_valid is True
+    assert report.has_bsl is True
+    assert report.bsl_modules == ('Module.bsl',)
+    assert report.streams == 2
+    assert report.objects == len(model.objects) and report.objects >= 1
+
+
+def test_report_marks_missing_bsl_for_metadata_only_container():
+    """Контейнер с одними служебными потоками: модулей BSL нет, и это видно в отчёте."""
+    raw = build_mock_v8_container({'configinfo': b'\x00\x01manifest', '{2,': b'\x00\x02service'})
+    model, report = Binary1CAdapter().parse_with_report(raw, 'ПустоеРасширение.cfe')
+
+    assert report.container_valid is True
+    assert report.has_bsl is False
+    assert report.bsl_modules == ()
+    assert report.streams == 2
+    # Модель содержит только корневой объект разработки: связей из кода нет.
+    assert report.edges == 0
+    assert model.edges == []
+    assert [o.type for o in model.objects] == ['common_module']
+
+
+def test_plain_text_without_bsl_is_not_treated_as_code():
+    """Ссылки на метаданные из потока без процедур/функций кодом не считаются."""
+    raw = build_mock_v8_container({'data': 'Документы.Номенклатура'.encode('utf-8')})
+    model, report = Binary1CAdapter().parse_with_report(raw, 'Ext.cfe')
+
+    assert report.has_bsl is False
+    assert {o.full_name for o in model.objects} == {'Расширение.Ext'}

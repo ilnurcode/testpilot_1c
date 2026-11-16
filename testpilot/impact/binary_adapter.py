@@ -1,12 +1,64 @@
 """Адаптер прямого разбора бинарных расширений (.cfe), обработок (.epf, .erf) и конфигураций (.cf)."""
 import re
+from dataclasses import dataclass
 from testpilot.contracts import Configuration, Object, Edge
 from testpilot.impact.v8_container import V8Container
+
+# Признак исходного модуля: проверяется по декодированному тексту потока.
+BSL_SIGNATURE = re.compile(r'(?:Процедура|Функция|КонецПроцедуры|КонецФункции|Procedure|Function|EndProcedure|EndFunction)\b')
+STREAM_ENCODINGS = ('utf-8-sig', 'utf-16le', 'cp1251')
+PRINTABLE_RATIO = 0.9
+
+
+def decode_bsl(data: bytes) -> str | None:
+    """Текст модуля BSL из потока или None, если поток исходником не является."""
+    for encoding in STREAM_ENCODINGS:
+        try:
+            text = data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        if '\x00' in text or not BSL_SIGNATURE.search(text):
+            continue
+        sample = text[:4096]
+        printable = sum(1 for ch in sample if ch.isprintable() or ch in '\r\n\t')
+        if sample and printable >= PRINTABLE_RATIO * len(sample):
+            return text
+    return None
+
+
+def bsl_sources(files: dict[str, bytes]) -> dict[str, str]:
+    """Исходники BSL из потоков контейнера: {имя потока: текст}. Пустой словарь — исходников нет."""
+    sources = {}
+    for name, data in files.items():
+        text = decode_bsl(data)
+        if text is not None:
+            sources[name] = text
+    return sources
+
+
+@dataclass(frozen=True)
+class BinaryParseReport:
+    """Что фактически извлечено из контейнера: без этого статус разбора не отличить от полного."""
+
+    container_valid: bool
+    streams: int
+    bsl_modules: tuple[str, ...]
+    objects: int
+    edges: int
+
+    @property
+    def has_bsl(self) -> bool:
+        return bool(self.bsl_modules)
+
 
 class Binary1CAdapter:
     """Извлечение структуры метаданных и зависимостей из бинарных контейнеров 1С."""
 
     def parse(self, raw: bytes, filename: str, configuration_id: str = 'c1_binary', version: str = '1.0.0') -> Configuration:
+        model, _ = self.parse_with_report(raw, filename, configuration_id=configuration_id, version=version)
+        return model
+
+    def parse_with_report(self, raw: bytes, filename: str, configuration_id: str = 'c1_binary', version: str = '1.0.0') -> tuple[Configuration, BinaryParseReport]:
         container = V8Container(raw)
         if not container.is_valid():
             raise ValueError("Не является валидным составным контейнером 1С v8")
@@ -44,20 +96,9 @@ class Binary1CAdapter:
         else:
             root_id = add_obj(f"config.{base_name}", 'common_module', f"Конфигурация.{base_name}", {'kind': 'cf'})
 
-        # 2. Поиск модулей BSL и метаданных во внутренних потоках
-        for stream_name, stream_data in files.items():
-            # Попытка декодировать как UTF-8 или UTF-16
-            text = ""
-            for enc in ('utf-8', 'utf-16le', 'cp1251'):
-                try:
-                    text = stream_data.decode(enc)
-                    break
-                except UnicodeDecodeError:
-                    pass
-
-            if not text:
-                continue
-
+        # 2. Разбор только текстовых потоков BSL: произвольные байты контейнера кодом не считаются.
+        sources = bsl_sources(files)
+        for stream_name, text in sources.items():
             # Поиск директив расширений: &Вместо, &Перед, &После, &ИзменениеИКонтроль
             extension_directives = re.findall(r'&(Вместо|Перед|После|ИзменениеИКонтроль)\s*\(\s*["\']([^"\']+)["\']\s*\)', text, re.IGNORECASE)
             for directive, target_method in extension_directives:
@@ -91,7 +132,7 @@ class Binary1CAdapter:
                     seen_edges.add(k)
                     clean_edges.append(e)
 
-        return Configuration(
+        model = Configuration(
             schema_version='1.0',
             configuration_id=configuration_id,
             version=version,
@@ -100,3 +141,11 @@ class Binary1CAdapter:
             objects=objects,
             edges=clean_edges
         )
+        report = BinaryParseReport(
+            container_valid=True,
+            streams=len(files),
+            bsl_modules=tuple(sources),
+            objects=len(objects),
+            edges=len(clean_edges),
+        )
+        return model, report

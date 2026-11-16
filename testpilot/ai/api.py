@@ -5,8 +5,8 @@ from sqlalchemy import select
 from testpilot.common import analyst,expert,user,require
 from testpilot.db import session,AISuiteRow,PackageRow,TestRow,CoverageRow,EvidenceRow,audit,uid
 from testpilot.contracts import now,RunInput
-from testpilot.ai.models import GenerateRequest,Decision
-from testpilot.ai import provider
+from testpilot.ai.models import GenerateRequest,Decision,CodexStatus
+from testpilot.ai import provider,codex
 from testpilot.ai.executor import execute,browser_path
 
 router=APIRouter(prefix='/api/v1/ai',tags=['Нейросеть и проверки'])
@@ -56,9 +56,28 @@ def update_llm_settings(q: LLMSettingsInput, actor=Depends(expert)):
 
     return get_llm_settings(actor)
 
+def _codex_status_for(actor):
+    result = codex.status()
+    if actor != 'expert':
+        result = {**result, 'verification_uri': None, 'user_code': None}
+    return result
+
+
 @router.get('/status')
 def status(actor=Depends(user)):
-    return {**provider.status(),'demo_available':True,'browser_available':bool(browser_path()),'executor_1c_connected':False}
+    return {**provider.status(),'codex':_codex_status_for(actor),'demo_available':True,'browser_available':bool(browser_path()),'executor_1c_connected':False}
+
+@router.get('/codex/status',response_model=CodexStatus)
+def codex_status(actor=Depends(user)):
+    return _codex_status_for(actor)
+
+@router.post('/codex/login',response_model=CodexStatus)
+def codex_login(actor=Depends(expert)):
+    return codex.login()
+
+@router.post('/codex/logout',response_model=CodexStatus)
+def codex_logout(actor=Depends(expert)):
+    return codex.logout()
 
 @router.post('/suites')
 def create(q:GenerateRequest,actor=Depends(analyst),s=Depends(session,scope='function')):
@@ -66,9 +85,10 @@ def create(q:GenerateRequest,actor=Depends(analyst),s=Depends(session,scope='fun
     if not package['affected_objects']:raise HTTPException(422,'Область влияния пуста: нет объектов для генерации проверок')
     catalog=[t for t in s.scalars(select(TestRow).where(TestRow.configuration_id==package['configuration_id'],TestRow.active==True)) if t.payload['synthetic']==package['synthetic'] and (not t.payload['compatible_versions'] or package['target_version'] in t.payload['compatible_versions'])]
     rows=[{'test_id':t.id,'title':t.payload['title'],'mandatory':t.mandatory,'object_ids':[c.object_id for c in s.scalars(select(CoverageRow).where(CoverageRow.test_id==t.id,CoverageRow.state=='confirmed'))]} for t in catalog]
-    if q.provider=='llm':
+    if q.provider in ('llm','codex'):
         if not q.consent:raise HTTPException(422,'Подтвердите передачу контекста проекта внешнему провайдеру')
-        suggestion,model=provider.generate(package,rows,q.object_names,q.model_context)
+        generator=codex.generate if q.provider=='codex' else provider.generate
+        suggestion,model=generator(package,rows,q.object_names,q.model_context)
     elif q.provider=='local':
         suggestion=provider.generate_local_1c_tests(package,rows,q.object_names);model='local-rules'
     else:suggestion=provider.demo_suggestion(package);model=None
@@ -109,7 +129,7 @@ def approve(sid:str,q:Decision,actor=Depends(expert),s=Depends(session,scope='fu
                  'metadata':{'suite_id':sid,'provider':row.payload['provider'],'model':row.payload['model'],'estimated_duration':True},'synthetic':row.payload['synthetic']}
         s.add(TestRow(id=tid,configuration_id=payload['configuration_id'],active=True,mandatory=False,criticality='medium',duration_seconds=payload['duration_seconds'],payload=payload));s.flush()
         for oid in proposal['object_ids']:
-            s.add(CoverageRow(test_id=tid,object_id=oid,state='confirmed',source='ai+expert' if row.payload['provider']=='llm' else 'synthetic+expert',actor=actor,reason=q.reason,updated_at=now()))
+            s.add(CoverageRow(test_id=tid,object_id=oid,state='confirmed',source='ai+expert' if row.payload['provider'] in ('llm','codex') else 'synthetic+expert',actor=actor,reason=q.reason,updated_at=now()))
         generated[str(index)]=tid
     data={**row.payload,'catalog_test_ids':generated,'status':'approved','approval':{'actor':actor,'at':now(),'reason':q.reason,'selected_proposals':sorted(set(q.selected_proposals))}}
     row.status='approved';row.payload=data;audit(s,'intelligence',actor,'approve_suite',sid,{'reason':q.reason})
@@ -156,6 +176,17 @@ def run_1c(sid:str,actor=Depends(expert),s=Depends(session,scope='function')):
     from testpilot.integration.probe import Profile
     from testpilot.db import ProjectRow
     proj = s.get(ProjectRow, row.project_id)
+    if proj and proj.web_url and os.environ.get('TP_1C_AUTHORIZATION'):
+        selected = row.payload['approval']['selected_proposals']
+        proposals = row.payload['suggestion']['proposals']
+        needs_web_client = any(proposals[index]['engine'] == 'playwright' for index in selected)
+        has_username = proj.auth_username or os.environ.get('TP_1C_USERNAME')
+        if needs_web_client and not has_username:
+            raise HTTPException(
+                422,
+                'Для сценариев веб-клиента задайте пользователя и пароль 1С в настройках подключения проекта; Authorization используется только для OData',
+            )
+
     try:
         if proj and (proj.odata_url or proj.web_url):
             odata_url = _docker_host_url(proj.odata_url or os.environ.get('TP_1C_ODATA_URL', ''))

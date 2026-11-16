@@ -49,57 +49,67 @@ def unpack_v8_stream(data: bytes) -> bytes:
             return data
 
 class V8Container:
-    """Парсер контейнера 1С (.cf, .cfe, .epf, .erf)."""
+    """Парсер контейнера 1С (.cf, .cfe, .epf, .erf).
 
-    def __init__(self, raw: bytes):
+    Поддерживаются оба варианта: служебная фикстура без файлового заголовка и
+    настоящий файл платформы (16-байтовый заголовок 0xFFFFFF7F перед каталогом).
+    """
+
+    REAL_HEADER = b'\xff\xff\xff\x7f'
+    MAX_DEPTH = 3
+
+    def __init__(self, raw: bytes, depth: int = 0):
         self.raw = raw
         self.stream = io.BytesIO(raw)
         self.reader = V8BlockReader(self.stream)
+        self.depth = depth
+
+    @property
+    def toc_offset(self) -> int:
+        return 16 if self.raw.startswith(self.REAL_HEADER) else 0
 
     def is_valid(self) -> bool:
         if len(self.raw) < BLOCK_HEADER_SIZE:
             return False
-        # Первый блок всегда начинается с \r\n
+        # Настоящий файл платформы: 16-байтовый заголовок, затем блок каталога.
+        if self.raw.startswith(self.REAL_HEADER):
+            return self.raw[16:18] == b'\r\n'
         return self.raw.startswith(b'\r\n') or self.raw.startswith(b'\n')
 
+    def _catalog_entries(self) -> list[tuple[int, int]]:
+        catalog = self.reader.read_block(self.toc_offset)
+        if not catalog or len(catalog) % 12:
+            return []
+        return [(struct.unpack('<III', catalog[i * 12:(i + 1) * 12])[0],
+                 struct.unpack('<III', catalog[i * 12:(i + 1) * 12])[1])
+                for i in range(len(catalog) // 12)]
+
+    @staticmethod
+    def _entry_name(header: bytes) -> str:
+        """Имя записи: после 20-байтового служебного префикса идёт UTF-16LE."""
+        for start in (20, 0):
+            chunk = header[start:start + 512]
+            text = chunk.decode('utf-16le', errors='ignore')
+            text = text.split('\x00', 1)[0].strip()
+            if text and all(ord(c) >= 32 for c in text):
+                return text[:200]
+        return ''
+
     def extract_files(self) -> dict[str, bytes]:
-        """Извлечение всех файлов из контейнера."""
+        """Извлечение всех файлов, включая вложенные контейнеры платформы."""
         if not self.is_valid():
             return {}
-
-        # Корневой блок каталога файлов находится со смещения 0
-        catalog_bytes = self.reader.read_block(0)
-        if not catalog_bytes or len(catalog_bytes) % 12 != 0:
-            return {}
-
-        entries = []
-        num_entries = len(catalog_bytes) // 12
-        for i in range(num_entries):
-            header_offset, data_offset, max_len = struct.unpack('<III', catalog_bytes[i*12:(i+1)*12])
-            entries.append((header_offset, data_offset))
-
-        files = {}
-        for header_offset, data_offset in entries:
-            header_bytes = self.reader.read_block(header_offset)
-            # В заголовке содержится имя файла в UTF-16LE
-            # Структура заголовка: временные метки (16 байт) + имя файла (UTF-16LE)
-            filename = ""
-            if len(header_bytes) > 20:
-                name_bytes = header_bytes[20:]
-                try:
-                    # Имя оканчивается нулевым символом UTF-16
-                    null_idx = name_bytes.find(b'\x00\x00')
-                    if null_idx != -1 and null_idx % 2 == 0:
-                        name_bytes = name_bytes[:null_idx]
-                    filename = name_bytes.decode('utf-16le', errors='ignore').strip('\x00').strip()
-                except Exception:
-                    pass
-
-            if not filename:
-                filename = f"stream_{header_offset:x}"
-
-            raw_file_data = self.reader.read_block(data_offset)
-            file_data = unpack_v8_stream(raw_file_data)
-            files[filename] = file_data
-
+        files: dict[str, bytes] = {}
+        for index, (header_offset, data_offset) in enumerate(self._catalog_entries()):
+            header = self.reader.read_block(header_offset)
+            data = unpack_v8_stream(self.reader.read_block(data_offset))
+            name = self._entry_name(header) or f'stream{index}'
+            nested = V8Container(data, self.depth + 1)
+            if self.depth < self.MAX_DEPTH and nested.is_valid():
+                inner = nested.extract_files()
+                if inner:
+                    files.update({f'{name}/{k}' if name != f'stream{index}' else k: v
+                                  for k, v in inner.items()})
+                    continue
+            files[name] = data
         return files

@@ -92,6 +92,7 @@ class WebClientRunner:
     def run_scenario(self, title: str, steps: list[dict], playwright_instance=None) -> ScenarioReport:
         """Выполнение последовательности шагов сценария."""
         from playwright.sync_api import sync_playwright
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
         report = ScenarioReport(title=title, status='passed')
         start_time = time.perf_counter()
@@ -153,14 +154,14 @@ class WebClientRunner:
                         if action == 'click':
                             clicked = False
                             for loc in (
-                                page.get_by_text(target, exact=True).first,
-                                page.get_by_text(target, exact=False).first,
+                                page.get_by_text(target, exact=True).filter(visible=True).first,
+                                page.get_by_text(target, exact=False).filter(visible=True).first,
                             ):
                                 try:
-                                    if loc.is_visible(timeout=2000):
-                                        loc.click()
-                                        clicked = True
-                                        break
+                                    loc.wait_for(state='visible', timeout=2000)
+                                    loc.click()
+                                    clicked = True
+                                    break
                                 except Exception:
                                     pass
                             if not clicked:
@@ -181,8 +182,10 @@ class WebClientRunner:
                             if not filled:
                                 page.locator(target).first.fill(str(val))
                         elif action == 'assert_text':
-                            loc = page.get_by_text(target).first
-                            if not loc.is_visible(timeout=3000):
+                            loc = page.get_by_text(target, exact=True).filter(visible=True).first
+                            try:
+                                loc.wait_for(state='visible', timeout=3000)
+                            except PlaywrightTimeoutError:
                                 raise AssertionError(f"Текст '{target}' не обнаружен на форме 1С")
                         elif action == 'wait':
                             page.wait_for_timeout(float(val or 1000))

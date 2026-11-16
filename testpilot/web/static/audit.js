@@ -23,7 +23,6 @@ async function auditPage() {
     </div>
     <div class="actions" style="margin-top: 14px;">
       <button id="runAuditBtn">🔍 Запустить аудит v8std</button>
-      <button id="loadSampleBtn" class="secondary">Загрузить пример с дефектами</button>
     </div>
   </div>
   <div id="auditResult"></div>
@@ -51,46 +50,6 @@ async function auditPage() {
     boxCode.style.display = 'none';
   };
 
-  $('#loadSampleBtn').onclick = () => {
-    modeCodeBtn.click();
-    $('#auditCode').value = `// Пример расширения с уязвимостями и ошибками v8std
-Процедура ОбработкаПроведения(Отказ, РежимПроведения)
-    // LCK001 / v8std:managed-lock-in-posting:
-    // Запись движений без предварительной явной БлокировкаДанных!
-    Движения.ОстаткиТоваров.Записывать = Истина;
-    Движения.ОстаткиТоваров.Записать();
-КонецПроцедуры
-
-&НаКлиенте
-Процедура ПересчетТаблицы(Команда)
-    // PERF002 / v8std:server-in-client-loop: Серверный вызов в цикле на клиенте
-    Для каждого Стр Из Объект.Товары Цикл
-        Стр.Цена = ПолучитьЦенуНоменклатурыНаСервере(Стр.Номенклатура);
-    КонецЦикла;
-    
-    // SEC001: Выполнить с динамической конкатенацией (RCE)
-    Выполнить("ВыполнитьРасчет_" + ИмяДействия);
-    
-    // SEC002: Инъекция в запрос 1С (конкатенация вместо &Параметр)
-    Запрос = Новый Запрос;
-    Запрос.Текст = "ВЫБРАТЬ * ИЗ Справочник.Номенклатура ГДЕ Код = " + КодТовара;
-    
-    // v8std:privileged-mode: Привилегированный режим без проверки прав
-    УстановитьПривилегированныйРежим(Истина);
-    
-    // v8std:hardcoded-credentials: Хардкод пароля
-    Пароль = "SecretTokenKey_2026";
-    
-    // v8std:naming: однобуквенная переменная
-    с = 100;
-КонецПроцедуры
-
-// v8std:comment-api: экспортная процедура без документирующей шапки
-Процедура РасчетСкидки(Клиент, Сумма) Экспорт
-    Возврат;
-КонецПроцедуры
-`;
-  };
 
   $('#runAuditBtn').onclick = () => task(async () => {
     const payload = mode === 'code' 
@@ -118,6 +77,7 @@ function renderAuditResultInto(summary, selector) {
   if (!target) return;
 
   const passed = summary.passed;
+  const nothingChecked = (summary.status || 'scanned') !== 'scanned';
   const sev = summary.issues_by_severity || {};
   const critical = sev.CRITICAL || 0;
   const high = sev.HIGH || 0;
@@ -128,10 +88,10 @@ function renderAuditResultInto(summary, selector) {
   <div class="card" style="margin-top: 16px;">
     <div class="history-header">
       <h2>Результаты анализа</h2>
-      <span class="badge ${passed ? 'ready' : 'pending'}">${passed ? 'ПРОЙДЕНО' : 'НАЙДЕНЫ ДЕФЕКТЫ'}</span>
+      <span class="badge ${nothingChecked ? 'pending' : passed ? 'ready' : 'pending'}">${nothingChecked ? 'НЕЧЕГО ПРОВЕРЯТЬ' : passed ? 'ПРОЙДЕНО' : 'НАЙДЕНЫ ДЕФЕКТЫ'}</span>
     </div>
     <div class="stats">
-      <div><strong>${summary.total_files || 1}</strong>файлов</div>
+      <div><strong>${summary.total_files || 0}</strong>проверено файлов</div>
       <div><strong>${summary.total_issues || 0}</strong>замечаний</div>
       <div><strong style="color: ${critical ? '#d32f2f' : 'inherit'}">${critical}</strong>критичных</div>
       <div><strong style="color: ${high ? '#ed6c02' : 'inherit'}">${high}</strong>высоких</div>
@@ -139,7 +99,9 @@ function renderAuditResultInto(summary, selector) {
     <p class="caption">Время анализа: ${summary.duration_ms} мс</p>
   `;
 
-  if (!summary.issues || summary.issues.length === 0) {
+  if (nothingChecked) {
+    html += `<p class="warning" style="margin-top: 12px;">${E(summary.message || 'Исходники для проверки не найдены: аудит не выполнялся.')}</p>`;
+  } else if (!summary.issues || summary.issues.length === 0) {
     html += '<p class="success" style="margin-top: 12px;">✓ Уязвимостей и нарушений стандартов v8std не обнаружено.</p>';
   } else {
     html += '<div style="display: flex; flex-direction: column; gap: 10px; margin-top: 16px;">';

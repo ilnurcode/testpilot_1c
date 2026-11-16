@@ -28,8 +28,8 @@ def runner(actor=Depends(user)):
     if actor not in ('runner','expert'): raise HTTPException(403,'Требуется роль исполнителя')
     return actor
 
-def app(title):
-    a=FastAPI(title=title,version='1.0',dependencies=[])
+def app(title, *, lifespan=None):
+    a=FastAPI(title=title,version='1.0',dependencies=[],lifespan=lifespan)
     @a.middleware('http')
     async def limits(request:Request,call_next):
         if request.method in ('POST','PUT','PATCH'):

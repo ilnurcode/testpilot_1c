@@ -51,12 +51,18 @@ services:
       TP_LLM_API_KEY: ${TP_LLM_API_KEY:-}
       TP_LLM_BASE_URL: ${TP_LLM_BASE_URL:-https://api.openai.com/v1}
       TP_LLM_MODEL: ${TP_LLM_MODEL:-gpt-4.1-mini}
+      CODEX_HOME: /var/lib/testpilot/codex
+      TP_CODEX_BIN: ${TP_CODEX_BIN:-codex}
+      TP_CODEX_MODEL: ${TP_CODEX_MODEL:-}
+      TP_CODEX_TIMEOUT_SECONDS: ${TP_CODEX_TIMEOUT_SECONDS:-180}
       TP_1C_ODATA_URL: ${TP_1C_ODATA_URL:-}
       TP_1C_WEB_URL: ${TP_1C_WEB_URL:-}
       TP_1C_USERNAME: ${TP_1C_USERNAME:-}
       TP_1C_PASSWORD: ${TP_1C_PASSWORD:-}
       TP_1C_AUTHORIZATION: ${TP_1C_AUTHORIZATION:-}
       TP_1C_CA_FILE: ${TP_1C_CA_FILE:-}
+    volumes:
+      - codex_auth:/var/lib/testpilot/codex
     command: [uvicorn, testpilot.intelligence.api:app, --host, 0.0.0.0, --port, "8002"]
     ports: ["127.0.0.1:8002:8002"]
     healthcheck:
@@ -74,3 +80,4 @@ services:
       retries: 20
 volumes:
   pgdata:
+  codex_auth:

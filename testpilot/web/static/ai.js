@@ -2,24 +2,101 @@
 let activeSuite='';
 const stateNames={draft:'Ожидает проверки',approved:'Подтверждён',completed:'Проверки завершены'};
 const resultNames={passed:'Пройдено',failed:'Расхождение',error:'Ошибка выполнения',skipped:'Не выполнено'};
+const codexStateNames={unavailable:'CLI недоступен',signed_out:'Вход ChatGPT не выполнен',pending:'Ожидается вход ChatGPT',authenticated:'ChatGPT подключён',error:'Ошибка подключения'};
+function codexStatusLabel(status){return codexStateNames[status?.state]||'Статус подключения недоступен'}
+function codexConnected(status){return Boolean(status?.available&&status.authenticated&&status.state==='authenticated')}
+function suiteSource(s){
+ if(s.provider==='codex')return 'Codex · ChatGPT'+(s.model?' · '+s.model:'');
+ if(s.provider==='llm')return 'Нейросеть через API'+(s.model?' · '+s.model:'');
+ if(s.provider==='local')return 'Встроенный генератор 1С (Playwright + OData)';
+ if(s.provider==='demo')return 'Учебные правила · без нейросети';
+ return 'Неизвестный источник';
+}
+function mountCodexConnection(initial,panel){
+ let status=initial||{available:false,authenticated:false,state:'unavailable'},timer=null,revision=0,feedback='';
+ function render(){
+  clearTimeout(timer);
+  if(!panel.isConnected)return;
+  const connected=codexConnected(status),pending=status.state==='pending',expert=role==='expert';
+  panel.innerHTML='<h2>Codex · вход через ChatGPT</h2><p class="caption">Официальный Codex CLI использует вход ChatGPT без API-ключа. Настройки API ниже независимы от этого подключения.</p>'+
+   '<p class="warning">Одно подключение ChatGPT общее для всего локального стенда. При генерации контекст проекта передаётся OpenAI и расходует лимиты подписки ChatGPT.</p>'+
+   '<p role="status" aria-live="polite"><span class="badge '+(connected?'ready':'pending')+'">'+E(codexStatusLabel(status))+'</span></p>'+
+   (connected?'<p class="helper">Модель: '+E(status.model||'по умолчанию для аккаунта ChatGPT')+'</p>':'')+
+   (!status.available?'<p class="helper">Codex CLI недоступен на сервере стенда. Обратитесь к администратору.</p>':'')+
+   (status.state==='error'?'<p class="helper">Подключение не завершено. Повторите вход ChatGPT или отключите подключение.</p>':'')+
+   '<div class="codex-device"></div><p class="helper">'+(expert?'Изменить подключение может только эксперт.':'Для входа или отключения обратитесь к пользователю с ролью expert.')+'</p>'+
+   '<div class="actions"><button type="button" class="primary codex-login">Войти через ChatGPT</button><button type="button" class="secondary codex-logout">'+(pending?'Отменить вход':'Отключить ChatGPT')+'</button></div>'+
+   (feedback?'<p class="warning" role="alert">'+E(feedback)+'</p>':'');
+  if(pending&&expert){
+   const device=panel.querySelector('.codex-device');
+   let uri=null;
+   try{
+    const url=new URL(status.verification_uri);
+    if(url.protocol==='https:'&&url.hostname==='auth.openai.com'&&url.pathname==='/codex/device'&&!url.port&&!url.username&&!url.password&&!url.search&&!url.hash)uri=url.href;
+   }catch{}
+   if(uri&&status.user_code){
+    const instructions=document.createElement('p');instructions.className='info-note';
+    const link=document.createElement('a');link.href=uri;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Открыть официальный вход OpenAI';
+    const code=document.createElement('code');code.textContent=status.user_code;
+    instructions.append(link,document.createTextNode(' и ввести код: '),code);
+    device.append(instructions);
+   }else{
+    const waiting=document.createElement('p');waiting.className='info-note';waiting.textContent='Ожидаем официальный адрес и код от Codex CLI…';device.append(waiting);
+   }
+   const pollNote=document.createElement('p');pollNote.className='helper';pollNote.textContent='Не закрывайте эту страницу: статус входа обновляется автоматически. Вводите код только на официальном сайте OpenAI; не передавайте его другим людям.';device.append(pollNote);
+  }
+  const login=panel.querySelector('.codex-login'),logout=panel.querySelector('.codex-logout');
+  login.disabled=!expert||!status.available||connected||pending;
+  logout.disabled=!expert||!status.available||(!connected&&!pending&&status.state!=='error');
+  login.onclick=()=>task(()=>change('login'));logout.onclick=()=>task(()=>change('logout'));
+  busyButtons();
+  if(pending)timer=setTimeout(poll,3000);
+ }
+ async function poll(){
+  if(!panel.isConnected)return;
+  const requestRevision=revision;
+  try{
+   const next=await api('intelligence','ai/codex/status');
+   if(!panel.isConnected||requestRevision!==revision)return;
+   status=next;feedback='';
+  }catch{
+   if(!panel.isConnected||requestRevision!==revision)return;
+   feedback='Не удалось обновить статус Codex. Повторяем автоматически, пока ожидается вход.';
+  }
+  render();
+ }
+ async function change(action){
+  if(role!=='expert')throw Error('Для изменения подключения Codex требуется роль expert.');
+  revision++;clearTimeout(timer);
+  try{status=await api('intelligence','ai/codex/'+action,'POST');feedback=''}
+  catch{feedback=action==='login'?'Не удалось начать вход ChatGPT. Проверьте доступность Codex CLI и повторите попытку.':'Не удалось отключить ChatGPT. Обновите страницу и проверьте состояние подключения.';throw Error(feedback)}
+  finally{render()}
+ }
+ render();
+}
 async function prepareGeneration(report,pid){
  const status=await api('intelligence','ai/status');
  const detail=await api('impact','analyses/'+report.analysis_id);
- $('#aiPreparation')?.remove();$('#projectAnalysisReport').insertAdjacentHTML('beforeend',`<div class="analysis-box" id="aiPreparation"><h2>Подготовка проверок</h2><p class="caption">Сервис передаст область влияния и контекст разработки генератору. Предложения проверяются и сохраняются до запуска.</p><label>Источник сценариев<select id="generationProvider"><option value="local" selected>Встроенный генератор сценариев 1С (Playwright + OData)</option><option value="llm" ${status.configured?'':'disabled'}>Нейросеть через API ${status.configured?'· '+E(status.model):'· ключ не настроен'}</option></select></label><label class="inline"><input id="generationConsent" type="checkbox">Разрешаю передачу контекста проекта внешней нейросети при выборе API</label><p class="helper">Передаются изменения, граф, названия объектов и доступные фрагменты модели. Логины и пароли 1С в запрос не включаются. Непроверенные бинарные файлы не выдаются за разобранный код.</p>${!status.configured?'<p class="info-note">Для API задайте TP_LLM_API_KEY, TP_LLM_MODEL и TP_LLM_BASE_URL на сервере. Ключ не сохраняется в браузере.</p>':''}<div class="actions" id="generationActions"></div></div>`);
- // Встроенный генератор доступен всегда; LLM выбирается по желанию
+ $('#aiPreparation')?.remove();$('#projectAnalysisReport').insertAdjacentHTML('beforeend',`<div class="analysis-box" id="aiPreparation"><h2>Подготовка проверок</h2><p class="caption">Сервис передаст область влияния и контекст разработки генератору. Предложения проверяются и сохраняются до запуска.</p><label>Источник сценариев<select id="generationProvider"><option value="local" selected>Встроенный генератор сценариев 1С (Playwright + OData)</option><option value="llm" ${status.configured?'':'disabled'}>Нейросеть через API ${status.configured?'· '+E(status.model):'· ключ не настроен'}</option><option value="codex" ${codexConnected(status.codex)?'':'disabled'}>Codex · ChatGPT · ${E(codexStatusLabel(status.codex))}</option></select></label><label class="inline"><input id="generationConsent" type="checkbox">Разрешаю передачу контекста проекта внешней нейросети при выборе API или Codex ChatGPT</label><p class="helper">Передаются изменения, граф, названия объектов и доступные фрагменты модели. Логины и пароли 1С в запрос не включаются. Непроверенные бинарные файлы не выдаются за разобранный код.</p><p class="warning">Codex использует одно подключение ChatGPT на весь локальный стенд. Контекст передаётся OpenAI и расходует лимиты подписки ChatGPT.</p><p class="info-note">Codex: ${E(codexStatusLabel(status.codex))}. ${codexConnected(status.codex)?'Вход ChatGPT выполнен; можно выбрать Codex.':'Для генерации войдите через ChatGPT на странице «Нейросеть и проверки».'}</p>${!status.configured?'<p class="info-note">API-ключ не настроен. Настройки API доступны на странице «Нейросеть и проверки»; ключ не сохраняется в браузере.</p>':''}<div class="actions" id="generationActions"></div></div>`);
  addButton('#generationActions','Сформировать сценарии',async()=>{
   const provider=$('#generationProvider').value,consent=$('#generationConsent').checked;
-  if(provider==='llm'&&!consent)throw Error('Подтвердите передачу контекста внешнему провайдеру.');
+  if((provider==='llm'||provider==='codex')&&!consent)throw Error('Подтвердите передачу контекста внешнему провайдеру (API или Codex ChatGPT).');
+  if(provider==='codex'&&!codexConnected(status.codex))throw Error('Выполните вход ChatGPT на странице «Нейросеть и проверки».');
   await api('impact',`analyses/${report.analysis_id}/deliver`,'POST');
   const suite=await api('intelligence','ai/suites','POST',{package_id:detail.package.package_id,project_id:pid,provider,consent,object_names:detail.object_names,model_context:detail.model_context||[]});
   activeSuite=suite.suite_id;await show(8);
- });$('#aiPreparation').scrollIntoView({behavior:'smooth',block:'start'});
+ });
+ addButton('#generationActions','Настроить ChatGPT / API',async()=>{await show(8);$('#codexConnection')?.scrollIntoView({behavior:'smooth',block:'start'})},true);
+ $('#aiPreparation').scrollIntoView({behavior:'smooth',block:'start'});
 }
 async function aiPage(){
  heading('Нейросеть и проверки');const [status,suites,llmSettings]=await Promise.all([api('intelligence','ai/status'),api('intelligence','ai/suites'),api('intelligence','ai/settings/llm')]);
- $('#content').innerHTML=`<div class="page-heading"><div><div class="eyebrow">ОТ ОБЛАСТИ ВЛИЯНИЯ К РЕЗУЛЬТАТУ</div><h1>Нейросеть и проверки</h1><p class="page-description">Просмотрите сценарии и тестовые данные, подтвердите план и изучите фактические результаты.</p></div></div><div class="connection-banner"><span class="badge ${llmSettings.has_key?'ready':'pending'}">${llmSettings.has_key?'API-ключ задан ('+E(llmSettings.model)+')':'Нейросеть: API-ключ не настроен'}</span><span class="badge ${status.browser_available?'ready':'pending'}">${status.browser_available?'Chromium доступен':'Chromium не найден'}</span><span class="badge">1С:Интеграция</span></div><div class="card"><h2>Настройка нейросети (OpenAI, DeepSeek, GigaChat, vLLM)</h2><p class="caption">Сервис отправляет изменённые и затронутые объекты метаданных 1С в модель через стандартный API /chat/completions.</p><div class="row"><label>URL провайдера API<input id="llmBaseUrl" value="${E(llmSettings.base_url||'https://api.openai.com/v1')}" placeholder="https://api.openai.com/v1"></label><label>Модель<input id="llmModel" value="${E(llmSettings.model||'gpt-4o-mini')}" placeholder="gpt-4o-mini, deepseek-chat и др."></label></div><label>API-ключ<input id="llmApiKey" type="password" placeholder="${llmSettings.has_key?'•••••••• (ключ уже сохранён; введите новый для замены)':'Введите API-ключ (sk-...)'}"></label><div class="actions" style="margin-top:12px"><button id="saveLlmSettings" class="primary">Сохранить настройки ИИ</button></div><div id="llmFeedback" style="margin-top:8px"></div></div><div class="card"><div class="history-header"><h2>Сохранённые планы проверок</h2><small>${suites.length} записей</small></div>${suites.length?table(['Создан','Источник','Статус','Сценарии',''],suites.map(s=>[E(dateText(s.created_at)),s.provider==='llm'?E(s.model):'Учебные правила · без нейросети',E(stateNames[s.status]),s.suggestion.proposals.length,`<button class="secondary open-ai-suite" data-suite="${E(s.suite_id)}">Открыть</button>`])):'<p class="caption">Выберите «Подготовить проверки» в результате анализа проекта.</p>'}</div><div id="suiteView"></div>`;
+ $('#content').innerHTML=`<div class="page-heading"><div><div class="eyebrow">ОТ ОБЛАСТИ ВЛИЯНИЯ К РЕЗУЛЬТАТУ</div><h1>Нейросеть и проверки</h1><p class="page-description">Просмотрите сценарии и тестовые данные, подтвердите план и изучите фактические результаты.</p></div></div><div class="connection-banner"><span class="badge ${llmSettings.has_key?'ready':'pending'}">${llmSettings.has_key?'API-ключ задан ('+E(llmSettings.model)+')':'Нейросеть: API-ключ не настроен'}</span><span class="badge ${status.browser_available?'ready':'pending'}">${status.browser_available?'Chromium доступен':'Chromium не найден'}</span><span class="badge">1С:Интеграция</span></div><div class="card" id="codexConnection"></div><div class="card"><h2>Нейросеть через API (OpenAI, DeepSeek, GigaChat, vLLM)</h2><p class="caption">Сервис отправляет изменённые и затронутые объекты метаданных 1С в модель через стандартный API /chat/completions.</p><div class="row"><label>URL провайдера API<input id="llmBaseUrl" value="${E(llmSettings.base_url||'https://api.openai.com/v1')}" placeholder="https://api.openai.com/v1"></label><label>Модель<input id="llmModel" value="${E(llmSettings.model||'gpt-4o-mini')}" placeholder="gpt-4o-mini, deepseek-chat и др."></label></div><label>API-ключ<input id="llmApiKey" type="password" placeholder="${llmSettings.has_key?'•••••••• (ключ уже сохранён; введите новый для замены)':'Введите API-ключ (sk-...)'}"></label><div class="actions" style="margin-top:12px"><button id="saveLlmSettings" class="primary">Сохранить настройки ИИ</button></div><div id="llmFeedback" style="margin-top:8px"></div></div><div class="card"><div class="history-header"><h2>Сохранённые планы проверок</h2><small>${suites.length} записей</small></div>${suites.length?table(['Создан','Источник','Статус','Сценарии',''],suites.map(s=>[E(dateText(s.created_at)),E(suiteSource(s)),E(stateNames[s.status]),s.suggestion.proposals.length,`<button class="secondary open-ai-suite" data-suite="${E(s.suite_id)}">Открыть</button>`])):'<p class="caption">Выберите «Подготовить проверки» в результате анализа проекта.</p>'}</div><div id="suiteView"></div>`;
  
+ $('#saveLlmSettings').disabled=role!=='expert';
+ mountCodexConnection(status.codex,$('#codexConnection'));
  $('#saveLlmSettings').onclick=()=>task(async()=>{
+  if(role!=='expert')throw Error('Для изменения подключения API требуется роль expert.');
   const base=$('#llmBaseUrl').value.trim(),model=$('#llmModel').value.trim(),key=$('#llmApiKey').value.trim();
   const res=await api('intelligence','ai/settings/llm','PUT',{base_url:base,model:model,api_key:key||null});
   $('#llmFeedback').innerHTML='<p class="success">Настройки нейросети сохранены. Модель: '+E(res.model)+' ('+E(res.endpoint_host||'')+')</p>';
@@ -34,7 +111,7 @@ async function renderSuite(s){
  const proposals=s.suggestion.proposals;
  const selected=s.approval?.selected_proposals||proposals.map((_,i)=>i);
  const covered=new Set(proposals.filter((_,i)=>selected.includes(i)).flatMap(p=>p.object_ids));
- $('#suiteView').innerHTML=`<div class="card"><div class="history-header"><h2>План проверок · ${E(s.target_version)}</h2><span class="badge ${s.status==='draft'?'pending':'ready'}">${E(stateNames[s.status])}</span></div><p class="${s.provider==='demo'?'warning':'info-note'}">${s.provider==='demo'?'Учебные правила. Нейросеть не вызывалась.':(s.provider==='local'?'Сформировано встроенным генератором сценариев 1С (Playwright + OData).':'Сценарии предложены моделью '+E(s.model)+'. Ответ прошёл серверную проверку схемы и ссылок.')} ${s.synthetic?'Синтетический проект.':''}</p><p>${E(s.suggestion.summary)}</p>${s.suggestion.selected_test_ids.length?`<p class="info-note">Выбраны тесты из каталога: ${s.suggestion.selected_test_ids.map(E).join(', ')}. Их исполнение требует подключённого внешнего runner; запуск ниже выполняет только предложенные сценарии.</p>`:''}<div class="analysis-summary"><div><strong>${proposals.length}</strong>Предложено сценариев</div><div><strong>${covered.size} / ${s.affected_objects.length}</strong>Объектов указано в сценариях</div><div><strong>${proposals.reduce((n,p)=>n+p.cases.length,0)}</strong>Наборов тестовых данных</div></div><p class="helper">Привязки и ожидаемые результаты требуют экспертной проверки. Это плановое покрытие, а не доказательство исправности всех объектов.</p>${proposals.map((p,i)=>`<article class="proposal-card"><div class="history-header"><label class="inline"><input type="checkbox" class="proposal-choice" value="${i}" ${selected.includes(i)?'checked':''} ${s.status!=='draft'?'disabled':''}><strong>${E(p.title)}</strong></label><span class="badge blue">${p.engine==='playwright'?'Playwright':p.engine==='odata'?'OData 1С':'Ручная проверка'}</span></div><p class="caption">${E(p.rationale)}</p><p class="helper">Объекты: ${p.object_ids.map(E).join(', ')}</p><ol>${p.steps.map(x=>`<li>${E(x)}</li>`).join('')}</ol><p class="caption"><b>Ожидается:</b> ${E(p.expected_result)}</p>${p.cases.length?(p.cases[0].quantity!=null?table(['Количество','Цена','Скидка','Ожидаемая сумма'],p.cases.map(c=>[c.quantity,c.price,c.discount+'%',c.expected_total])):table(['Объект / Контекст','Шагов','Ожидаемый результат'],p.cases.map(c=>[E(c.entity||'Веб-клиент 1С'),(c.steps||[]).length,E(c.expected||p.expected_result)]))):''}</article>`).join('')}<details><summary>Ограничения и предупреждения</summary>${[...s.warnings,...s.suggestion.warnings].map(notice).join('')}</details>${s.catalog_test_ids?'<p class="success">Выбранные сценарии сохранены в каталог. Результаты запуска пополняют историю и дефекты.</p>':''}<div id="suiteActions"></div><div id="suiteResults"></div></div>`;
+ $('#suiteView').innerHTML=`<div class="card"><div class="history-header"><h2>План проверок · ${E(s.target_version)}</h2><span class="badge ${s.status==='draft'?'pending':'ready'}">${E(stateNames[s.status])}</span></div><p class="${s.provider==='demo'?'warning':'info-note'}">${E(suiteSource(s))}. ${s.provider==='codex'?'Сценарии предложены официальным Codex CLI через вход ChatGPT, без API-ключа. Ответ прошёл серверную проверку схемы и ссылок.':(s.provider==='llm'?'Сценарии предложены моделью через API. Ответ прошёл серверную проверку схемы и ссылок.':(s.provider==='demo'?'Нейросеть не вызывалась.':''))} ${s.synthetic?'Синтетический проект.':''}</p><p>${E(s.suggestion.summary)}</p>${s.suggestion.selected_test_ids.length?`<p class="info-note">Выбраны тесты из каталога: ${s.suggestion.selected_test_ids.map(E).join(', ')}. Их исполнение требует подключённого внешнего runner; запуск ниже выполняет только предложенные сценарии.</p>`:''}<div class="analysis-summary"><div><strong>${proposals.length}</strong>Предложено сценариев</div><div><strong>${covered.size} / ${s.affected_objects.length}</strong>Объектов указано в сценариях</div><div><strong>${proposals.reduce((n,p)=>n+p.cases.length,0)}</strong>Наборов тестовых данных</div></div><p class="helper">Привязки и ожидаемые результаты требуют экспертной проверки. Это плановое покрытие, а не доказательство исправности всех объектов.</p>${proposals.map((p,i)=>`<article class="proposal-card"><div class="history-header"><label class="inline"><input type="checkbox" class="proposal-choice" value="${i}" ${selected.includes(i)?'checked':''} ${s.status!=='draft'?'disabled':''}><strong>${E(p.title)}</strong></label><span class="badge blue">${p.engine==='playwright'?'Playwright':p.engine==='odata'?'OData 1С':'Ручная проверка'}</span></div><p class="caption">${E(p.rationale)}</p><p class="helper">Объекты: ${p.object_ids.map(E).join(', ')}</p><ol>${p.steps.map(x=>`<li>${E(x)}</li>`).join('')}</ol><p class="caption"><b>Ожидается:</b> ${E(p.expected_result)}</p>${p.cases.length?(p.cases[0].quantity!=null?table(['Количество','Цена','Скидка','Ожидаемая сумма'],p.cases.map(c=>[c.quantity,c.price,c.discount+'%',c.expected_total])):table(['Объект / Контекст','Шагов','Ожидаемый результат'],p.cases.map(c=>[E(c.entity||'Веб-клиент 1С'),(c.steps||[]).length,E(c.expected||p.expected_result)]))):''}</article>`).join('')}<details><summary>Ограничения и предупреждения</summary>${[...s.warnings,...s.suggestion.warnings].map(notice).join('')}</details>${s.catalog_test_ids?'<p class="success">Выбранные сценарии сохранены в каталог. Результаты запуска пополняют историю и дефекты.</p>':''}<div id="suiteActions"></div><div id="suiteResults"></div></div>`;
  if(s.status==='draft'){
   $('#suiteActions').innerHTML='<label>Обоснование подтверждения<input id="suiteReason" placeholder="Например, проверены сценарии и ожидаемые суммы"></label><p class="helper">Подтверждение сохраняет выбранные сценарии в каталог и подтверждает их привязки. Запуск выполняет сценарии на настроенной базе 1С.</p><div id="suiteApprove"></div>';
   if(role==='expert')addButton('#suiteApprove','Подтвердить выбранные сценарии',async()=>{const ids=[...document.querySelectorAll('.proposal-choice:checked')].map(x=>Number(x.value));if(!ids.length)throw Error('Выберите хотя бы один сценарий.');const r=await api('intelligence',`ai/suites/${s.suite_id}/approve`,'POST',{reason:$('#suiteReason').value,selected_proposals:ids});await renderSuite(r)});

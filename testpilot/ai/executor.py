@@ -72,7 +72,7 @@ def execute(suite,authorization):
 
 def execute_1c(suite, profile):
     """Исполнение сценариев на живой базе 1С:Предприятия через OData и WebClient."""
-    from testpilot.integration.odata import ODataClient, ODataError
+    from testpilot.integration.odata import ODataClient, NotFoundError
     from testpilot.integration.webclient import WebClientRunner
 
     results = []
@@ -103,18 +103,23 @@ def execute_1c(suite, profile):
                 elif proposal['engine'] == 'odata':
                     if not odata_client:
                         raise RuntimeError("Адрес OData 1С не настроен")
-                    from testpilot.integration.odata import NotFoundError
-                    entity = case.get('entity') or 'Catalog_Номенклатура'
-                    try:
-                        items = odata_client.get_entities(entity, top=5)
-                        result['actual'] = len(items)
-                        result['status'] = 'passed'
-                        result['message'] = f"Успешный OData-запрос к {entity}: получено записей: {len(items)}"
-                    except NotFoundError:
-                        meta = odata_client.get_metadata()
-                        result['actual'] = len(meta)
-                        result['status'] = 'passed'
-                        result['message'] = f"OData 1С доступна (HTTP 200, $metadata проверен; сущностей: {len(meta)}). Таблица {entity} не опубликована в OData — используйте enable_odata.bsl."
+                    if case.get('check')=='metadata' or not case.get('entity'):
+                        entity_sets=odata_client.get_metadata()
+                        result.update(
+                            actual=len(entity_sets),
+                            status='passed',
+                            message=f"Проверка OData $metadata пройдена: EntitySet — {len(entity_sets)}",
+                        )
+                    else:
+                        entity=case['entity']
+                        try:
+                            items=odata_client.get_entities(entity,top=5)
+                        except NotFoundError:
+                            result.update(status='failed',message=f"Сущность OData {entity} не найдена (HTTP 404)")
+                        else:
+                            result['actual']=len(items)
+                            result['status']='passed'
+                            result['message']=f"Успешный OData-запрос к {entity}: получено записей: {len(items)}"
                 else:
                     if not web_runner:
                         raise RuntimeError("Адрес веб-клиента 1С не настроен")

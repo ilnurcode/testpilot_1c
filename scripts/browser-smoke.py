@@ -34,6 +34,31 @@ with sync_playwright() as p:
     Path('.runtime').mkdir(exist_ok=True);page.screenshot(path='.runtime/web-plan.png',full_page=True)
     page.locator('nav').get_by_role('button',name='Отчёты',exact=True).click();page.get_by_role('heading',name='Сохранённые результаты и экспорт').wait_for()
     page.get_by_role('button',name='Открыть план',exact=True).click();page.locator('#savedResult h2').wait_for()
+    # Проверяем переходы по адресу и истории, не создавая проекты и планы в базе.
+    project_id='00000000-0000-0000-0000-000000000001'
+    suite_id='00000000-0000-0000-0000-000000000002'
+    project={'id':project_id,'name':'Проверка навигации','description':'','upload_count':0,'size_bytes':0,'uploads':[],'analyses':[]}
+    suite={'suite_id':suite_id,'target_version':'Навигация','status':'draft','provider':'demo','synthetic':True,
+           'suggestion':{'proposals':[],'selected_test_ids':[],'summary':'','warnings':[]},
+           'affected_objects':[],'warnings':[]}
+    counts={'project':0,'suite':0}
+    def project_response(route):
+        counts['project']+=1
+        route.fulfill(json=project)
+    def suite_response(route):
+        counts['suite']+=1
+        route.fulfill(json=suite)
+    page.route('**/api/v1/projects/'+project_id,project_response)
+    page.route('**/api/v1/ai/suites/'+suite_id,suite_response)
+    page.evaluate("(id) => location.hash = '#projects/' + id",project_id)
+    page.get_by_role('heading',name='Проверка навигации',exact=True).wait_for()
+    page.evaluate("(id) => location.hash = '#ai/' + id",suite_id)
+    page.get_by_role('heading',name='План проверок · Навигация',exact=True).wait_for()
+    page.go_back()
+    page.get_by_role('heading',name='Проверка навигации',exact=True).wait_for()
+    page.go_forward()
+    page.get_by_role('heading',name='План проверок · Навигация',exact=True).wait_for()
+    assert counts=={'project':2,'suite':2},counts
     assert not errors,errors
     assert page.locator('#message').inner_text()==''
     browser.close()

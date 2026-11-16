@@ -222,3 +222,74 @@ def test_project_connection_settings_and_script(clients):
     # 4. Проверка невалидного URL
     bad = c.put(f'/api/v1/projects/{p}/connection', json={'odata_url': 'ftp://bad-url'})
     assert bad.status_code == 422
+
+
+def test_binary_container_without_bsl_is_metadata_only(clients):
+    """Контейнер без модулей BSL: честный статус, версия модели не создаётся."""
+    from fastapi.testclient import TestClient
+    from tests.test_binary_adapter import build_mock_v8_container
+    from testpilot.web.api import app as web
+
+    c, _ = clients
+    p = project(c)
+    raw = build_mock_v8_container({'configinfo': b'\x00\x01manifest', '{2,': b'\x00\x02service'})
+    info = upload(c, p, raw, 'ПустоеРасширение.cfe', label='1.0').json()
+
+    assert info['status'] == 'metadata_only'
+    assert info['version_id'] is None
+    assert info['summary'] == {}
+    # Без версии модели анализ области влияния блокируется, а не считается по метаданным.
+    blocked = c.post(f'/api/v1/projects/{p}/uploads/{info["id"]}/analyze', json={})
+    assert blocked.status_code == 409
+
+    with TestClient(web) as w:
+        r = w.post('/api/v1/audit/scan-upload', json={'project_id': p, 'upload_id': info['id']},
+                   auth=('expert', 'test-password-only'))
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data['status'] == 'no_bsl_modules'
+        assert data['passed'] is False
+        assert data['total_files'] == 0 and data['sources_checked'] == 0
+
+
+def test_audit_scan_upload_scans_extracted_bsl(clients):
+    """Контейнер с модулем BSL: аудит проверяет извлечённый исходник и находит дефект."""
+    from fastapi.testclient import TestClient
+    from tests.test_binary_adapter import build_mock_v8_container
+    from testpilot.web.api import app as web
+
+    c, _ = clients
+    p = project(c)
+    bsl = ('Процедура Опасная(Команда)\n'
+           '\tВыполнить("Действие_" + Команда);\n'
+           'КонецПроцедуры\n').encode('utf-8')
+    info = upload(c, p, build_mock_v8_container({'Module.bsl': bsl}), 'Extension.cfe').json()
+    assert info['status'] == 'ready'
+
+    with TestClient(web) as w:
+        r = w.post('/api/v1/audit/scan-upload', json={'project_id': p, 'upload_id': info['id']},
+                   auth=('expert', 'test-password-only'))
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data['status'] == 'scanned'
+        assert data['total_files'] == 1
+        assert {i['rule_id'] for i in data['issues']} == {'SEC001'}
+
+
+def test_audit_scan_upload_rejects_non_container_binary(clients):
+    """Невалидный бинарник не сканируется как текст: явный статус вместо «пройдено»."""
+    from fastapi.testclient import TestClient
+    from testpilot.web.api import app as web
+
+    c, _ = clients
+    p = project(c)
+    info = upload(c, p, b'opaque-bytes-not-a-container', 'Мусор.cfe').json()
+    assert info['status'] == 'requires_adapter'
+
+    with TestClient(web) as w:
+        r = w.post('/api/v1/audit/scan-upload', json={'project_id': p, 'upload_id': info['id']},
+                   auth=('expert', 'test-password-only'))
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data['status'] == 'not_a_container'
+        assert data['passed'] is False and data['total_files'] == 0
