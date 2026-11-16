@@ -5,6 +5,7 @@ const resultNames={passed:'Пройдено',failed:'Расхождение',err
 const codexStateNames={unavailable:'CLI недоступен',signed_out:'Вход ChatGPT не выполнен',pending:'Ожидается вход ChatGPT',authenticated:'ChatGPT подключён',error:'Ошибка подключения'};
 function codexStatusLabel(status){return codexStateNames[status?.state]||'Статус подключения недоступен'}
 function codexConnected(status){return Boolean(status?.available&&status.authenticated&&status.state==='authenticated')}
+function allowMutations(){return $('#allowMutations')?.checked?'true':'false'}
 function suiteSource(s){
  if(s.provider==='codex')return 'Codex · ChatGPT'+(s.model?' · '+s.model:'');
  if(s.provider==='llm')return 'Нейросеть через API'+(s.model?' · '+s.model:'');
@@ -116,10 +117,11 @@ async function renderSuite(s){
   $('#suiteActions').innerHTML='<label>Обоснование подтверждения<input id="suiteReason" placeholder="Например, проверены сценарии и ожидаемые суммы"></label><p class="helper">Подтверждение сохраняет выбранные сценарии в каталог и подтверждает их привязки. Запуск выполняет сценарии на настроенной базе 1С.</p><div id="suiteApprove"></div>';
   if(role==='expert')addButton('#suiteApprove','Подтвердить выбранные сценарии',async()=>{const ids=[...document.querySelectorAll('.proposal-choice:checked')].map(x=>Number(x.value));if(!ids.length)throw Error('Выберите хотя бы один сценарий.');const r=await api('intelligence',`ai/suites/${s.suite_id}/approve`,'POST',{reason:$('#suiteReason').value,selected_proposals:ids});await renderSuite(r)});
  }else if(s.status==='approved'){
-  addButton('#suiteActions','Запустить на базе 1С',async()=>{const r=await api('intelligence',`ai/suites/${s.suite_id}/run-1c`,'POST');await renderSuite(r)});
+  addButton('#suiteActions','Запустить на базе 1С',async()=>{const r=await api('intelligence',`ai/suites/${s.suite_id}/run-1c?allow_mutations=${allowMutations()}`,'POST');await renderSuite(r)});
  }
+ $('#suiteActions')?.insertAdjacentHTML('beforeend','<label class="checkbox"><input type="checkbox" id="allowMutations"> Разрешить изменяющие шаги (база тестовая)</label>');
  if(s.status!=='draft'&&(s.approval?.selected_proposals||[]).length){
-  addButton('#suiteActions','Прогнать снова',async()=>{const r=await api('intelligence',`ai/suites/${s.suite_id}/rerun`,'POST');await renderSuite(r)});
+  addButton('#suiteActions','Прогнать снова',async()=>{const r=await api('intelligence',`ai/suites/${s.suite_id}/rerun?allow_mutations=${allowMutations()}`,'POST');await renderSuite(r)});
  }
  if(s.status==='completed'){
   const counts=s.counts;$('#suiteResults').innerHTML=`<div class="section-heading"><h2>Фактические результаты</h2><span class="badge blue">${s.executor==='1c_odata_and_webclient'?'1С:Предприятие':(s.executor_1c_connected?'1С:Интеграция':'Результаты')}</span></div><div class="result-counts">${['passed','failed','error','skipped'].map(k=>`<div class="result-count ${k}"><strong>${counts[k]}</strong>${E(resultNames[k])}</div>`).join('')}</div><p class="caption">Выполнение сценариев на базе 1С завершено.</p>${s.results.map(r=>`<article class="result-card"><div class="history-header"><h3>${E(r.title)} · набор ${r.case_index+1}</h3><span class="badge result-${r.status}">${E(resultNames[r.status])}</span></div><p class="caption">${E(r.message)} · ${r.duration_seconds} с</p>${'actual' in r?`<div class="expected-actual"><div><small>Ожидалось</small><strong>${E(r.expected)}${s.executor==='synthetic_sales_http_and_playwright'?' ₽':''}</strong></div><div><small>Получено</small><strong>${E(r.actual)}${s.executor==='synthetic_sales_http_and_playwright'?' ₽':''}</strong></div></div>`:''}<p class="helper">${r.engine==='playwright'?'Веб-клиент 1С (Chromium)':(r.engine==='odata'?'OData 1С':'Ручная проверка')} · Тестовые записи ${r.cleanup_succeeded?'удалены':r.cleanup_succeeded===false?'не удалось очистить':'не создавались'}</p>${r.evidence_id?`<details><summary>Скриншот выполнения</summary><a href="/gateway/intelligence/api/v1/ai/evidence/${E(r.evidence_id)}" target="_blank" rel="noopener"><img class="evidence-image" src="/gateway/intelligence/api/v1/ai/evidence/${E(r.evidence_id)}" alt="Скриншот фактического результата в 1С" loading="lazy"></a></details>`:''}</article>`).join('')}`;

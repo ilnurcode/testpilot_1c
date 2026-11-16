@@ -8,6 +8,7 @@ from testpilot.contracts import now,RunInput
 from testpilot.ai.models import GenerateRequest,Decision,CodexStatus
 from testpilot.ai import provider,codex
 from testpilot.ai.executor import execute,browser_path
+from testpilot.ai.plan_guard import mutation_conflicts
 from testpilot.web.run_report import render_run_report
 
 router=APIRouter(prefix='/api/v1/ai',tags=['Нейросеть и проверки'])
@@ -279,7 +280,16 @@ def _profile_for_suite(row,proj):
         raise HTTPException(422, f'Параметры подключения к 1С не настроены: {e}')
 
 
-def _execute_1c_row(row,actor,s):
+def _require_mutation_consent(suite,allow_mutations):
+    """Без allow_mutations изменяющие шаги плана не выполняются: 422 с перечнем шагов."""
+    if allow_mutations:
+        return
+    conflicts=mutation_conflicts(suite)
+    if conflicts:
+        raise HTTPException(422,'; '.join(conflicts))
+
+
+def _execute_1c_row(row,actor,s,allow_mutations=False):
     """Выполняет утверждённые сценарии строки suite на базе 1С и сохраняет результат в эту же строку."""
     from testpilot.db import ProjectRow
     profile=_profile_for_suite(row,s.get(ProjectRow,row.project_id))
@@ -288,18 +298,19 @@ def _execute_1c_row(row,actor,s):
     for index,content in shots:
         eid=uid();s.add(EvidenceRow(id=eid,suite_id=row.id,content=content));results[index]['evidence_id']=eid
     counts={state:sum(r['status']==state for r in results) for state in ('passed','failed','error','skipped')}
-    data={**row.payload,'status':'completed','results':results,'counts':counts,'finished_at':now(),'executor':'1c_odata_and_webclient','executor_1c_connected':True}
+    data={**row.payload,'status':'completed','results':results,'counts':counts,'finished_at':now(),'executor':'1c_odata_and_webclient','executor_1c_connected':True,'allow_mutations':bool(allow_mutations)}
     row.status='completed';row.payload=data
     audit(s,'intelligence',actor,'execute_1c_suite',row.id,counts)
     return data
 
 
 @router.post('/suites/{sid}/run-1c')
-def run_1c(sid:str,actor=Depends(expert),s=Depends(session,scope='function')):
+def run_1c(sid:str,allow_mutations:bool=False,actor=Depends(expert),s=Depends(session,scope='function')):
     row=require(s.scalar(select(AISuiteRow).where(AISuiteRow.id==sid).with_for_update()))
     if row.status=='completed':return row.payload
     if row.status!='approved':raise HTTPException(409,'Сначала подтвердите сценарии и тестовые данные')
-    return _execute_1c_row(row,actor,s)
+    _require_mutation_consent(row.payload,allow_mutations)
+    return _execute_1c_row(row,actor,s,allow_mutations)
 
 
 @router.get('/suites/{sid}/report')
@@ -311,12 +322,13 @@ def run_report(sid:str,format:str='md',actor=Depends(user),s=Depends(session,sco
 
 
 @router.post('/suites/{sid}/rerun')
-def rerun_suite(sid:str,actor=Depends(expert),s=Depends(session,scope='function')):
+def rerun_suite(sid:str,allow_mutations:bool=False,actor=Depends(expert),s=Depends(session,scope='function')):
     """Повторный прогон сохранённого плана: новая запись suite, исходная остаётся в истории нетронутой."""
     source=require(s.get(AISuiteRow,sid),'Сохранённый план не найден')
     approval=(source.payload or {}).get('approval') or {}
     if not approval.get('selected_proposals'):
         raise HTTPException(409,'В плане нет утверждённых сценариев: сначала подтвердите план')
+    _require_mutation_consent(source.payload,allow_mutations)
     new_id=uid()
     payload={**source.payload,'suite_id':new_id,'created_at':now(),'status':'approved','results':[]}
     for stale in ('counts','finished_at','executor','executor_1c_connected'):
@@ -325,10 +337,10 @@ def rerun_suite(sid:str,actor=Depends(expert),s=Depends(session,scope='function'
     s.add(row);s.flush()
     audit(s,'intelligence',actor,'rerun_suite',new_id,{'source_suite':sid})
     try:
-        return _execute_1c_row(row,actor,s)
+        return _execute_1c_row(row,actor,s,allow_mutations)
     except Exception as exc:
         message=getattr(exc,'detail',None) or str(exc)
-        failed={**payload,'status':'error','message':str(message),'finished_at':now()}
+        failed={**payload,'status':'error','message':str(message),'finished_at':now(),'allow_mutations':bool(allow_mutations)}
         row.status='error';row.payload=failed
         audit(s,'intelligence',actor,'rerun_suite_failed',new_id,{'source_suite':sid})
         return {**failed,'counts':{state:0 for state in ('passed','failed','error','skipped')}}

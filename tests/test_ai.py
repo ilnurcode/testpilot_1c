@@ -651,3 +651,122 @@ def test_run_report_has_one_row_per_case_and_matches_counts(clients, monkeypatch
     assert 'case 2' in body
     assert 'Расхождение: ожидалось 2 записи, получено 1' in body
     assert '- Расхождений: 1' in body
+
+
+def test_mutating_step_detector_marks_only_risky_actions():
+    from testpilot.ai.plan_guard import MUTATING_CLICK_MARKERS, step_is_mutating
+
+    for marker in MUTATING_CLICK_MARKERS:
+        assert step_is_mutating('click', f'  {marker.lower()}  ')
+    assert step_is_mutating('fill', '#quantity')
+    assert not step_is_mutating('click', 'Продажи')
+    assert not step_is_mutating('assert_text', 'Записать')
+    assert not step_is_mutating('wait', '')
+
+
+def _mutating_suite(clients, monkeypatch, steps, *, called=None):
+    impact, c = clients
+    p = package()
+    assert c.post('/api/v1/impact-packages', json=p).status_code == 200
+    project = impact.post('/api/v1/projects', json={'name': 'Изменяющие шаги', 'description': ''}).json()
+    assert impact.put(
+        f"/api/v1/projects/{project['id']}/connection",
+        json={'odata_url': 'https://1c.example.test/odata/standard.odata'},
+    ).status_code == 200
+    suggestion = _suite_plan(p, 'playwright', [{'steps': steps}])
+    monkeypatch.setattr(provider, 'generate', lambda *a, **kw: (suggestion, 'mock-model'))
+    response = c.post('/api/v1/ai/suites', json={
+        'package_id': p['package_id'],
+        'project_id': project['id'],
+        'provider': 'llm',
+        'consent': True,
+    })
+    assert response.status_code == 200, response.text
+    suite = response.json()
+    assert c.post(
+        f"/api/v1/ai/suites/{suite['suite_id']}/approve",
+        json={'reason': 'Изменяющие шаги', 'selected_proposals': [0]},
+    ).status_code == 200
+
+    from testpilot.ai import executor as executor_module
+
+    def fake_execute(target_suite, profile):
+        if called is not None:
+            called.append(target_suite['suite_id'])
+        return ([{'proposal_index': 0, 'case_index': 0, 'engine': 'playwright', 'title': 'Проверка',
+                  'status': 'passed', 'message': 'Выполнено', 'duration_seconds': 0.1,
+                  'started_at': 'unit'}], [])
+
+    monkeypatch.setattr(executor_module, 'execute_1c', fake_execute)
+    return c, project, suite
+
+
+def test_run_allows_plan_without_mutating_steps(clients, monkeypatch):
+    called = []
+    c, project, suite = _mutating_suite(
+        clients, monkeypatch, [{'action': 'click', 'target': 'Продажи'}], called=called)
+
+    response = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c")
+    assert response.status_code == 200, response.text
+    assert response.json()['status'] == 'completed'
+    assert response.json()['allow_mutations'] is False
+    assert called == [suite['suite_id']]
+
+
+def test_run_blocks_mutating_click_without_consent(clients, monkeypatch):
+    called = []
+    c, project, suite = _mutating_suite(
+        clients, monkeypatch, [{'action': 'assert_text', 'target': 'Заказы'},
+                               {'action': 'click', 'target': 'Записать'}], called=called)
+
+    response = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c")
+    assert response.status_code == 422, response.text
+    message = response.json()['error']['message']
+    assert "Предложение 1: шаг 2 'Записать' потенциально изменяет данные" in message
+    assert 'передайте allow_mutations=true, если база тестовая' in message
+    assert called == [], 'изменяющий шаг не должен доходить до исполнителя'
+
+
+def test_run_with_allow_mutations_executes_and_records_consent(clients, monkeypatch):
+    called = []
+    c, project, suite = _mutating_suite(
+        clients, monkeypatch, [{'action': 'click', 'target': 'Провести'}], called=called)
+
+    response = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c", params={'allow_mutations': 'true'})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['status'] == 'completed'
+    assert body['allow_mutations'] is True
+    assert called == [suite['suite_id']]
+    assert c.get(f"/api/v1/ai/suites/{suite['suite_id']}").json()['allow_mutations'] is True
+
+
+def test_fill_step_requires_consent(clients, monkeypatch):
+    called = []
+    c, project, suite = _mutating_suite(
+        clients, monkeypatch, [{'action': 'fill', 'target': '#quantity', 'value': '5'}], called=called)
+
+    response = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c")
+    assert response.status_code == 422, response.text
+    assert "шаг 1 '#quantity' потенциально изменяет данные" in response.json()['error']['message']
+    assert called == []
+
+
+def test_rerun_respects_mutation_consent(clients, monkeypatch):
+    called = []
+    c, project, suite = _mutating_suite(
+        clients, monkeypatch, [{'action': 'click', 'target': 'Удалить'}], called=called)
+    run = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c", params={'allow_mutations': 'true'})
+    assert run.status_code == 200, run.text
+    called.clear()
+
+    blocked = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/rerun")
+    assert blocked.status_code == 422, blocked.text
+    assert "шаг 1 'Удалить' потенциально изменяет данные" in blocked.json()['error']['message']
+    assert called == []
+
+    allowed = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/rerun", params={'allow_mutations': 'true'})
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()['suite_id'] != suite['suite_id']
+    assert allowed.json()['allow_mutations'] is True
+    assert called == [allowed.json()['suite_id']]
