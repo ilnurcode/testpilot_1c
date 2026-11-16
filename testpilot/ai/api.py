@@ -8,6 +8,31 @@ from testpilot.contracts import now,RunInput
 from testpilot.ai.models import GenerateRequest,Decision,CodexStatus
 from testpilot.ai import provider,codex
 from testpilot.ai.executor import execute,browser_path
+    suite_warnings=list(package['warnings'])
+    if catalog:
+        if not set(suggestion.selected_test_ids)<=valid_ids:raise HTTPException(502,'Нейросеть предложила неизвестные или несовместимые тесты')
+    else:
+        # selected_test_ids только ссылается на каталог; сценарии модели проходят отдельную проверку ниже.
+        suggestion.selected_test_ids=[]
+        warning='Совместимый каталог тестов пуст; выбраны только сценарии предложений модели.'
+        if warning not in suggestion.warnings and len(suggestion.warnings)<20:suggestion.warnings.append(warning)
+        suite_warnings.append(warning)
+    pid=uid();payload={'suite_id':pid,'project_id':q.project_id,'package_id':q.package_id,'configuration_id':package['configuration_id'],'target_version':package['target_version'],'synthetic':package['synthetic'],'provider':q.provider,'model':model,'created_at':now(),'suggestion':suggestion.model_dump(),'status':'draft','results':[],'warnings':suite_warnings,'affected_objects':package['affected_objects'],'approval':None}
+    if proj and proj.web_url and os.environ.get('TP_1C_AUTHORIZATION'):
+        selected = row.payload['approval']['selected_proposals']
+        proposals = row.payload['suggestion']['proposals']
+        needs_web_client = any(proposals[index]['engine'] == 'playwright' for index in selected)
+        has_username = proj.auth_username or os.environ.get('TP_1C_USERNAME')
+        if needs_web_client and not has_username:
+            raise HTTPException(
+                422,
+                'Для сценариев веб-клиента задайте пользователя и пароль 1С в настройках подключения проекта; Authorization используется только для OData',
+            )
+
+            odata_url = proj.odata_url or os.environ.get('TP_1C_ODATA_URL', '')
+            web_url = proj.web_url or os.environ.get('TP_1C_WEB_URL') or None
+                odata_url=env_prof.odata_url,
+                web_url=env_prof.web_url,
 
 router=APIRouter(prefix='/api/v1/ai',tags=['Нейросеть и проверки'])
 

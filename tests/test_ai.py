@@ -84,6 +84,8 @@ def test_consent_required_before_external_request(clients,monkeypatch,name):
 @pytest.mark.parametrize('name',['llm','codex'])
 def test_unknown_objects_and_tests_rejected(clients,monkeypatch,name):
     _,c=clients;p=package();c.post('/api/v1/impact-packages',json=p)
+    catalog_test={'test_id':'known-test','title':'Known','configuration_id':p['configuration_id'],'duration_seconds':10,'synthetic':p['synthetic']}
+    assert c.post('/api/v1/tests',json=catalog_test).status_code==200
     suggestion=provider.demo_suggestion(p);suggestion.proposals[0].object_ids=['missing']
     module=codex if name=='codex' else provider
     monkeypatch.setattr(module,'generate',lambda *a,**k:(suggestion,'test'))
@@ -91,6 +93,31 @@ def test_unknown_objects_and_tests_rejected(clients,monkeypatch,name):
     assert c.post('/api/v1/ai/suites',json=body).status_code==502
     suggestion.proposals[0].object_ids=p['affected_objects'][:1];suggestion.selected_test_ids=['missing']
     assert c.post('/api/v1/ai/suites',json=body).status_code==502
+
+
+def test_llm_suite_with_objects_and_no_catalog_keeps_valid_proposals(clients,monkeypatch):
+    from testpilot.contracts import checksum
+    _,c=clients;p=package();p['configuration_id']='proj-unmapped';p['synthetic']=False
+    p['checksum']=checksum({k:v for k,v in p.items() if k!='checksum'})
+    assert c.post('/api/v1/impact-packages',json=p).status_code==200
+    proposal={'title':'Безопасная навигация','rationale':'Проверка доступности интерфейса','engine':'playwright',
+              'object_ids':[p['affected_objects'][0]],'steps':['Открыть раздел без изменения данных'],
+              'expected_result':'Раздел открылся','cases':[{'steps':[{'action':'assert_text','target':'Продажи'}],'expected':'Раздел открыт'}]}
+    suggestion=Suggestion.model_validate({'summary':'План для разобранной модели','selected_test_ids':['invented-test'],
+                                          'proposals':[proposal],'warnings':[]})
+    seen={}
+    def generate(_package,catalog,*args):
+        seen['catalog']=catalog
+        return suggestion,'mock-model'
+    monkeypatch.setattr(provider,'generate',generate)
+    response=c.post('/api/v1/ai/suites',json={'package_id':p['package_id'],'project_id':'unit-project','provider':'llm','consent':True})
+    assert response.status_code==200,response.text
+    suite=response.json()
+    assert seen['catalog']==[]
+    assert suite['suggestion']['selected_test_ids']==[]
+    assert any('Совместимый каталог тестов пуст' in warning for warning in suite['warnings'])
+    system,_=provider.generation_messages(p,[],{})
+    assert 'если каталог пуст, верни пустой список' in system
 
 def test_real_projects_cannot_use_demo_executor(clients,monkeypatch):
     from testpilot.contracts import checksum
