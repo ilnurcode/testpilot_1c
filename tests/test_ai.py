@@ -298,6 +298,7 @@ SUITE_HISTORY_FIELDS = {
     'created_at',
     'finished_at',
     'approved_count',
+    'mutating_count',
 }
 
 
@@ -770,3 +771,63 @@ def test_rerun_respects_mutation_consent(clients, monkeypatch):
     assert allowed.json()['suite_id'] != suite['suite_id']
     assert allowed.json()['allow_mutations'] is True
     assert called == [allowed.json()['suite_id']]
+
+
+def test_plan_marks_mutating_proposals(clients, monkeypatch):
+    c, project, suite = _mutating_suite(clients, monkeypatch, [{'action': 'click', 'target': 'Записать'}])
+    assert suite['suggestion']['proposals'][0]['mutating'] is True
+
+    stored = c.get(f"/api/v1/ai/suites/{suite['suite_id']}").json()
+    assert stored['suggestion']['proposals'][0]['mutating'] is True
+
+    c2, project2, suite2 = _mutating_suite(clients, monkeypatch, [{'action': 'click', 'target': 'Продажи'}])
+    assert suite2['suggestion']['proposals'][0]['mutating'] is False
+    assert c2.get(f"/api/v1/ai/suites/{suite2['suite_id']}").json()['suggestion']['proposals'][0]['mutating'] is False
+
+
+def test_fill_proposal_is_marked_mutating(clients, monkeypatch):
+    c, project, suite = _mutating_suite(
+        clients, monkeypatch, [{'action': 'fill', 'target': '#quantity', 'value': '5'}])
+    assert suite['suggestion']['proposals'][0]['mutating'] is True
+
+
+def test_history_reports_mutating_count(clients, monkeypatch):
+    c, project, suite = _mutating_suite(clients, monkeypatch, [{'action': 'click', 'target': 'Провести'}])
+    rows = c.get('/api/v1/ai/suites', params={'project_id': project['id']}).json()
+    assert rows[0]['suite_id'] == suite['suite_id']
+    assert rows[0]['mutating_count'] == 1
+
+    c2, project2, safe_suite = _mutating_suite(clients, monkeypatch, [{'action': 'click', 'target': 'Продажи'}])
+    safe_rows = c2.get('/api/v1/ai/suites', params={'project_id': project2['id']}).json()
+    assert safe_rows[0]['mutating_count'] == 0
+
+
+def test_strict_mode_blocks_click_on_navigation_plan(clients, monkeypatch):
+    called = []
+    c, project, suite = _mutating_suite(
+        clients, monkeypatch, [{'action': 'click', 'target': 'Продажи'}], called=called)
+
+    response = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c", params={'strict_read_only': 'true'})
+    assert response.status_code == 422, response.text
+    message = response.json()['error']['message']
+    assert 'Предложение 1: шаг 1' in message
+    assert "действие 'click' недопустимо в строгом режиме" in message
+    assert 'assert_text' in message and 'strict_read_only' in message
+    assert called == []
+
+
+def test_strict_mode_allows_read_only_plan(clients, monkeypatch):
+    called = []
+    c, project, suite = _mutating_suite(
+        clients, monkeypatch,
+        [{'action': 'assert_text', 'target': 'Продажи'}, {'action': 'wait', 'value': 1000}],
+        called=called)
+
+    response = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c", params={'strict_read_only': 'true'})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['status'] == 'completed'
+    assert body['strict_read_only'] is True
+    assert body['allow_mutations'] is False
+    assert called == [suite['suite_id']]
+    assert c.get(f"/api/v1/ai/suites/{suite['suite_id']}").json()['strict_read_only'] is True

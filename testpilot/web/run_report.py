@@ -114,7 +114,8 @@ def _markdown_body(suite: dict[str, Any], project_name: str) -> str:
         f"Провайдер: {provider}" + (f' · модель: {model}' if model else ''),
         f"Дата: {suite.get('created_at', '')}",
         f"Статус: {suite.get('status', '')}",
-        f"- Изменяющие шаги: {'разрешены' if suite.get('allow_mutations') else 'не разрешены'}",
+        f"- Строгий режим: {'да (только проверки без кликов)' if suite.get('strict_read_only') else 'нет'}",
+        f"- Изменяющие шаги: {'разрешены' if suite.get('allow_mutations') else 'не разрешены'} (эвристика по тексту кнопки)",
     ]
     if suite.get('finished_at'):
         lines.append(f"Завершён: {suite['finished_at']}")
