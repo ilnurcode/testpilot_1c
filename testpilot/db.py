@@ -64,6 +64,24 @@ class AuditRow(Base):
     entity_id: Mapped[str]=mapped_column(String(120))
     details: Mapped[dict]=mapped_column(JSON)
     created_at: Mapped[str]=mapped_column(String(50),default=now)
+
+class CodeAuditRow(Base):
+    """Сохранённый аудит вставленного кода: полный исходник не хранится, только замечания с фрагментами строк."""
+    __tablename__ = 'code_audit'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    source_name: Mapped[str] = mapped_column(String(255))
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    total_files: Mapped[int] = mapped_column(Integer)
+    sources_checked: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_issues: Mapped[int] = mapped_column(Integer)
+    issues_by_severity: Mapped[dict] = mapped_column(JSON)
+    issues_by_category: Mapped[dict] = mapped_column(JSON)
+    issues: Mapped[list] = mapped_column(JSON)
+    passed: Mapped[bool] = mapped_column(Boolean)
+    status: Mapped[str] = mapped_column(String(30))
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[str] = mapped_column(String(50), default=now, index=True)
 class PackageRow(Base):
     __tablename__='ti_packages'
     id: Mapped[str]=mapped_column(String(120),primary_key=True)

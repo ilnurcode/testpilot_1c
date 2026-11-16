@@ -24,7 +24,9 @@ async function auditPage() {
     <div class="actions" style="margin-top: 14px;">
       <button id="runAuditBtn">🔍 Запустить аудит v8std</button>
     </div>
+    <p class="caption" style="margin-top: 10px;">Полный исходник не сохраняется: в журнал попадают сводка и замечания с фрагментами строк.</p>
   </div>
+  <div id="auditJournal"></div>
   <div id="auditResult"></div>
   `;
 
@@ -65,14 +67,34 @@ async function auditPage() {
 
     const res = await request('/api/v1/audit/scan', 'POST', payload);
     renderAuditResult(res);
+    await refreshAuditJournal();
   });
+
+  await refreshAuditJournal();
+}
+
+async function refreshAuditJournal() {
+  const host = $('#auditJournal');
+  if (!host) return;
+  const rows = await request('/api/v1/audit/scans?limit=1');
+  if (!rows.length) {
+    host.innerHTML = `
+    <div class="card" style="margin-top: 16px;">
+      <div class="history-header"><h2>Журнал аудитов</h2></div>
+      <p class="caption">Сохранённых аудитов пока нет: запустите проверку — запись появится здесь.</p>
+    </div>`;
+    return;
+  }
+  const latest = await request(`/api/v1/audit/scans/${encodeURIComponent(rows[0].scan_id)}`);
+  host.innerHTML = '<div id="auditJournalCard"></div>';
+  renderAuditResultInto(latest, '#auditJournalCard', { title: 'Последний сохранённый аудит', scroll: false });
 }
 
 function renderAuditResult(summary) {
   return renderAuditResultInto(summary, '#auditResult');
 }
 
-function renderAuditResultInto(summary, selector) {
+function renderAuditResultInto(summary, selector, options = {}) {
   const target = $(selector);
   if (!target) return;
 
@@ -81,22 +103,34 @@ function renderAuditResultInto(summary, selector) {
   const sev = summary.issues_by_severity || {};
   const critical = sev.CRITICAL || 0;
   const high = sev.HIGH || 0;
-  const medium = sev.MEDIUM || 0;
-  const low = sev.LOW || 0;
+
+  const stats = [];
+  if (Number.isFinite(summary.total_files)) stats.push(`<div><strong>${summary.total_files}</strong>проверено файлов</div>`);
+  stats.push(`<div><strong>${summary.total_issues || 0}</strong>замечаний</div>`);
+  stats.push(`<div><strong style="color: ${critical ? '#d32f2f' : 'inherit'}">${critical}</strong>критичных</div>`);
+  stats.push(`<div><strong style="color: ${high ? '#ed6c02' : 'inherit'}">${high}</strong>высоких</div>`);
+
+  const facts = [];
+  if (typeof summary.duration_ms === 'number') facts.push(`Время анализа: ${Math.round(summary.duration_ms)} мс`);
+  if (summary.created_at) facts.push(`Сохранено: ${E(summary.created_at)}`);
+  if (summary.sha256) facts.push(`SHA-256: ${E(String(summary.sha256).slice(0, 12))}…`);
+  if (summary.source_name) facts.push(`Источник: ${E(summary.source_name)}`);
+
+  const reportLink = summary.scan_id
+    ? `<a class="secondary" href="/api/v1/audit/scans/${encodeURIComponent(summary.scan_id)}/report" download>⬇ Скачать отчёт (md)</a>`
+    : '';
 
   let html = `
   <div class="card" style="margin-top: 16px;">
     <div class="history-header">
-      <h2>Результаты анализа</h2>
-      <span class="badge ${nothingChecked ? 'pending' : passed ? 'ready' : 'pending'}">${nothingChecked ? 'НЕЧЕГО ПРОВЕРЯТЬ' : passed ? 'ПРОЙДЕНО' : 'НАЙДЕНЫ ДЕФЕКТЫ'}</span>
+      <h2>${E(options.title || 'Результаты анализа')}</h2>
+      <span style="display: flex; align-items: center; gap: 10px;">
+        ${reportLink}
+        <span class="badge ${nothingChecked ? 'pending' : passed ? 'ready' : 'pending'}">${nothingChecked ? 'НЕЧЕГО ПРОВЕРЯТЬ' : passed ? 'ПРОЙДЕНО' : 'НАЙДЕНЫ ДЕФЕКТЫ'}</span>
+      </span>
     </div>
-    <div class="stats">
-      <div><strong>${summary.total_files || 0}</strong>проверено файлов</div>
-      <div><strong>${summary.total_issues || 0}</strong>замечаний</div>
-      <div><strong style="color: ${critical ? '#d32f2f' : 'inherit'}">${critical}</strong>критичных</div>
-      <div><strong style="color: ${high ? '#ed6c02' : 'inherit'}">${high}</strong>высоких</div>
-    </div>
-    <p class="caption">Время анализа: ${summary.duration_ms} мс</p>
+    <div class="stats">${stats.join('')}</div>
+    ${facts.length ? `<p class="caption">${facts.join(' · ')}</p>` : ''}
   `;
 
   if (nothingChecked) {
@@ -105,7 +139,7 @@ function renderAuditResultInto(summary, selector) {
     html += '<p class="success" style="margin-top: 12px;">✓ Уязвимостей и нарушений стандартов v8std не обнаружено.</p>';
   } else {
     html += '<div style="display: flex; flex-direction: column; gap: 10px; margin-top: 16px;">';
-    summary.issues.forEach((iss, idx) => {
+    summary.issues.forEach((iss) => {
       const isCrit = iss.severity === 'CRITICAL';
       const isHigh = iss.severity === 'HIGH';
       const badgeCls = isCrit ? 'error' : isHigh ? 'warning' : 'pending';
@@ -117,7 +151,7 @@ function renderAuditResultInto(summary, selector) {
             <span class="caption">(${E(iss.category)})</span>
           </div>
           <p style="font-weight: 500;">${E(iss.message)}</p>
-          <p class="caption" style="font-family: monospace;">Файл: ${E(iss.file_path)} : строка ${iss.line}</p>
+          <p class="caption" style="font-family: monospace;">Файл: ${E(iss.file_path)} : строка ${E(iss.line)}</p>
           ${iss.code_fragment ? `<pre style="margin: 6px 0; background: rgba(0,0,0,0.05); padding: 6px; border-radius: 4px; overflow-x: auto;"><code>${E(iss.code_fragment)}</code></pre>` : ''}
           ${iss.recommendation ? `<p class="helper" style="margin-top: 4px;"><strong>Стандарт v8std:</strong> ${E(iss.recommendation)}</p>` : ''}
         </div>
@@ -128,5 +162,5 @@ function renderAuditResultInto(summary, selector) {
 
   html += '</div>';
   target.innerHTML = html;
-  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (options.scroll !== false) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }

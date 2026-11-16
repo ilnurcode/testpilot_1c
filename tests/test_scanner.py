@@ -52,8 +52,9 @@ def test_scanner_demo_extension():
     assert summary.issues_by_severity == {"CRITICAL": 1, "HIGH": 6, "MEDIUM": 1, "LOW": 3}
 
 
-def test_audit_api_scan_endpoint():
+def test_audit_api_scan_endpoint(clients):
     client = TestClient(app)
+    client.auth = ('expert', 'test-password-only')
     payload = {
         "code": "Процедура Тест()\nВыполнить(\"Действие_\" + Команда);\nКонецПроцедуры"
     }
