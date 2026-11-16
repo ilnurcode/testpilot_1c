@@ -10,6 +10,16 @@ from testpilot.web.presentation import sample
 
 def package():return analyze(sample(1),sample(2),{'edge_types':['calls','uses','belongs_to','subscribes_to'],'direction':'impact','max_depth':10})[1]
 
+def mocked_model_suggestion(p):
+    suggestion = provider.demo_suggestion(p)
+    for proposal in suggestion.proposals:
+        for case in proposal.cases:
+            if proposal.engine == 'odata':
+                case.entity = 'Document_ЗаказКлиента'
+            elif proposal.engine == 'playwright':
+                case.steps = [{'action': 'assert_text', 'target': 'Продажи'}]
+    return suggestion
+
 def test_api_provider_structured_response_and_secret_not_returned(monkeypatch):
     monkeypatch.setenv('TP_LLM_API_KEY','unit-private-key');monkeypatch.setenv('TP_LLM_MODEL','unit-model')
     p=package();expected=provider.demo_suggestion(p)
@@ -86,7 +96,7 @@ def test_unknown_objects_and_tests_rejected(clients,monkeypatch,name):
     _,c=clients;p=package();c.post('/api/v1/impact-packages',json=p)
     catalog_test={'test_id':'known-test','title':'Known','configuration_id':p['configuration_id'],'duration_seconds':10,'synthetic':p['synthetic']}
     assert c.post('/api/v1/tests',json=catalog_test).status_code==200
-    suggestion=provider.demo_suggestion(p);suggestion.proposals[0].object_ids=['missing']
+    suggestion=mocked_model_suggestion(p);suggestion.proposals[0].object_ids=['missing']
     module=codex if name=='codex' else provider
     monkeypatch.setattr(module,'generate',lambda *a,**k:(suggestion,'test'))
     body={'package_id':p['package_id'],'project_id':'unit','provider':name,'consent':True}
@@ -121,7 +131,7 @@ def test_llm_suite_with_objects_and_no_catalog_keeps_valid_proposals(clients,mon
 
 def test_real_projects_cannot_use_demo_executor(clients,monkeypatch):
     from testpilot.contracts import checksum
-    _,c=clients;p=package();suggestion=provider.demo_suggestion(p);p['synthetic']=False
+    _,c=clients;p=package();suggestion=mocked_model_suggestion(p);p['synthetic']=False
     p['checksum']=checksum({k:v for k,v in p.items() if k!='checksum'})
     c.post('/api/v1/impact-packages',json=p)
     monkeypatch.setattr(provider,'generate',lambda *a,**kw:(suggestion,'unit-model'))
@@ -145,7 +155,7 @@ def test_1c_web_run_rejects_authorization_without_web_credentials(clients,monkey
     assert connection.status_code==200
 
     p=package()
-    suggestion=provider.demo_suggestion(p)
+    suggestion=mocked_model_suggestion(p)
     p['synthetic']=False
     p['checksum']=checksum({k:v for k,v in p.items() if k!='checksum'})
     assert intelligence.post('/api/v1/impact-packages',json=p).status_code==200
@@ -186,3 +196,73 @@ def test_llm_settings_api(clients):
     assert res['has_key'] is True
     # Убеждаемся, что секретный ключ не отдаётся наружу
     assert 'sk-test-secret-key-123' not in json.dumps(res)
+
+
+def _suite_plan(p, engine, cases):
+    return Suggestion.model_validate({
+        'summary': 'Структурно проверяемый план',
+        'selected_test_ids': [],
+        'proposals': [{
+            'title': 'Проверка',
+            'rationale': 'Мок-план',
+            'engine': engine,
+            'object_ids': [p['affected_objects'][0]],
+            'steps': ['Выполнить безопасную проверку'],
+            'expected_result': 'Проверка завершена',
+            'cases': cases,
+        }],
+        'warnings': [],
+    })
+
+
+def _create_mocked_llm_suite(clients, monkeypatch, p, suggestion):
+    _, c = clients
+    assert c.post('/api/v1/impact-packages', json=p).status_code == 200
+    monkeypatch.setattr(provider, 'generate', lambda *a, **kw: (suggestion, 'mock-model'))
+    response = c.post('/api/v1/ai/suites', json={
+        'package_id': p['package_id'],
+        'project_id': 'unit-project',
+        'provider': 'llm',
+        'consent': True,
+    })
+    return c, response
+
+
+def test_suite_rejects_unknown_playwright_action_before_persistence(clients, monkeypatch):
+    p = package()
+    suggestion = _suite_plan(p, 'playwright', [{'steps': [{'action': 'hover', 'target': 'Продажи'}]}])
+    _, response = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
+    assert response.status_code == 422
+    assert 'Предложение 0' in response.text and 'hover' in response.text
+
+
+def test_structurally_valid_mocked_plan_creates_suite(clients, monkeypatch):
+    p = package()
+    suggestion = _suite_plan(p, 'playwright', [{'steps': [{'action': 'assert_text', 'target': 'Продажи'}]}])
+    _, response = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
+    assert response.status_code == 200, response.text
+    assert response.json()['status'] == 'draft'
+
+
+def test_suite_rejects_odata_case_without_entity_or_metadata_check(clients, monkeypatch):
+    p = package()
+    suggestion = _suite_plan(p, 'odata', [{'expected': 'HTTP 200 OK'}])
+    _, response = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
+    assert response.status_code == 422
+    assert 'Предложение 0' in response.text and 'entity' in response.text
+
+
+def test_suite_accepts_manual_proposal_without_cases(clients, monkeypatch):
+    p = package()
+    suggestion = _suite_plan(p, 'manual', [])
+    _, response = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
+    assert response.status_code == 200, response.text
+    assert response.json()['status'] == 'draft'
+
+
+def test_suite_rejects_unknown_engine_with_proposal_index(clients, monkeypatch):
+    p = package()
+    suggestion = _suite_plan(p, 'unsupported-engine', [{'entity': 'Document_Заказ'}])
+    _, response = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
+    assert response.status_code == 422
+    assert 'Предложение 0' in response.text and 'unsupported-engine' in response.text

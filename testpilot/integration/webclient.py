@@ -116,7 +116,9 @@ def assert_section(
 
 
 class WebClientRunner:
-    """Исполнитель сценариев в веб-клиенте 1С:Предприятие 8.3."""
+    """Исполнитель сценариев веб-клиента 1С:Предприятие 8.3."""
+
+    SUPPORTED_ACTIONS = frozenset({'click', 'fill', 'assert_text', 'assert_section', 'wait', 'open_url'})
 
     def __init__(self, profile: Profile, headless: bool = True, default_timeout: float = 30000.0):
         self.profile = profile
@@ -231,7 +233,14 @@ class WebClientRunner:
                     step_message = 'OK'
                     
                     try:
-                        if action == 'click':
+                        if action not in self.SUPPORTED_ACTIONS:
+                            raise ValueError(f"Неизвестное действие шага: {action}")
+                        if action == 'open_url':
+                            page.goto(target or self.web_url, wait_until='domcontentloaded', timeout=45000)
+                            self.handle_login(page)
+                            self.wait_for_1c(page)
+                            step_message = 'Веб-клиент 1С загружен'
+                        elif action == 'click':
                             section_baseline = _workspace_lines(page)
                             clicked = False
                             for loc in (

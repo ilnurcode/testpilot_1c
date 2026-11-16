@@ -79,6 +79,52 @@ def codex_login(actor=Depends(expert)):
 def codex_logout(actor=Depends(expert)):
     return codex.logout()
 
+def _validate_proposals(suggestion):
+    from testpilot.integration.webclient import WebClientRunner
+
+    supported_engines = {'odata', 'playwright', 'manual'}
+    for proposal_index, proposal in enumerate(suggestion.proposals):
+        engine = proposal.engine
+        if engine not in supported_engines:
+            raise HTTPException(422, f"Предложение {proposal_index}: неподдерживаемый engine '{engine}'")
+        if engine == 'manual':
+            continue
+        if not proposal.cases:
+            raise HTTPException(422, f"Предложение {proposal_index}: для engine '{engine}' нужны cases")
+        if engine == 'odata':
+            for case_index, case in enumerate(proposal.cases):
+                if getattr(case, 'check', None) != 'metadata' and not (case.entity and case.entity.strip()):
+                    raise HTTPException(
+                        422,
+                        f"Предложение {proposal_index}, case {case_index}: для odata укажите entity или check='metadata'",
+                    )
+            continue
+        for case_index, case in enumerate(proposal.cases):
+            if not case.steps:
+                raise HTTPException(
+                    422,
+                    f"Предложение {proposal_index}, case {case_index}: для playwright нужны steps",
+                )
+            for step_index, step in enumerate(case.steps):
+                action = step.get('action') if isinstance(step, dict) else None
+                if not isinstance(action, str) or action not in WebClientRunner.SUPPORTED_ACTIONS:
+                    raise HTTPException(
+                        422,
+                        f"Предложение {proposal_index}, case {case_index}, шаг {step_index}: неизвестное действие '{action}'",
+                    )
+                required_target = action in {'click', 'assert_text', 'assert_section', 'fill'}
+                if required_target and not (isinstance(step.get('target'), str) and step['target'].strip()):
+                    raise HTTPException(
+                        422,
+                        f"Предложение {proposal_index}, case {case_index}, шаг {step_index}: действие '{action}' требует target",
+                    )
+                if action in {'wait', 'fill'} and step.get('value') is None:
+                    raise HTTPException(
+                        422,
+                        f"Предложение {proposal_index}, case {case_index}, шаг {step_index}: действие '{action}' требует value",
+                    )
+
+
 @router.post('/suites')
 def create(q:GenerateRequest,actor=Depends(analyst),s=Depends(session,scope='function')):
     package=require(s.get(PackageRow,q.package_id)).payload
@@ -92,6 +138,9 @@ def create(q:GenerateRequest,actor=Depends(analyst),s=Depends(session,scope='fun
     elif q.provider=='local':
         suggestion=provider.generate_local_1c_tests(package,rows,q.object_names);model='local-rules'
     else:suggestion=provider.demo_suggestion(package);model=None
+    # Synthetic demo plans use the separate demo executor, not WebClientRunner.
+    if q.provider != 'demo':
+        _validate_proposals(suggestion)
     valid_ids={t.id for t in catalog}
     suite_warnings=list(package['warnings'])
     if catalog:

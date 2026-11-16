@@ -1,5 +1,5 @@
 from typing import Literal
-from pydantic import Field,model_validator
+from pydantic import Field
 from testpilot.contracts import Model,Text,Identifier
 
 from pydantic import ConfigDict
@@ -20,15 +20,11 @@ class Case(Model):
 class Proposal(Model):
     title:Text
     rationale:Text
-    engine:Literal['odata','playwright','manual']
+    engine:str
     object_ids:list[Identifier]=Field(min_length=1,max_length=30)
     steps:list[Text]=Field(min_length=1,max_length=12)
     expected_result:Text
     cases:list[Case]=Field(default_factory=list,max_length=3)
-    @model_validator(mode='after')
-    def executable(self):
-        if self.engine!='manual' and not self.cases:raise ValueError('Для автоматической проверки нужны данные и ожидаемые значения')
-        return self
 
 class Suggestion(Model):
     summary:Text
