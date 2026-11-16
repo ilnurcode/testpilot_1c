@@ -132,6 +132,8 @@ def execute_1c(suite, profile):
                     steps = case.get('steps') or [{'action': 'wait', 'value': 2000}]
                     report = web_runner.run_scenario(title=proposal['title'], steps=steps)
                     result['status'] = report.status
+                    # Фактический адрес публикации: при откате с mapped-хоста это исходный loopback.
+                    result['web_url'] = report.url
                     section_result = next(
                         (step for step in reversed(report.steps) if step.action == 'assert_section' and step.status == 'passed'),
                         None,

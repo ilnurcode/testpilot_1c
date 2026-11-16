@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 from testpilot.ai.executor import browser_path
-from testpilot.integration.probe import Profile, container_access_url
+from testpilot.integration.probe import Profile, container_access_url, container_access_urls
 
 
 def _origin(url: str) -> tuple[str, str, int] | None:
@@ -20,6 +20,65 @@ def _origin(url: str) -> tuple[str, str, int] | None:
     if scheme not in {'http', 'https'} or not host or port is None:
         return None
     return scheme, host, port
+
+# Откат с mapped-адреса допустим только когда документ не доставлен: отказ в соединении,
+# неразрешимое имя или недостижимый адрес. Ответы 401/403 и таймауты локаторов сюда не входят.
+NAVIGATION_NETWORK_ERRORS = (
+    'ERR_NAME_NOT_RESOLVED',
+    'ERR_CONNECTION_REFUSED',
+    'ERR_ADDRESS_UNREACHABLE',
+)
+
+
+def navigation_error_is_network(error: BaseException) -> bool:
+    """Сетевая ли ошибка загрузки документа (единственный повод повторить переход по другому адресу)."""
+    if type(error).__name__ == 'TimeoutError':
+        return True
+    message = str(error)
+    return any(marker in message for marker in NAVIGATION_NETWORK_ERRORS)
+
+
+def navigation_error_is_transient(error: BaseException) -> bool:
+    """Гонка с предыдущей неудачной навигацией Chrome (chrome-error): тот же адрес стоит повторить."""
+    return 'interrupted by another navigation' in str(error)
+
+
+def _settle_navigation(page) -> None:
+    """Даёт Chrome завершить предыдущую навигацию: иначе следующий переход прерывается остатком chrome-error."""
+    try:
+        page.wait_for_load_state('domcontentloaded', timeout=2000)
+    except Exception:
+        pass
+    try:
+        page.wait_for_timeout(150)
+    except Exception:
+        pass
+
+
+def navigate(page, url: str, addresses: list[str] | None = None, timeout: float = 45000) -> str:
+    """Открывает публикацию по адресам container_access_urls: mapped, затем исходный loopback.
+
+    `addresses` позволяет передать уже вычисленные адреса публикации (например, для open_url).
+    Повтор выполняется только после сетевой ошибки загрузки документа; любая другая ошибка
+    пробрасывается без второго захода. Возвращает адрес, по которому документ открылся.
+    """
+    addresses = list(addresses) if addresses else container_access_urls(url)
+    for index, address in enumerate(addresses):
+        for attempt in range(2):
+            try:
+                page.goto(address, wait_until='domcontentloaded', timeout=timeout)
+            except Exception as error:
+                if navigation_error_is_transient(error):
+                    _settle_navigation(page)
+                    if attempt == 0:
+                        continue
+                    raise
+                if index == len(addresses) - 1 or not navigation_error_is_network(error):
+                    raise
+                _settle_navigation(page)
+                break
+            return address
+    raise AssertionError('Список адресов публикации пуст')
 
 @dataclass
 class StepResult:
@@ -40,6 +99,7 @@ class ScenarioReport:
     total_duration_seconds: float = 0.0
     error: str | None = None
     screenshots: list[bytes] = field(default_factory=list)
+    url: str | None = None
 
 
 def _safe_screenshot(context, page) -> bytes:
@@ -138,16 +198,22 @@ class WebClientRunner:
         self.profile = profile
         self.headless = headless
         self.default_timeout = default_timeout
-        self.web_url = container_access_url(profile.web_url or profile.odata_url).rstrip('/')
+        self.web_urls = [url.rstrip('/') for url in container_access_urls(profile.web_url or profile.odata_url)]
+        self.web_url = self.web_urls[0]
+        # Исходный (не mapped) адрес публикации: из него вычисляются адреса попытки при навигации.
+        self.raw_web_url = self.web_urls[-1]
+        # Адрес, по которому реально открылась публикация (при откате — исходный loopback).
+        self.last_web_url = self.web_url
 
-    def _checked_navigation_url(self, target: str) -> str:
-        base = f"{self.web_url.rstrip('/')}/"
-        navigation_url = container_access_url(urljoin(base, target or base))
-        target_origin = _origin(navigation_url)
-        configured_origin = _origin(self.web_url)
-        if target_origin is None or target_origin != configured_origin:
-            raise ValueError("Отказано в open_url: origin целевого URL не совпадает с origin веб-клиента проекта")
-        return navigation_url
+    def _checked_navigation_addresses(self, target: str) -> list[str]:
+        """Адреса перехода для open_url: mapped и исходный, но только в пределах публикации проекта."""
+        base = f"{self.raw_web_url.rstrip('/')}/"
+        addresses = container_access_urls(urljoin(base, target or base))
+        allowed = {_origin(url) for url in self.web_urls}
+        for address in addresses:
+            if _origin(address) not in allowed:
+                raise ValueError("Отказано в open_url: origin целевого URL не совпадает с origin веб-клиента проекта")
+        return addresses
 
 
     def handle_login(self, page) -> None:
@@ -218,14 +284,16 @@ class WebClientRunner:
 
                 # Шаг 0: Открытие URL веб-клиента
                 step_start = time.perf_counter()
-                page.goto(self.web_url, wait_until='domcontentloaded', timeout=45000)
+                page_url = navigate(page, self.raw_web_url)
+                self.last_web_url = page_url
+                report.url = page_url
                 self.handle_login(page)
                 self.wait_for_1c(page)
                 body_txt = page.locator('body').inner_text() or ''
                 if 'Не найдена лицензия' in body_txt or 'вход в приложение невозможен' in body_txt:
                     shot = _safe_screenshot(context, page)
                     report.steps.append(StepResult(
-                        step_number=0, action='open_url', target=self.web_url, value=None,
+                        step_number=0, action='open_url', target=page_url, value=None,
                         status='failed', message='1С отклонила запуск сеанса: ' + body_txt.replace('\n', ' ')[:240],
                         duration_seconds=round(time.perf_counter() - step_start, 3), screenshot=shot
                     ))
@@ -238,10 +306,10 @@ class WebClientRunner:
                 report.steps.append(StepResult(
                     step_number=0,
                     action='open_url',
-                    target=self.web_url,
+                    target=page_url,
                     value=None,
                     status='passed',
-                    message='Веб-клиент 1С загружен',
+                    message=f'Веб-клиент 1С загружен ({page_url})',
                     duration_seconds=round(time.perf_counter() - step_start, 3),
                     screenshot=shot
                 ))
@@ -260,11 +328,13 @@ class WebClientRunner:
                         if action not in self.SUPPORTED_ACTIONS:
                             raise ValueError(f"Неизвестное действие шага: {action}")
                         if action == 'open_url':
-                            navigation_url = self._checked_navigation_url(target)
-                            page.goto(navigation_url, wait_until='domcontentloaded', timeout=45000)
+                            addresses = self._checked_navigation_addresses(target)
+                            page_url = navigate(page, addresses[0], addresses=addresses)
+                            self.last_web_url = page_url
+                            report.url = page_url
                             self.handle_login(page)
                             self.wait_for_1c(page)
-                            step_message = 'Веб-клиент 1С загружен'
+                            step_message = f'Веб-клиент 1С загружен ({page_url})'
                         elif action == 'click':
                             section_baseline = _workspace_lines(page)
                             clicked = False

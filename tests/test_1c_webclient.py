@@ -226,3 +226,133 @@ def test_container_loopback_routing_for_web_and_odata(monkeypatch):
     assert requested[-1].port == 8088
 
 
+
+
+class _FakePage:
+    """Мок страницы: goto отдаёт заранее заданную реакцию на адрес и запоминает вызовы."""
+
+    def __init__(self, react):
+        self.react = react
+        self.visits = []
+
+    def goto(self, url, **kwargs):
+        self.visits.append(url)
+        outcome = self.react(url)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return None
+
+
+def _nav_error(message):
+    return RuntimeError(message)
+
+
+def _timeout_error(message):
+    return type('TimeoutError', (Exception,), {})(message)
+
+
+def test_navigation_falls_back_to_original_address_on_connection_refused(monkeypatch):
+    import testpilot.integration.probe as probe_module
+    from testpilot.integration.webclient import navigate
+
+    monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
+    page = _FakePage(lambda url: _nav_error('page.goto: net::ERR_CONNECTION_REFUSED at ' + url)
+                     if 'host.docker.internal' in url else None)
+
+    used = navigate(page, 'http://127.0.0.1:8098')
+
+    assert used == 'http://127.0.0.1:8098'
+    assert page.visits == ['http://host.docker.internal:8098', 'http://127.0.0.1:8098']
+
+
+def test_navigation_uses_mapped_address_without_retry(monkeypatch):
+    import testpilot.integration.probe as probe_module
+    from testpilot.integration.webclient import navigate
+
+    monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
+    page = _FakePage(lambda url: None)
+
+    used = navigate(page, 'http://127.0.0.1:8098')
+
+    assert used == 'http://host.docker.internal:8098'
+    assert page.visits == ['http://host.docker.internal:8098']
+
+
+@pytest.mark.parametrize('failure', [
+    _nav_error('page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE 401'),
+    _nav_error('Ошибка на форме входа: поле не найдено'),
+])
+def test_navigation_does_not_retry_non_network_errors(monkeypatch, failure):
+    import testpilot.integration.probe as probe_module
+    from testpilot.integration.webclient import navigate
+
+    monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
+    page = _FakePage(lambda url: failure)
+
+    with pytest.raises(RuntimeError):
+        navigate(page, 'http://127.0.0.1:8098')
+    assert page.visits == ['http://host.docker.internal:8098']
+
+
+def test_navigation_falls_back_after_document_load_timeout(monkeypatch):
+    import testpilot.integration.probe as probe_module
+    from testpilot.integration.webclient import navigate
+
+    monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
+    page = _FakePage(lambda url: _timeout_error('Timeout 45000ms exceeded.')
+                     if 'host.docker.internal' in url else None)
+
+    assert navigate(page, 'http://127.0.0.1:8098') == 'http://127.0.0.1:8098'
+    assert len(page.visits) == 2
+
+
+def test_navigation_explicit_host_has_single_address(monkeypatch):
+    import testpilot.integration.probe as probe_module
+    from testpilot.integration.webclient import navigate
+
+    monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
+    page = _FakePage(lambda url: _nav_error('net::ERR_CONNECTION_REFUSED'))
+
+    with pytest.raises(RuntimeError):
+        navigate(page, 'http://1c.example.test:8088/DemoTrd')
+    assert page.visits == ['http://1c.example.test:8088/DemoTrd']
+
+
+def test_runner_reports_address_that_answered_after_fallback(monkeypatch):
+    import testpilot.integration.probe as probe_module
+    from testpilot.integration.webclient import WebClientRunner
+
+    monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
+    runner = WebClientRunner(Profile(odata_url='http://127.0.0.1:8098/odata', web_url='http://127.0.0.1:8098/web'))
+    page = _FakePage(lambda url: _nav_error('net::ERR_CONNECTION_REFUSED')
+                     if 'host.docker.internal' in url else None)
+    assert runner.web_url == 'http://host.docker.internal:8098/web'
+    assert runner.last_web_url == 'http://host.docker.internal:8098/web'
+
+    from testpilot.integration.webclient import navigate
+
+    assert runner.web_urls == ['http://host.docker.internal:8098/web', 'http://127.0.0.1:8098/web']
+    assert runner.raw_web_url == 'http://127.0.0.1:8098/web'
+    assert navigate(page, runner.raw_web_url) == 'http://127.0.0.1:8098/web'
+    assert page.visits == ['http://host.docker.internal:8098/web', 'http://127.0.0.1:8098/web']
+
+
+def test_navigation_retries_same_address_after_chrome_error_race(monkeypatch):
+    import testpilot.integration.probe as probe_module
+    from testpilot.integration.webclient import navigate
+
+    monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
+    state = {'raced': False}
+
+    def react(url):
+        if 'host.docker.internal' in url and not state['raced']:
+            state['raced'] = True
+            return _nav_error(
+                'Page.goto: Navigation to "http://127.0.0.1:8098/" is interrupted by '
+                'another navigation to "chrome-error://chromewebdata/"'
+            )
+        return None
+
+    page = _FakePage(react)
+    assert navigate(page, 'http://127.0.0.1:8098') == 'http://host.docker.internal:8098'
+    assert page.visits == ['http://host.docker.internal:8098', 'http://host.docker.internal:8098']
