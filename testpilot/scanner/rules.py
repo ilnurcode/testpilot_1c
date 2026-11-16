@@ -26,6 +26,48 @@ class BSLRule:
         raise NotImplementedError
 
 
+def _strip_comments(source: str) -> str:
+    """Replace // comments outside BSL string literals while preserving offsets."""
+    result: list[str] = []
+    in_string = False
+    index = 0
+    while index < len(source):
+        char = source[index]
+        if in_string:
+            result.append(char)
+            if char == '"':
+                if index + 1 < len(source) and source[index + 1] == '"':
+                    result.append('"')
+                    index += 2
+                    continue
+                in_string = False
+        elif char == '"':
+            in_string = True
+            result.append(char)
+        elif char == '/' and index + 1 < len(source) and source[index + 1] == '/':
+            while index < len(source) and source[index] != '\n':
+                result.append(' ')
+                index += 1
+            if index < len(source):
+                result.append('\n')
+        else:
+            result.append(char)
+        index += 1
+    return ''.join(result)
+
+
+def _mask_string_literals(source: str, *, marker: str | None = None) -> str:
+    """Mask quoted BSL strings, optionally retaining one marker per literal."""
+    pattern = re.compile(r'"(?:""|[^"])*"', re.DOTALL)
+
+    def replace(match: re.Match[str]) -> str:
+        value = match.group()
+        masked = ''.join('\n' if char == '\n' else ' ' for char in value)
+        return marker + masked[1:] if marker else masked
+
+    return pattern.sub(replace, source)
+
+
 class RegexLineRule(BSLRule):
     """Rule matching single lines against regular expressions, skipping comments."""
 
@@ -152,6 +194,71 @@ class QueryInjectionRule(BSLRule):
                         )
                     )
         return issues
+class SecurityCallRule(BSLRule):
+    """Detects a dangerous server-side call, ignoring comments and string literals."""
+
+    def __init__(self, rule_id: str, severity: Severity, pattern: str, message: str) -> None:
+        super().__init__(rule_id, IssueCategory.SECURITY, severity, message)
+        self.regex = re.compile(pattern, re.IGNORECASE)
+
+    def analyze(self, file_path: str, lines: list[str]) -> list[ScanIssue]:
+        source = ''.join(lines)
+        code = _mask_string_literals(_strip_comments(source))
+        issues = []
+        for match in self.regex.finditer(code):
+            line_number = code.count('\n', 0, match.start()) + 1
+            issues.append(ScanIssue(
+                rule_id=self.rule_id,
+                category=self.category,
+                severity=self.severity,
+                message=self.message,
+                file_path=file_path,
+                line=line_number,
+                col=match.start() - code.rfind('\n', 0, match.start()),
+                code_fragment=lines[line_number - 1].strip()[:140],
+                recommendation=self.recommendation,
+            ))
+        return issues
+
+
+class QueryTextConcatenationRule(BSLRule):
+    """Detects dynamic concatenation assigned to Запрос.Текст, including multiline code."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            rule_id="SEC011",
+            category=IssueCategory.SECURITY,
+            severity=Severity.HIGH,
+            message="Склейка строк в запросе — риск внедрения условий; используй параметры (&Имя).",
+            recommendation="Передавайте значения через параметры запроса (&Имя) и Запрос.УстановитьПараметр().",
+        )
+        self.regex = re.compile(
+            r'\bЗапрос\s*\.\s*Текст\s*=\s*\x01\s*\+\s*([^;]+)',
+            re.IGNORECASE | re.DOTALL,
+        )
+
+    def analyze(self, file_path: str, lines: list[str]) -> list[ScanIssue]:
+        source = _strip_comments(''.join(lines))
+        code = _mask_string_literals(source, marker='\x01')
+        issues = []
+        for match in self.regex.finditer(code):
+            if not re.search(r'\b[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*\b', match.group(1)):
+                continue
+            line_number = code.count('\n', 0, match.start()) + 1
+            issues.append(ScanIssue(
+                rule_id=self.rule_id,
+                category=self.category,
+                severity=self.severity,
+                message=self.message,
+                file_path=file_path,
+                line=line_number,
+                col=match.start() - code.rfind('\n', 0, match.start()),
+                code_fragment=lines[line_number - 1].strip()[:140],
+                recommendation=self.recommendation,
+            ))
+        return issues
+
+
 
 
 class PrivilegedModeRule(BSLRule):
@@ -595,6 +702,20 @@ def get_default_rules() -> list[BSLRule]:
         DynamicExecutionRule(),
         QueryInjectionRule(),
         PrivilegedModeRule(),
+
+        SecurityCallRule(
+            rule_id="SEC010",
+            severity=Severity.CRITICAL,
+            pattern=r'\bОтключитьБезопасныйРежим\s*\(',
+            message="Отключение безопасного режима даёт исполняемому коду полный доступ к серверу.",
+        ),
+        QueryTextConcatenationRule(),
+        SecurityCallRule(
+            rule_id="SEC012",
+            severity=Severity.HIGH,
+            pattern=r'\bCOMОбъект\s*\(',
+            message="Создание COM-объекта на сервере обходит типизацию и контроль прав.",
+        ),
         HardcodedCredentialsRule(),
         ManagedLockInPostingRule(),
         QueryInLoopRule(),

@@ -159,3 +159,37 @@ def test_executor_checks_metadata_without_entity(monkeypatch):
     assert 'EntitySet — 1' in results[0]['message']
     assert evidence == []
     assert requests == ['/trade/odata/standard.odata/$metadata']
+
+
+def test_executor_reports_empty_metadata_without_claiming_data_check(monkeypatch):
+    from testpilot.ai.executor import execute_1c
+    import testpilot.integration.odata as odata
+
+    requests = []
+    metadata = b'''<?xml version="1.0" encoding="utf-8"?>
+    <edmx:Edmx xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx">
+      <edmx:DataServices />
+    </edmx:Edmx>'''
+
+    def handler(request):
+        requests.append(request.url.path)
+        return httpx.Response(200, content=metadata)
+
+    client = ODataClient(PROFILE, transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(odata, 'ODataClient', lambda profile: client)
+    suite = {
+        'approval': {'selected_proposals': [0]},
+        'suggestion': {'proposals': [{
+            'title': 'Доступность OData $metadata', 'engine': 'odata',
+            'cases': [{'check': 'metadata', 'expected': 'HTTP 200 OK'}],
+        }]},
+    }
+
+    results, evidence = execute_1c(suite, PROFILE)
+
+    assert len(results) == 1
+    assert results[0]['status'] == 'passed'
+    assert results[0]['actual'] == 0
+    assert results[0]['message'] == 'Сервис OData доступен, но не публикует ни одной сущности — чтение данных не проверено'
+    assert evidence == []
+    assert requests == ['/trade/odata/standard.odata/$metadata']

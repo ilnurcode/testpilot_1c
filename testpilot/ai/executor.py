@@ -108,7 +108,11 @@ def execute_1c(suite, profile):
                         result.update(
                             actual=len(entity_sets),
                             status='passed',
-                            message=f"Проверка OData $metadata пройдена: EntitySet — {len(entity_sets)}",
+                            message=(
+                                "Сервис OData доступен, но не публикует ни одной сущности — чтение данных не проверено"
+                                if not entity_sets else
+                                f"Проверка OData $metadata пройдена: EntitySet — {len(entity_sets)}"
+                            ),
                         )
                     else:
                         entity=case['entity']
