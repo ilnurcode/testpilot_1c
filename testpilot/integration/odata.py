@@ -5,7 +5,7 @@ import os
 import sys
 from typing import Any
 import httpx
-from testpilot.integration.probe import Profile, container_access_url, parse_metadata, validated_url
+from testpilot.integration.probe import Profile, container_access_urls, parse_metadata, validated_url
 
 ALLOWED_PREFIXES = (
     'Catalog_',
@@ -38,7 +38,10 @@ class ODataClient:
         self.profile = profile
         self.transport = transport
         self.timeout = timeout
-        self.base_url = container_access_url(profile.odata_url).rstrip('/')
+        self.base_urls = [url.rstrip('/') for url in container_access_urls(profile.odata_url)]
+        self.base_url = self.base_urls[0]
+        # Адрес, который реально ответил: при откате с host.docker.internal это исходный loopback.
+        self.last_base_url = self.base_url
 
     def _client(self) -> httpx.Client:
         headers = {
@@ -60,6 +63,19 @@ class ODataClient:
             timeout=self.timeout,
             follow_redirects=False,
         )
+
+    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        """Запрос к публикации с откатом на исходный loopback-адрес только при ConnectError."""
+        for index, base in enumerate(self.base_urls):
+            try:
+                with self._client() as client:
+                    response = client.request(method, f'{base}{path}', **kwargs)
+            except httpx.ConnectError:
+                if index == len(self.base_urls) - 1:
+                    raise
+                continue
+            self.last_base_url = base
+            return response
 
     def validate_entity_set(self, entity_set: str) -> str:
         name = entity_set.strip()
@@ -96,12 +112,10 @@ class ODataClient:
 
     def get_metadata(self) -> list[dict]:
         """Чтение и разбор $metadata сервиса 1С."""
-        url = f"{self.base_url}/$metadata"
-        with self._client() as c:
-            r = c.get(url, headers={'Accept': 'application/xml'})
-            if r.status_code != 200:
-                self._handle_response(r)
-            return parse_metadata(r.content)
+        r = self._request('GET', '/$metadata', headers={'Accept': 'application/xml'})
+        if r.status_code != 200:
+            self._handle_response(r)
+        return parse_metadata(r.content)
 
     def get_entities(
         self,
@@ -119,44 +133,33 @@ class ODataClient:
         if filter_query:
             params['$filter'] = filter_query
 
-        url = f"{self.base_url}/{name}"
-        with self._client() as c:
-            r = c.get(url, params=params)
-            data = self._handle_response(r)
-            return data.get('value', []) if isinstance(data, dict) else []
+        r = self._request('GET', f'/{name}', params=params)
+        data = self._handle_response(r)
+        return data.get('value', []) if isinstance(data, dict) else []
 
     def get_entity(self, entity_set: str, key: str) -> dict:
         """Получение одного объекта по ключу / GUID."""
         name = self.validate_entity_set(entity_set)
-        url = f"{self.base_url}/{name}(guid'{key}')" if '-' in key and len(key) == 36 else f"{self.base_url}/{name}('{key}')"
-        with self._client() as c:
-            r = c.get(url)
-            return self._handle_response(r)
+        path = f"/{name}(guid'{key}')" if '-' in key and len(key) == 36 else f"/{name}('{key}')"
+        return self._handle_response(self._request('GET', path))
 
     def create_entity(self, entity_set: str, data: dict) -> dict:
         """Создание записи в тестовой базе 1С."""
         name = self.validate_entity_set(entity_set)
-        url = f"{self.base_url}/{name}"
-        with self._client() as c:
-            r = c.post(url, json=data)
-            return self._handle_response(r)
+        return self._handle_response(self._request('POST', f'/{name}', json=data))
 
     def update_entity(self, entity_set: str, key: str, data: dict) -> dict:
         """Обновление записи в тестовой базе 1С."""
         name = self.validate_entity_set(entity_set)
-        url = f"{self.base_url}/{name}(guid'{key}')" if '-' in key and len(key) == 36 else f"{self.base_url}/{name}('{key}')"
-        with self._client() as c:
-            r = c.patch(url, json=data)
-            return self._handle_response(r)
+        path = f"/{name}(guid'{key}')" if '-' in key and len(key) == 36 else f"/{name}('{key}')"
+        return self._handle_response(self._request('PATCH', path, json=data))
 
     def delete_entity(self, entity_set: str, key: str) -> bool:
         """Удаление тестовой записи в 1С."""
         name = self.validate_entity_set(entity_set)
-        url = f"{self.base_url}/{name}(guid'{key}')" if '-' in key and len(key) == 36 else f"{self.base_url}/{name}('{key}')"
-        with self._client() as c:
-            r = c.delete(url)
-            self._handle_response(r)
-            return True
+        path = f"/{name}(guid'{key}')" if '-' in key and len(key) == 36 else f"/{name}('{key}')"
+        self._handle_response(self._request('DELETE', path))
+        return True
 
 def main():
     parser = argparse.ArgumentParser(description="OData-клиент для тестовой базы 1С:Предприятия")

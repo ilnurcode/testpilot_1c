@@ -124,6 +124,8 @@ def execute_1c(suite, profile):
                             result['actual']=len(items)
                             result['status']='passed'
                             result['message']=f"Успешный OData-запрос к {entity}: получено записей: {len(items)}"
+                    # Адрес, который реально ответил: при откате это исходный loopback, а не mapped-хост.
+                    result['odata_url']=odata_client.last_base_url
                 else:
                     if not web_runner:
                         raise RuntimeError("Адрес веб-клиента 1С не настроен")

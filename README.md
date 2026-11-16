@@ -63,7 +63,7 @@ CFE/CF/EPF/ERF/DT и ZIP принимаются на хранение до 64 М
 
 `assert_section` сначала проверяет класс `select` выбранного пункта меню; если активного маркера нет, подтверждает только новый текст раздела, появившийся в рабочей области `#funcPanel`.
 
-Ограничения DemoTrd: `$metadata` содержит 0 EntitySet, поэтому отсутствующие OData-сущности возвращают честный HTTP 404. Бинарный `.cfe` без BSL получает `metadata_only`, а аудит — `no_bsl_modules` с `passed=false`. В контейнере адреса `localhost` и `127.0.0.1` автоматически маршрутизируются как `host.docker.internal`.
+Ограничения DemoTrd: `$metadata` содержит 0 EntitySet, поэтому отсутствующие OData-сущности возвращают честный HTTP 404. Бинарный `.cfe` без BSL получает `metadata_only`, а аудит — `no_bsl_modules` с `passed=false`. В контейнере адреса `localhost` и `127.0.0.1` сначала маршрутизируются как `host.docker.internal`, а при `ConnectError` (и только при нём) запрос повторяется по исходному адресу — публикация внутри того же контейнера остаётся доступной. Явно заданный хост не переписывается. Живая проверка чтения OData без демо-базы: `tests/fixtures/odata_stub.py`.
 
 Пул тестов: `docker compose exec -T intelligence python -m pytest tests/ -q` — 180 passed, 1 skipped.
 

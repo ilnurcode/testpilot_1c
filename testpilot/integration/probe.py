@@ -45,6 +45,15 @@ def container_access_url(value):
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
+def container_access_urls(value):
+    """Адреса попытки по приоритету: mapped для loopback, затем исходный адрес.
+
+    Явно заданный хост не переписывается — для него остаётся ровно один адрес.
+    """
+    mapped = container_access_url(value)
+    return [mapped] if mapped == value else [mapped, value]
+
+
 @dataclass(frozen=True)
 class Profile:
     odata_url: str
@@ -90,7 +99,7 @@ def parse_metadata(content):
     return sorted(sets,key=lambda x:(x['name'],x['entity_type']))
 
 
-def read_bounded(client,url,headers=None,auth=None):
+def _read_bounded_once(client,url,headers=None,auth=None):
     # Redirect не следует автоматически: credentials не переходят на другой адрес.
     with client.stream('GET',url,headers=headers,auth=auth) as response:
         if response.status_code!=200:return response.status_code,b''
@@ -99,6 +108,20 @@ def read_bounded(client,url,headers=None,auth=None):
             data.extend(chunk)
             if len(data)>MAX_BYTES:raise ValueError('Ответ публикации превышает 4 МиБ')
         return response.status_code,bytes(data)
+
+
+def read_bounded(client,url,headers=None,auth=None):
+    """GET с ограничением 4 МиБ; откат на исходный loopback-адрес только при ConnectError.
+
+    Возвращает `(status, body, used_url)`. Таймаут, 401/403 и прочие ответы не повторяются:
+    повтор оправдан только тогда, когда mapped-хост недоступен как таковой.
+    """
+    urls=container_access_urls(url)
+    for index,candidate in enumerate(urls):
+        try:return (*_read_bounded_once(client,candidate,headers,auth),candidate)
+        except httpx.ConnectError:
+            if index==len(urls)-1:raise
+
 
 
 def probe(profile,transport=None):
@@ -113,12 +136,12 @@ def probe(profile,transport=None):
                         'Доступность веб-страницы не подтверждает успешный вход или совместимость Playwright-сценариев.']}
     with httpx.Client(timeout=30,verify=verify,follow_redirects=False,transport=transport) as client:
         try:
-            status,body=read_bounded(client,validated_url(profile.odata_url)+'/$metadata',headers,auth)
+            status,body,used_url=read_bounded(client,validated_url(profile.odata_url)+'/$metadata',headers,auth)
             if status==200:
                 entities=parse_metadata(body)
-                result['odata']={'status':'metadata_available','entity_sets':entities,'entity_set_count':len(entities)}
+                result['odata']={'status':'metadata_available','entity_sets':entities,'entity_set_count':len(entities),'url':used_url}
             else:
-                result['odata']={'status':'authentication_required' if status==401 else 'access_denied' if status==403 else 'http_error','http_status':status}
+                result['odata']={'status':'authentication_required' if status==401 else 'access_denied' if status==403 else 'http_error','http_status':status,'url':used_url}
         except httpx.HTTPError:
             result['odata']={'status':'connection_error','message':'Не удалось получить $metadata: проверьте адрес, сеть и цепочку доверия TLS'}
         except ValueError as e:
@@ -126,8 +149,8 @@ def probe(profile,transport=None):
         if profile.web_url:
             try:
                 # Не переносим OData-пароль на публикацию веб-клиента. Вход проверит отдельный сценарий.
-                status,_=read_bounded(client,validated_url(profile.web_url))
-                result['web']={'status':'reachable' if status==200 else 'authentication_required' if status==401 else 'http_response','http_status':status,'login_verified':False}
+                status,_,used_url=read_bounded(client,validated_url(profile.web_url))
+                result['web']={'status':'reachable' if status==200 else 'authentication_required' if status==401 else 'http_response','http_status':status,'login_verified':False,'url':used_url}
             except httpx.HTTPError:
                 result['web']={'status':'connection_error','login_verified':False}
             except ValueError as e:

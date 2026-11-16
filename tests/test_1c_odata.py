@@ -193,3 +193,44 @@ def test_executor_reports_empty_metadata_without_claiming_data_check(monkeypatch
     assert results[0]['message'] == 'Сервис OData доступен, но не публикует ни одной сущности — чтение данных не проверено'
     assert evidence == []
     assert requests == ['/trade/odata/standard.odata/$metadata']
+
+
+def test_client_loopback_fallback_reports_the_address_that_answered(monkeypatch):
+    import testpilot.integration.probe as probe_module
+
+    monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
+    hosts = []
+
+    def handler(request: httpx.Request):
+        hosts.append(request.url.host)
+        if request.url.host == 'host.docker.internal':
+            raise httpx.ConnectError('mapped host unreachable', request=request)
+        return httpx.Response(200, json={'value': [{'Ref_Key': '1'}, {'Ref_Key': '2'}]})
+
+    client = ODataClient(
+        Profile(odata_url='http://127.0.0.1:9099/odata/standard.odata', username='tester', password='unit-test-only'),
+        transport=httpx.MockTransport(handler),
+    )
+    assert client.base_url == 'http://host.docker.internal:9099/odata/standard.odata'
+    assert len(client.get_entities('Catalog_Номенклатура', top=5)) == 2
+    assert hosts == ['host.docker.internal', '127.0.0.1']
+    assert client.last_base_url == 'http://127.0.0.1:9099/odata/standard.odata'
+
+
+def test_client_does_not_retry_http_error_from_mapped_host(monkeypatch):
+    import testpilot.integration.probe as probe_module
+
+    monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
+    hosts = []
+
+    def handler(request: httpx.Request):
+        hosts.append(request.url.host)
+        return httpx.Response(404)
+
+    client = ODataClient(
+        Profile(odata_url='http://127.0.0.1:9099/odata/standard.odata'),
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(NotFoundError):
+        client.get_entities('Catalog_Номенклатура', top=5)
+    assert hosts == ['host.docker.internal']

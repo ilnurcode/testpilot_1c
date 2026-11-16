@@ -53,3 +53,70 @@ def test_profile_rejects_unsafe_urls(url):
 def test_auth_modes_are_explicit():
     with pytest.raises(ValueError):Profile('https://example.test',username='tester')
     with pytest.raises(ValueError):Profile('https://example.test',username='tester',password='unit',authorization='Basic unit')
+
+
+LOOPBACK = 'http://127.0.0.1:9099/odata/standard.odata'
+
+
+def test_loopback_mapping_uses_docker_host_when_it_answers(monkeypatch):
+    import testpilot.integration.probe as probe_module
+
+    monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
+    seen = []
+
+    def respond(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, content=METADATA)
+
+    result = probe(Profile(LOOPBACK), httpx.MockTransport(respond))
+    assert seen == ['http://host.docker.internal:9099/odata/standard.odata/$metadata']
+    assert result['odata']['status'] == 'metadata_available'
+    assert result['odata']['url'] == 'http://host.docker.internal:9099/odata/standard.odata/$metadata'
+
+
+def test_loopback_falls_back_to_original_address_only_on_connect_error(monkeypatch):
+    import testpilot.integration.probe as probe_module
+
+    monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
+    seen = []
+
+    def respond(request):
+        seen.append(request.url.host)
+        if request.url.host == 'host.docker.internal':
+            raise httpx.ConnectError('mapped host unreachable', request=request)
+        return httpx.Response(200, content=METADATA)
+
+    result = probe(Profile(LOOPBACK), httpx.MockTransport(respond))
+    assert seen == ['host.docker.internal', '127.0.0.1']
+    assert result['odata']['status'] == 'metadata_available'
+    assert result['odata']['url'] == f'{LOOPBACK}/$metadata'
+
+
+def test_loopback_fallback_does_not_retry_non_network_errors(monkeypatch):
+    import testpilot.integration.probe as probe_module
+
+    monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
+    seen = []
+
+    def respond(request):
+        seen.append(request.url.host)
+        return httpx.Response(401)
+
+    result = probe(Profile(LOOPBACK), httpx.MockTransport(respond))
+    assert seen == ['host.docker.internal']
+    assert result['odata']['status'] == 'authentication_required'
+
+
+def test_explicit_host_is_not_rewritten_in_container(monkeypatch):
+    import testpilot.integration.probe as probe_module
+
+    monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
+    seen = []
+
+    def respond(request):
+        seen.append(request.url.host)
+        raise httpx.ConnectError('publication is down', request=request)
+
+    result = probe(Profile('https://odata.example.test/base/odata/standard.odata'), httpx.MockTransport(respond))
+    assert seen == ['odata.example.test']
+    assert result['odata']['status'] == 'connection_error'
