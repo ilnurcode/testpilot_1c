@@ -245,14 +245,85 @@ def run_demo(sid:str,request:Request,actor=Depends(expert),s=Depends(session,sco
 
 
 
+def _profile_for_suite(row,proj):
+    from testpilot.integration.probe import Profile
+    if proj and proj.web_url and os.environ.get('TP_1C_AUTHORIZATION'):
+        selected = row.payload['approval']['selected_proposals']
+        proposals = row.payload['suggestion']['proposals']
+        needs_web_client = any(proposals[index]['engine'] == 'playwright' for index in selected)
+        has_username = proj.auth_username or os.environ.get('TP_1C_USERNAME')
+        if needs_web_client and not has_username:
+            raise HTTPException(
+                422,
+                'Для сценариев веб-клиента задайте пользователя и пароль 1С в настройках подключения проекта; Authorization используется только для OData',
+            )
+    try:
+        if proj and (proj.odata_url or proj.web_url):
+            odata_url = proj.odata_url or os.environ.get('TP_1C_ODATA_URL', '')
+            web_url = proj.web_url or os.environ.get('TP_1C_WEB_URL') or None
+            uname = proj.auth_username or os.environ.get('TP_1C_USERNAME') or None
+            pwd = (proj.auth_password if proj.auth_password is not None else '') if uname else None
+            auth_hdr = os.environ.get('TP_1C_AUTHORIZATION') or None if not uname else None
+            return Profile(odata_url=odata_url, web_url=web_url, username=uname, password=pwd, authorization=auth_hdr)
+        env_prof = Profile.from_environment()
+        return Profile(
+            odata_url=env_prof.odata_url,
+            web_url=env_prof.web_url,
+            username=env_prof.username,
+            password=env_prof.password,
+            authorization=env_prof.authorization,
+            ca_file=env_prof.ca_file,
+        )
+    except Exception as e:
+        raise HTTPException(422, f'Параметры подключения к 1С не настроены: {e}')
+
+
+def _execute_1c_row(row,actor,s):
+    """Выполняет утверждённые сценарии строки suite на базе 1С и сохраняет результат в эту же строку."""
+    from testpilot.db import ProjectRow
+    profile=_profile_for_suite(row,s.get(ProjectRow,row.project_id))
+    from testpilot.ai.executor import execute_1c
+    results,shots=execute_1c(row.payload, profile)
+    for index,content in shots:
+        eid=uid();s.add(EvidenceRow(id=eid,suite_id=row.id,content=content));results[index]['evidence_id']=eid
+    counts={state:sum(r['status']==state for r in results) for state in ('passed','failed','error','skipped')}
+    data={**row.payload,'status':'completed','results':results,'counts':counts,'finished_at':now(),'executor':'1c_odata_and_webclient','executor_1c_connected':True}
+    row.status='completed';row.payload=data
+    audit(s,'intelligence',actor,'execute_1c_suite',row.id,counts)
+    return data
+
+
 @router.post('/suites/{sid}/run-1c')
 def run_1c(sid:str,actor=Depends(expert),s=Depends(session,scope='function')):
     row=require(s.scalar(select(AISuiteRow).where(AISuiteRow.id==sid).with_for_update()))
     if row.status=='completed':return row.payload
     if row.status!='approved':raise HTTPException(409,'Сначала подтвердите сценарии и тестовые данные')
-    from testpilot.integration.probe import Profile
-    from testpilot.db import ProjectRow
-    proj = s.get(ProjectRow, row.project_id)
+    return _execute_1c_row(row,actor,s)
+
+
+@router.post('/suites/{sid}/rerun')
+def rerun_suite(sid:str,actor=Depends(expert),s=Depends(session,scope='function')):
+    """Повторный прогон сохранённого плана: новая запись suite, исходная остаётся в истории нетронутой."""
+    source=require(s.get(AISuiteRow,sid),'Сохранённый план не найден')
+    approval=(source.payload or {}).get('approval') or {}
+    if not approval.get('selected_proposals'):
+        raise HTTPException(409,'В плане нет утверждённых сценариев: сначала подтвердите план')
+    new_id=uid()
+    payload={**source.payload,'suite_id':new_id,'created_at':now(),'status':'approved','results':[]}
+    for stale in ('counts','finished_at','executor','executor_1c_connected'):
+        payload.pop(stale,None)
+    row=AISuiteRow(id=new_id,package_id=source.package_id,project_id=source.project_id,status='approved',payload=payload)
+    s.add(row);s.flush()
+    audit(s,'intelligence',actor,'rerun_suite',new_id,{'source_suite':sid})
+    try:
+        return _execute_1c_row(row,actor,s)
+    except Exception as exc:
+        message=getattr(exc,'detail',None) or str(exc)
+        failed={**payload,'status':'error','message':str(message),'finished_at':now()}
+        row.status='error';row.payload=failed
+        audit(s,'intelligence',actor,'rerun_suite_failed',new_id,{'source_suite':sid})
+        return {**failed,'counts':{state:0 for state in ('passed','failed','error','skipped')}}
+
     if proj and proj.web_url and os.environ.get('TP_1C_AUTHORIZATION'):
         selected = row.payload['approval']['selected_proposals']
         proposals = row.payload['suggestion']['proposals']
@@ -264,34 +335,6 @@ def run_1c(sid:str,actor=Depends(expert),s=Depends(session,scope='function')):
                 'Для сценариев веб-клиента задайте пользователя и пароль 1С в настройках подключения проекта; Authorization используется только для OData',
             )
 
-    try:
-        if proj and (proj.odata_url or proj.web_url):
-            odata_url = proj.odata_url or os.environ.get('TP_1C_ODATA_URL', '')
-            web_url = proj.web_url or os.environ.get('TP_1C_WEB_URL') or None
-            uname = proj.auth_username or os.environ.get('TP_1C_USERNAME') or None
-            pwd = (proj.auth_password if proj.auth_password is not None else '') if uname else None
-            auth_hdr = os.environ.get('TP_1C_AUTHORIZATION') or None if not uname else None
-            profile = Profile(odata_url=odata_url, web_url=web_url, username=uname, password=pwd, authorization=auth_hdr)
-        else:
-            env_prof = Profile.from_environment()
-            profile = Profile(
-                odata_url=env_prof.odata_url,
-                web_url=env_prof.web_url,
-                username=env_prof.username,
-                password=env_prof.password,
-                authorization=env_prof.authorization,
-                ca_file=env_prof.ca_file,
-            )
-    except Exception as e:
-        raise HTTPException(422, f'Параметры подключения к 1С не настроены: {e}')
-    from testpilot.ai.executor import execute_1c
-    results,shots=execute_1c(row.payload, profile)
-    for index,content in shots:
-        eid=uid();s.add(EvidenceRow(id=eid,suite_id=sid,content=content));results[index]['evidence_id']=eid
-    counts={state:sum(r['status']==state for r in results) for state in ('passed','failed','error','skipped')}
-    data={**row.payload,'status':'completed','results':results,'counts':counts,'finished_at':now(),'executor':'1c_odata_and_webclient','executor_1c_connected':True}
-    row.status='completed';row.payload=data;audit(s,'intelligence',actor,'execute_1c_suite',sid,counts)
-    return data
 
 @router.get('/evidence/{eid}')
 def evidence(eid:str,actor=Depends(user),s=Depends(session,scope='function')):

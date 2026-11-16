@@ -377,3 +377,105 @@ def test_suite_history_reports_approval_count(clients):
     row = c.get('/api/v1/ai/suites', params={'project_id': project['id']}).json()[0]
     assert row['status'] == 'approved'
     assert row['approved_count'] == 2
+
+
+def _approved_suite_for_rerun(clients, monkeypatch, *, fail=None):
+    impact, c, project, p = _project_with_package(clients)
+    assert impact.put(
+        f"/api/v1/projects/{project['id']}/connection",
+        json={'odata_url': 'https://1c.example.test/odata/standard.odata'},
+    ).status_code == 200
+    created = _create_demo_suite(c, p, project['id'])
+    assert c.post(
+        f"/api/v1/ai/suites/{created['suite_id']}/approve",
+        json={'reason': 'Повторный прогон', 'selected_proposals': [0]},
+    ).status_code == 200
+
+    from testpilot.ai import executor as executor_module
+
+    def fake_execute(suite, profile):
+        if fail:
+            raise RuntimeError(fail)
+        return ([{
+            'proposal_index': suite['approval']['selected_proposals'][0],
+            'case_index': 0,
+            'engine': 'odata',
+            'title': 'Повтор',
+            'status': 'passed',
+            'message': 'Успешный OData-запрос',
+            'started_at': 'unit',
+        }], [])
+
+    monkeypatch.setattr(executor_module, 'execute_1c', fake_execute)
+    return impact, c, project, created
+
+
+def test_rerun_creates_new_suite_with_copied_plan(clients, monkeypatch):
+    impact, c, project, source = _approved_suite_for_rerun(clients, monkeypatch)
+    before = c.get(f"/api/v1/ai/suites/{source['suite_id']}").json()
+
+    response = c.post(f"/api/v1/ai/suites/{source['suite_id']}/rerun")
+    assert response.status_code == 200, response.text
+    new = response.json()
+
+    assert new['suite_id'] != source['suite_id']
+    assert new['suggestion'] == before['suggestion']
+    assert new['approval'] == before['approval']
+    for key in ('package_id', 'project_id', 'provider', 'model', 'target_version', 'affected_objects'):
+        assert new[key] == before[key]
+    assert new['status'] == 'completed'
+    assert new['counts'] == {'passed': 1, 'failed': 0, 'error': 0, 'skipped': 0}
+    assert new['results'][0]['status'] == 'passed'
+
+
+def test_rerun_does_not_modify_source_suite(clients, monkeypatch):
+    impact, c, project, source = _approved_suite_for_rerun(clients, monkeypatch)
+    before = c.get(f"/api/v1/ai/suites/{source['suite_id']}").json()
+    assert c.post(f"/api/v1/ai/suites/{source['suite_id']}/rerun").status_code == 200
+
+    after = c.get(f"/api/v1/ai/suites/{source['suite_id']}").json()
+    assert after == before
+    assert after['status'] == 'approved'
+    assert 'counts' not in after and after['results'] == []
+
+
+def test_rerun_without_approved_proposals_is_409(clients):
+    impact, c, project, p = _project_with_package(clients)
+    draft = _create_demo_suite(c, p, project['id'])
+
+    response = c.post(f"/api/v1/ai/suites/{draft['suite_id']}/rerun")
+    assert response.status_code == 409
+    assert 'нет утверждённых сценариев' in response.text
+    assert len(c.get('/api/v1/ai/suites', params={'project_id': project['id']}).json()) == 1
+
+
+def test_rerun_unknown_suite_is_404(clients):
+    impact, c, project, p = _project_with_package(clients)
+    assert c.post('/api/v1/ai/suites/00000000-0000-0000-0000-000000000000/rerun').status_code == 404
+
+
+def test_rerun_appears_first_in_project_history(clients, monkeypatch):
+    impact, c, project, source = _approved_suite_for_rerun(clients, monkeypatch)
+    new = c.post(f"/api/v1/ai/suites/{source['suite_id']}/rerun").json()
+
+    rows = c.get('/api/v1/ai/suites', params={'project_id': project['id']}).json()
+    assert [row['suite_id'] for row in rows] == [new['suite_id'], source['suite_id']]
+    assert rows[0]['status'] == 'completed' and rows[1]['status'] == 'approved'
+
+
+def test_rerun_infrastructure_failure_marks_new_suite_error(clients, monkeypatch):
+    impact, c, project, source = _approved_suite_for_rerun(clients, monkeypatch, fail='1С недоступна на стенде')
+    before = c.get(f"/api/v1/ai/suites/{source['suite_id']}").json()
+
+    response = c.post(f"/api/v1/ai/suites/{source['suite_id']}/rerun")
+    assert response.status_code == 200, response.text
+    failed = response.json()
+
+    assert failed['suite_id'] != source['suite_id']
+    assert failed['status'] == 'error'
+    assert '1С недоступна на стенде' in failed['message']
+    assert failed['counts'] == {'passed': 0, 'failed': 0, 'error': 0, 'skipped': 0}
+
+    stored = c.get(f"/api/v1/ai/suites/{failed['suite_id']}").json()
+    assert stored['status'] == 'error' and stored['message'] == failed['message']
+    assert c.get(f"/api/v1/ai/suites/{source['suite_id']}").json() == before
