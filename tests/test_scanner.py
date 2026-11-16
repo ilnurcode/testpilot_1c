@@ -46,11 +46,10 @@ def test_scanner_demo_extension():
     assert demo_dir.is_dir()
 
     summary = engine.scan_directory(demo_dir)
-    assert summary.total_files >= 3
-    assert summary.total_issues >= 8
+    assert summary.total_files == 8
+    assert summary.total_issues == 11
     assert not summary.passed
-    assert summary.issues_by_severity.get(Severity.CRITICAL.value, 0) >= 1
-    assert summary.issues_by_severity.get(Severity.HIGH.value, 0) >= 3
+    assert summary.issues_by_severity == {"CRITICAL": 1, "HIGH": 6, "MEDIUM": 1, "LOW": 3}
 
 
 def test_audit_api_scan_endpoint():
