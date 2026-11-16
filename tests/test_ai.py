@@ -72,8 +72,9 @@ def test_template_only_for_isolated_synthetic_project():
     with pytest.raises(HTTPException):provider.demo_suggestion(p)
 
 def test_generation_approval_persistence_and_guards(clients):
-    _,c=clients;p=package();assert c.post('/api/v1/impact-packages',json=p).status_code==200
-    r=c.post('/api/v1/ai/suites',json={'package_id':p['package_id'],'project_id':'unit-project','provider':'demo'})
+    impact,c=clients;p=package();assert c.post('/api/v1/impact-packages',json=p).status_code==200
+    project=impact.post('/api/v1/projects',json={'name':'Проект прогонов','description':''}).json()
+    r=c.post('/api/v1/ai/suites',json={'package_id':p['package_id'],'project_id':project['id'],'provider':'demo'})
     assert r.status_code==200,r.text
     s=r.json();sid=s['suite_id'];assert s['provider']=='demo' and len(s['suggestion']['proposals'])==2
     assert c.post(f'/api/v1/ai/suites/{sid}/run-demo').status_code==409
@@ -81,7 +82,7 @@ def test_generation_approval_persistence_and_guards(clients):
     assert c.post(f'/api/v1/ai/suites/{sid}/approve',json={'reason':'Test','selected_proposals':[0]},auth=('analyst','test-password-only')).status_code==403
     assert c.post(f'/api/v1/ai/suites/{sid}/approve',json={'reason':'Проверено','selected_proposals':[0]}).status_code==200
     assert c.get(f'/api/v1/ai/suites/{sid}').json()['status']=='approved'
-    assert len(c.get('/api/v1/ai/suites?project_id=unit-project').json())==1
+    assert len(c.get(f"/api/v1/ai/suites?project_id={project['id']}").json())==1
 
 @pytest.mark.parametrize('name',['llm','codex'])
 def test_consent_required_before_external_request(clients,monkeypatch,name):
@@ -216,22 +217,23 @@ def _suite_plan(p, engine, cases):
 
 
 def _create_mocked_llm_suite(clients, monkeypatch, p, suggestion):
-    _, c = clients
+    impact, c = clients
     assert c.post('/api/v1/impact-packages', json=p).status_code == 200
+    project = impact.post('/api/v1/projects', json={'name': 'Проект мок-плана', 'description': ''}).json()
     monkeypatch.setattr(provider, 'generate', lambda *a, **kw: (suggestion, 'mock-model'))
     response = c.post('/api/v1/ai/suites', json={
         'package_id': p['package_id'],
-        'project_id': 'unit-project',
+        'project_id': project['id'],
         'provider': 'llm',
         'consent': True,
     })
-    return c, response
+    return c, response, project['id']
 
 
 def test_suite_rejects_unknown_playwright_action_before_persistence(clients, monkeypatch):
     p = package()
     suggestion = _suite_plan(p, 'playwright', [{'steps': [{'action': 'hover', 'target': 'Продажи'}]}])
-    _, response = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
+    _, response, _project = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
     assert response.status_code == 422
     assert 'Предложение 0' in response.text and 'hover' in response.text
 
@@ -239,7 +241,7 @@ def test_suite_rejects_unknown_playwright_action_before_persistence(clients, mon
 def test_structurally_valid_mocked_plan_creates_suite(clients, monkeypatch):
     p = package()
     suggestion = _suite_plan(p, 'playwright', [{'steps': [{'action': 'assert_text', 'target': 'Продажи'}]}])
-    _, response = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
+    _, response, _project = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
     assert response.status_code == 200, response.text
     assert response.json()['status'] == 'draft'
 
@@ -247,7 +249,7 @@ def test_structurally_valid_mocked_plan_creates_suite(clients, monkeypatch):
 def test_suite_rejects_odata_case_without_entity_or_metadata_check(clients, monkeypatch):
     p = package()
     suggestion = _suite_plan(p, 'odata', [{'expected': 'HTTP 200 OK'}])
-    _, response = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
+    _, response, _project = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
     assert response.status_code == 422
     assert 'Предложение 0' in response.text and 'entity' in response.text
 
@@ -255,7 +257,7 @@ def test_suite_rejects_odata_case_without_entity_or_metadata_check(clients, monk
 def test_suite_accepts_manual_proposal_without_cases(clients, monkeypatch):
     p = package()
     suggestion = _suite_plan(p, 'manual', [])
-    _, response = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
+    _, response, _project = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
     assert response.status_code == 200, response.text
     assert response.json()['status'] == 'draft'
 
@@ -263,7 +265,7 @@ def test_suite_accepts_manual_proposal_without_cases(clients, monkeypatch):
 def test_suite_rejects_unknown_engine_with_proposal_index(clients, monkeypatch):
     p = package()
     suggestion = _suite_plan(p, 'unsupported-engine', [{'entity': 'Document_Заказ'}])
-    _, response = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
+    _, response, _project = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
     assert response.status_code == 422
     assert 'Предложение 0' in response.text and 'unsupported-engine' in response.text
 
@@ -275,10 +277,103 @@ def test_suite_rejects_generated_open_url_before_persistence(clients, monkeypatc
         'playwright',
         [{'steps': [{'action': 'open_url', 'target': 'https://evil.example/'}]}],
     )
-    c, response = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
+    c, response, project_id = _create_mocked_llm_suite(clients, monkeypatch, p, suggestion)
     assert response.status_code == 422
     assert (
         "Предложение 0, case 0, шаг 0: действие open_url не допускается в сгенерированном плане; "
         "вход в веб-клиент выполняет исполнитель"
     ) in response.text
-    assert c.get('/api/v1/ai/suites?project_id=unit-project').json() == []
+    assert c.get(f'/api/v1/ai/suites?project_id={project_id}').json() == []
+
+
+SUITE_HISTORY_FIELDS = {
+    'suite_id',
+    'package_id',
+    'model',
+    'provider',
+    'status',
+    'counts',
+    'created_at',
+    'finished_at',
+    'approved_count',
+}
+
+
+def _project_with_package(clients):
+    impact, c = clients
+    p = package()
+    assert c.post('/api/v1/impact-packages', json=p).status_code == 200
+    project = impact.post('/api/v1/projects', json={'name': 'История прогонов', 'description': ''}).json()
+    return impact, c, project, p
+
+
+def _create_demo_suite(c, p, project_id):
+    response = c.post('/api/v1/ai/suites', json={'package_id': p['package_id'], 'project_id': project_id, 'provider': 'demo'})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_suite_history_is_empty_for_new_project(clients):
+    impact, c, project, p = _project_with_package(clients)
+    response = c.get('/api/v1/ai/suites', params={'project_id': project['id']})
+    assert response.status_code == 200, response.text
+    assert response.json() == []
+
+
+def test_suite_history_lists_runs_newest_first(clients):
+    import time
+
+    impact, c, project, p = _project_with_package(clients)
+    first = _create_demo_suite(c, p, project['id'])
+    time.sleep(0.01)
+    second = _create_demo_suite(c, p, project['id'])
+
+    rows = c.get('/api/v1/ai/suites', params={'project_id': project['id']}).json()
+    assert [row['suite_id'] for row in rows] == [second['suite_id'], first['suite_id']]
+    assert [row['created_at'] for row in rows] == sorted((row['created_at'] for row in rows), reverse=True)
+
+
+def test_suite_history_rejects_bad_limits(clients):
+    impact, c, project, p = _project_with_package(clients)
+    assert c.get('/api/v1/ai/suites', params={'project_id': project['id'], 'limit': 0}).status_code == 400
+    assert c.get('/api/v1/ai/suites', params={'project_id': project['id'], 'limit': 101}).status_code == 400
+    assert c.get('/api/v1/ai/suites', params={'project_id': project['id'], 'limit': 1}).status_code == 200
+
+
+def test_suite_history_unknown_project_is_404(clients):
+    impact, c, project, p = _project_with_package(clients)
+    missing = c.get('/api/v1/ai/suites', params={'project_id': '00000000-0000-0000-0000-000000000000'})
+    assert missing.status_code == 404
+    assert c.get('/api/v1/ai/suites', params={'project_id': project['id']}).status_code == 200
+
+
+def test_suite_history_omits_heavy_fields_and_secrets(clients, monkeypatch):
+    monkeypatch.setenv('TP_LLM_API_KEY', 'sk-history-secret')
+    impact, c, project, p = _project_with_package(clients)
+    created = _create_demo_suite(c, p, project['id'])
+    assert created['suggestion']['proposals']
+
+    response = c.get('/api/v1/ai/suites', params={'project_id': project['id']})
+    rows = response.json()
+    assert len(rows) == 1
+    assert set(rows[0]) == SUITE_HISTORY_FIELDS
+    assert set(rows[0]['counts']) == {'passed', 'failed', 'error', 'skipped'}
+    assert rows[0]['counts'] == {'passed': 0, 'failed': 0, 'error': 0, 'skipped': 0}
+    assert rows[0]['finished_at'] is None
+    assert rows[0]['model'] is None and rows[0]['provider'] == 'demo'
+    for forbidden in ('suggestion', 'payload', 'results', 'approval', 'warnings', 'affected_objects'):
+        assert forbidden not in rows[0]
+    assert 'sk-history-secret' not in response.text
+    assert 'Проверить расчёт скидки' not in response.text
+    assert 'Расчёт суммы через HTTP API учебного стенда' not in response.text
+
+
+def test_suite_history_reports_approval_count(clients):
+    impact, c, project, p = _project_with_package(clients)
+    created = _create_demo_suite(c, p, project['id'])
+    assert c.post(f"/api/v1/ai/suites/{created['suite_id']}/approve",
+                  json={'reason': 'История', 'selected_proposals': [0, 1]}).status_code == 200
+
+    row = c.get('/api/v1/ai/suites', params={'project_id': project['id']}).json()[0]
+    assert row['status'] == 'approved'
+    assert row['approved_count'] == 2

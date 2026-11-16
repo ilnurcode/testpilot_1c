@@ -3,7 +3,7 @@ from fastapi import APIRouter,Depends,HTTPException,Request
 from fastapi.responses import Response
 from sqlalchemy import select
 from testpilot.common import analyst,expert,user,require
-from testpilot.db import session,AISuiteRow,PackageRow,TestRow,CoverageRow,EvidenceRow,audit,uid
+from testpilot.db import session,AISuiteRow,PackageRow,TestRow,CoverageRow,EvidenceRow,ProjectRow,audit,uid
 from testpilot.contracts import now,RunInput
 from testpilot.ai.models import GenerateRequest,Decision,CodexStatus
 from testpilot.ai import provider,codex
@@ -166,11 +166,32 @@ def create(q:GenerateRequest,actor=Depends(analyst),s=Depends(session,scope='fun
     s.add(AISuiteRow(id=pid,package_id=q.package_id,project_id=q.project_id,status='draft',payload=payload));audit(s,'intelligence',actor,'generate_suite',pid,{'provider':q.provider,'model':model})
     return payload
 
+RUN_COUNT_KEYS=('passed','failed','error','skipped')
+
+def _suite_summary(row:AISuiteRow)->dict:
+    """Сводка прогона для истории: без suggestion, results и прочих тяжёлых частей payload."""
+    payload=row.payload or {};counts=payload.get('counts') or {};approval=payload.get('approval') or {}
+    return {
+        'suite_id':row.id,
+        'package_id':row.package_id,
+        'model':payload.get('model'),
+        'provider':payload.get('provider'),
+        'status':row.status,
+        'counts':{key:int(counts.get(key) or 0) for key in RUN_COUNT_KEYS},
+        'created_at':row.created_at,
+        'finished_at':payload.get('finished_at'),
+        'approved_count':len(approval.get('selected_proposals') or []),
+    }
+
 @router.get('/suites')
-def suites(project_id:str|None=None,actor=Depends(user),s=Depends(session,scope='function')):
-    query=select(AISuiteRow).order_by(AISuiteRow.created_at.desc())
-    if project_id:query=query.where(AISuiteRow.project_id==project_id)
-    return [r.payload for r in s.scalars(query.limit(100))]
+def suites(project_id:str|None=None,limit:int=20,actor=Depends(user),s=Depends(session,scope='function')):
+    """История прогонов: сводка без тяжёлых полей (suggestion/payload) для списков и страницы проекта."""
+    if limit<1 or limit>100:raise HTTPException(400,'limit должен быть от 1 до 100')
+    query=select(AISuiteRow).order_by(AISuiteRow.created_at.desc(),AISuiteRow.id.desc()).limit(limit)
+    if project_id:
+        require(s.get(ProjectRow,project_id),'Проект не найден')
+        query=query.where(AISuiteRow.project_id==project_id)
+    return [_suite_summary(row) for row in s.scalars(query)]
 
 @router.get('/suites/{sid}')
 def get_suite(sid:str,actor=Depends(user),s=Depends(session,scope='function')):return require(s.get(AISuiteRow,sid)).payload
