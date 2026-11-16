@@ -13,11 +13,12 @@ from zipfile import ZipFile, BadZipFile
 from fastapi import APIRouter,Depends,HTTPException,Request,Query
 from fastapi.responses import Response
 from pydantic import Field,ValidationError
-from sqlalchemy import select,func
+from sqlalchemy import select,func,delete,update
 from sqlalchemy.orm import defer
-from testpilot.common import analyst,user,require,upload_body
+from testpilot.common import analyst,expert,user,require,upload_body
 from testpilot.contracts import Model,Text,Configuration,ImpactPackage
-from testpilot.db import (session,ProjectRow,UploadRow,UploadAnalysisRow,VersionRow,AnalysisRow,AffectedRow,audit,uid)
+from testpilot.db import (session,ProjectRow,UploadRow,UploadAnalysisRow,VersionRow,AnalysisRow,AffectedRow,audit,uid,
+                          AISuiteRow,EvidenceRow,PackageRow,PlanRow,AuditRow)
 from testpilot.impact.imports import store_version
 from testpilot.impact.algorithms import analyze
 from testpilot.integration.probe import probe, Profile, validated_url
@@ -374,3 +375,40 @@ def enable_odata_script(pid:str,actor=Depends(user),s=Depends(session,scope='fun
             'X-Content-Type-Options': 'nosniff',
         }
     )
+
+@router.delete('/{pid}')
+def delete_project(pid:str,confirm:str|None=None,actor=Depends(expert),s=Depends(session,scope='function')):
+    """Удаляет проект и его данные одной транзакцией; без confirm=<pid> удаление не выполняется."""
+    project_or_404(s,pid,lock=True)
+    if confirm!=pid:
+        raise HTTPException(409,f'подтвердите удаление: передайте confirm={pid}')
+    deleted={}
+    suite_ids=[row for (row,) in s.execute(select(AISuiteRow.id).where(AISuiteRow.project_id==pid))]
+    package_ids=sorted({row for (row,) in s.execute(select(AISuiteRow.package_id).where(AISuiteRow.project_id==pid))})
+    analysis_ids=[row for (row,) in s.execute(select(UploadAnalysisRow.analysis_id).where(UploadAnalysisRow.project_id==pid))]
+    upload_ids=[row for (row,) in s.execute(select(UploadRow.id).where(UploadRow.project_id==pid))]
+
+    deleted['evidence']=s.execute(delete(EvidenceRow).where(EvidenceRow.suite_id.in_(suite_ids))).rowcount if suite_ids else 0
+    deleted['suites']=s.execute(delete(AISuiteRow).where(AISuiteRow.project_id==pid)).rowcount
+    removable=[]
+    if package_ids:
+        busy_suites={row for (row,) in s.execute(select(AISuiteRow.package_id).where(AISuiteRow.package_id.in_(package_ids)))}
+        busy_plans={row for (row,) in s.execute(select(PlanRow.package_id).where(PlanRow.package_id.in_(package_ids)))}
+        removable=[pkg for pkg in package_ids if pkg not in busy_suites and pkg not in busy_plans]
+    deleted['packages']=s.execute(delete(PackageRow).where(PackageRow.id.in_(removable))).rowcount if removable else 0
+
+    deleted['upload_analyses']=s.execute(delete(UploadAnalysisRow).where(UploadAnalysisRow.project_id==pid)).rowcount
+    if analysis_ids:
+        deleted['affected']=s.execute(delete(AffectedRow).where(AffectedRow.analysis_id.in_(analysis_ids))).rowcount
+        deleted['analyses']=s.execute(delete(AnalysisRow).where(AnalysisRow.id.in_(analysis_ids))).rowcount
+    else:
+        deleted['affected']=0;deleted['analyses']=0
+    s.execute(update(UploadRow).where(UploadRow.project_id==pid).values(baseline_id=None))
+    deleted['uploads']=s.execute(delete(UploadRow).where(UploadRow.project_id==pid)).rowcount
+
+    entity_ids=[pid,*upload_ids,*analysis_ids,*suite_ids]
+    deleted['audit']=s.execute(delete(AuditRow).where(AuditRow.entity_id.in_(entity_ids))).rowcount
+    s.execute(delete(ProjectRow).where(ProjectRow.id==pid))
+    deleted['projects']=1
+    audit(s,'impact',actor,'delete_project',pid,{'deleted':deleted})
+    return {'project_id':pid,'deleted':deleted}
