@@ -357,17 +357,6 @@ def rerun_suite(sid:str,allow_mutations:bool=False,strict_read_only:bool=False,a
         audit(s,'intelligence',actor,'rerun_suite_failed',new_id,{'source_suite':sid})
         return _suite_response({**failed,'counts':{state:0 for state in ('passed','failed','error','skipped')}})
 
-    if proj and proj.web_url and os.environ.get('TP_1C_AUTHORIZATION'):
-        selected = row.payload['approval']['selected_proposals']
-        proposals = row.payload['suggestion']['proposals']
-        needs_web_client = any(proposals[index]['engine'] == 'playwright' for index in selected)
-        has_username = proj.auth_username or os.environ.get('TP_1C_USERNAME')
-        if needs_web_client and not has_username:
-            raise HTTPException(
-                422,
-                'Для сценариев веб-клиента задайте пользователя и пароль 1С в настройках подключения проекта; Authorization используется только для OData',
-            )
-
 
 @router.get('/evidence/{eid}')
 def evidence(eid:str,actor=Depends(user),s=Depends(session,scope='function')):
