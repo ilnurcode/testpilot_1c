@@ -136,6 +136,8 @@ API: `GET /api/v1/ai/codex/status`, `POST /api/v1/ai/codex/login`, `POST /api/v1
 
 `POST /api/v1/ai/suites/{id}/run-1c` и `.../rerun` по умолчанию защищают эвристически: `click` по кнопкам «Записать», «Провести», «Создать», «Удалить», «Отменить проведение», «Пометить на удаление», «Скопировать», «Изменить» и любой `fill` требуют явного `allow_mutations=true`, иначе 422 с указанием предложения и шага. Эвристика неполна: «ОК», «Подтвердить», пользовательские подписи, клики по строкам и иконкам не распознаются. Полное отсутствие побочных эффектов гарантирует только `strict_read_only=true` — там разрешены лишь `assert_text`, `assert_section`, `wait`, `open_url`, а любой `click`/`fill` даёт 422. Риск виден заранее в карточке плана (бейдж «⚠ изменяет данные (эвристика)»), подтверждение плана пометка не блокирует. Подробности и таблица режимов: [docs/api.md](docs/api.md).
 
+Постура безопасности, дефолтные секреты и чек-лист перед выносом наружу — [docs/security.md](docs/security.md).
+
 История прогонов проекта — `GET /api/v1/ai/suites?project_id=…`, отчёт о прогоне — `GET /api/v1/ai/suites/{id}/report?format=md|csv`, повтор сохранённого плана — `POST /api/v1/ai/suites/{id}/rerun`, удаление проекта — `DELETE /api/v1/projects/{id}?confirm=<id>`. Тесты запускаются на push и pull_request в GitHub Actions (`.github/workflows/tests.yml`).
 
 
