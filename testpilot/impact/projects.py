@@ -18,7 +18,8 @@ from sqlalchemy.orm import defer
 from testpilot.common import analyst,expert,user,require,upload_body
 from testpilot.contracts import Model,Text,Configuration,ImpactPackage
 from testpilot.db import (session,ProjectRow,UploadRow,UploadAnalysisRow,VersionRow,AnalysisRow,AffectedRow,audit,uid,
-                          AISuiteRow,EvidenceRow,PackageRow,PlanRow,AuditRow)
+                          AISuiteRow,EvidenceRow,PackageRow,PlanRow,AuditRow,
+                          TestRow,CoverageRow,PriorityRow,ResultRow,DefectRow,RunRow)
 from testpilot.impact.imports import store_version
 from testpilot.impact.algorithms import analyze
 from testpilot.integration.probe import probe, Profile, validated_url
@@ -378,15 +379,34 @@ def enable_odata_script(pid:str,actor=Depends(user),s=Depends(session,scope='fun
 
 @router.delete('/{pid}')
 def delete_project(pid:str,confirm:str|None=None,actor=Depends(expert),s=Depends(session,scope='function')):
-    """Удаляет проект и его данные одной транзакцией; без confirm=<pid> удаление не выполняется."""
+    """Удаляет проект и все связанные записи одной транзакцией; без confirm=<pid> удаление не выполняется.
+
+    Каскад: impact_uploads, impact_upload_analyses, impact_analyses + impact_affected, ti_ai_suites +
+    ti_ai_evidence, тесты утверждённых планов (id ai-<suite>-<n>) с ti_coverage/ti_results/ti_defects/
+    ti_priorities, прогоны ai-run-<suite> (ti_runs), пакеты без чужих ссылок и записи audit по этим id.
+    Остаются осознанно: пакет, на который ссылаются чужие suite или ti_plans; тест, уже взятый в план
+    другого проекта (ti_priorities); ti_plans / ti_execution_jobs / ti_ml_models и справочники
+    конфигурации (версии, объекты, связи) — у них нет ссылки на проект; журнал code_audit — тоже.
+    """
     project_or_404(s,pid,lock=True)
     if confirm!=pid:
         raise HTTPException(409,f'подтвердите удаление: передайте confirm={pid}')
     deleted={}
-    suite_ids=[row for (row,) in s.execute(select(AISuiteRow.id).where(AISuiteRow.project_id==pid))]
+    suites=[(row.id,row.payload or {}) for row in s.scalars(select(AISuiteRow).where(AISuiteRow.project_id==pid))]
+    suite_ids=[sid for sid,_ in suites]
     package_ids=sorted({row for (row,) in s.execute(select(AISuiteRow.package_id).where(AISuiteRow.project_id==pid))})
     analysis_ids=[row for (row,) in s.execute(select(UploadAnalysisRow.analysis_id).where(UploadAnalysisRow.project_id==pid))]
     upload_ids=[row for (row,) in s.execute(select(UploadRow.id).where(UploadRow.project_id==pid))]
+    run_ids=[f'ai-run-{sid}' for sid in suite_ids]
+    test_candidates=set()
+    for sid,payload in suites:
+        for tid in (payload.get('catalog_test_ids') or {}).values():
+            test_candidates.add(tid)
+    for tid in [row for (row,) in s.execute(select(TestRow.id))]:
+        if any(tid.startswith(f'ai-{sid}-') for sid in suite_ids):
+            test_candidates.add(tid)
+    shared_tests={row for (row,) in s.execute(select(PriorityRow.test_id).where(PriorityRow.test_id.in_(test_candidates)))} if test_candidates else set()
+    test_ids=sorted(test_candidates-shared_tests)
 
     deleted['evidence']=s.execute(delete(EvidenceRow).where(EvidenceRow.suite_id.in_(suite_ids))).rowcount if suite_ids else 0
     deleted['suites']=s.execute(delete(AISuiteRow).where(AISuiteRow.project_id==pid)).rowcount
@@ -397,6 +417,18 @@ def delete_project(pid:str,confirm:str|None=None,actor=Depends(expert),s=Depends
         removable=[pkg for pkg in package_ids if pkg not in busy_suites and pkg not in busy_plans]
     deleted['packages']=s.execute(delete(PackageRow).where(PackageRow.id.in_(removable))).rowcount if removable else 0
 
+    def count(statement):
+        return s.execute(statement).rowcount
+
+    deleted['defects']=count(delete(DefectRow).where(DefectRow.test_id.in_(test_ids))) if test_ids else 0
+    deleted['defects']+=count(delete(DefectRow).where(DefectRow.run_id.in_(run_ids))) if run_ids else 0
+    deleted['results']=count(delete(ResultRow).where(ResultRow.test_id.in_(test_ids))) if test_ids else 0
+    deleted['results']+=count(delete(ResultRow).where(ResultRow.run_id.in_(run_ids))) if run_ids else 0
+    deleted['coverage']=count(delete(CoverageRow).where(CoverageRow.test_id.in_(test_ids))) if test_ids else 0
+    deleted['priorities']=count(delete(PriorityRow).where(PriorityRow.test_id.in_(test_ids))) if test_ids else 0
+    deleted['tests']=count(delete(TestRow).where(TestRow.id.in_(test_ids))) if test_ids else 0
+    deleted['runs']=count(delete(RunRow).where(RunRow.id.in_(run_ids))) if run_ids else 0
+
     deleted['upload_analyses']=s.execute(delete(UploadAnalysisRow).where(UploadAnalysisRow.project_id==pid)).rowcount
     if analysis_ids:
         deleted['affected']=s.execute(delete(AffectedRow).where(AffectedRow.analysis_id.in_(analysis_ids))).rowcount
@@ -406,9 +438,9 @@ def delete_project(pid:str,confirm:str|None=None,actor=Depends(expert),s=Depends
     s.execute(update(UploadRow).where(UploadRow.project_id==pid).values(baseline_id=None))
     deleted['uploads']=s.execute(delete(UploadRow).where(UploadRow.project_id==pid)).rowcount
 
-    entity_ids=[pid,*upload_ids,*analysis_ids,*suite_ids]
+    entity_ids=[pid,*upload_ids,*analysis_ids,*suite_ids,*test_ids,*run_ids,*removable]
     deleted['audit']=s.execute(delete(AuditRow).where(AuditRow.entity_id.in_(entity_ids))).rowcount
     s.execute(delete(ProjectRow).where(ProjectRow.id==pid))
     deleted['projects']=1
-    audit(s,'impact',actor,'delete_project',pid,{'deleted':deleted})
+    audit(s,'impact',actor,'delete_project',pid,{'deleted':deleted,'shared_tests':len(shared_tests)})
     return {'project_id':pid,'deleted':deleted}

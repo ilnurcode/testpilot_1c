@@ -13,12 +13,33 @@ DELETED_KEYS = {
     'evidence',
     'suites',
     'packages',
+    'tests',
+    'coverage',
+    'priorities',
+    'results',
+    'defects',
+    'runs',
     'upload_analyses',
     'affected',
     'analyses',
     'uploads',
     'audit',
     'projects',
+}
+
+# Колонки-ссылки на удаляемые сущности. Проверка обходит все таблицы метаданных,
+# поэтому новая таблица со ссылкой без обработки в каскаде сразу даст сироту.
+REFERENCE_COLUMNS = {
+    'project_id',
+    'suite_id',
+    'package_id',
+    'upload_id',
+    'analysis_id',
+    'test_id',
+    'run_id',
+    'plan_id',
+    'baseline_id',
+    'entity_id',
 }
 
 
@@ -182,3 +203,80 @@ def test_delete_leaves_code_audit_journal_untouched(clients):
     with db._factory() as session:
         assert session.get(db.CodeAuditRow, scan_id) is not None
     assert web.get(f'/api/v1/audit/scans/{scan_id}').status_code == 200
+
+
+def _run_input(suite: dict, project_configuration: str) -> dict:
+    test_ids = list((suite.get('catalog_test_ids') or {}).values())
+    now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    return {
+        'run_id': f"ai-run-{suite['suite_id']}",
+        'configuration_id': project_configuration,
+        'version': '2.0',
+        'synthetic': suite['synthetic'],
+        'results': [
+            {'test_id': tid, 'status': 'passed', 'duration_seconds': 1.0,
+             'started_at': now, 'finished_at': now}
+            for tid in test_ids
+        ],
+        'defects': [],
+    }
+
+
+def _orphans(session, ids) -> list[tuple[str, str, int]]:
+    from sqlalchemy import func, select as sql_select
+
+    from testpilot import db
+
+    found = []
+    for table in db.Base.metadata.sorted_tables:
+        for column in table.columns:
+            if column.name not in REFERENCE_COLUMNS:
+                continue
+            leftover = session.execute(
+                sql_select(func.count()).select_from(table).where(column.in_(ids))
+            ).scalar()
+            if leftover:
+                if table.name == 'audit' and column.name == 'entity_id':
+                    continue
+                found.append((table.name, column.name, leftover))
+    return found
+
+
+def test_delete_leaves_no_orphans_in_referencing_tables(clients):
+    import uuid
+
+    from testpilot import db
+
+    impact, c = clients
+    project = _project(impact, 'Проект с прогоном')
+    upload = _upload(impact, project['id'])
+    package = _package(f'orphans-{uuid.uuid4().hex[:8]}')
+    suite = _suite(c, project['id'], package)
+    approved = c.post(
+        f"/api/v1/ai/suites/{suite['suite_id']}/approve",
+        json={'reason': 'Проверка сирот', 'selected_proposals': [0]},
+    )
+    assert approved.status_code == 200, approved.text
+    suite_payload = c.get(f"/api/v1/ai/suites/{suite['suite_id']}").json()
+    test_ids = list(suite_payload['catalog_test_ids'].values())
+    assert test_ids
+
+    history = c.post('/api/v1/history', json=_run_input(suite_payload, package['configuration_id']))
+    assert history.status_code == 200, history.text
+
+    deleted = impact.delete(f"/api/v1/projects/{project['id']}", params={'confirm': project['id']})
+    assert deleted.status_code == 200, deleted.text
+    counts = deleted.json()['deleted']
+    assert counts['tests'] == len(test_ids)
+    assert counts['runs'] == 1
+    assert counts['results'] == len(test_ids)
+    assert counts['coverage'] == len({oid for oid in suite_payload['suggestion']['proposals'][0]['object_ids']})
+
+    ids = {project['id'], upload['id'], suite['suite_id'], package['package_id'], *test_ids,
+           f"ai-run-{suite['suite_id']}"}
+    with db._factory() as session:
+        assert _orphans(session, ids) == []
+        audit_rows = session.execute(
+            __import__('sqlalchemy').select(db.AuditRow.action).where(db.AuditRow.entity_id == project['id'])
+        ).scalars().all()
+    assert audit_rows == ['delete_project']
