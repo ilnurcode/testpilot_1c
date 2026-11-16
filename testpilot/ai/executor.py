@@ -126,7 +126,14 @@ def execute_1c(suite, profile):
                     steps = case.get('steps') or [{'action': 'wait', 'value': 2000}]
                     report = web_runner.run_scenario(title=proposal['title'], steps=steps)
                     result['status'] = report.status
-                    result['message'] = report.error or f"Сценарий в веб-клиенте 1С выполнен ({len(report.steps)} шагов)"
+                    section_result = next(
+                        (step for step in reversed(report.steps) if step.action == 'assert_section' and step.status == 'passed'),
+                        None,
+                    )
+                    result['message'] = report.error or (
+                        section_result.message if section_result else
+                        f"Сценарий в веб-клиенте 1С выполнен ({len(report.steps)} шагов)"
+                    )
                     for shot in report.screenshots:
                         if len(shot) <= 2 * 1024 * 1024:
                             evidence.append((len(results), shot))

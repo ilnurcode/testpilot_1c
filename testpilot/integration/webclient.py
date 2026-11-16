@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from testpilot.ai.executor import browser_path
-from testpilot.integration.probe import Profile
+from testpilot.integration.probe import Profile, container_access_url
 
 @dataclass
 class StepResult:
@@ -37,6 +37,84 @@ def _safe_screenshot(context, page) -> bytes:
     except Exception:
         return page.screenshot(full_page=False, animations='disabled', timeout=15000)
 
+def _workspace_lines(page) -> list[str]:
+    script = """() => {
+      const visible = element => !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+      const root = document.querySelector('#funcPanel') ||
+        [...document.querySelectorAll('main,[role="main"],[role="application"],#workspace,.workspace,.frameMain,.frameWork,.frameContent')]
+          .filter(visible).sort((left, right) => (right.innerText || '').length - (left.innerText || '').length)[0];
+      if (!root) return [];
+      return (root.innerText || '').split(/\\n/).map(line => line.trim()).filter(Boolean);
+    }"""
+    lines = []
+    for frame in page.frames:
+        try:
+            lines.extend(frame.evaluate(script))
+        except Exception:
+            continue
+    return lines
+
+
+def assert_section(
+    page,
+    target: str,
+    before_lines: list[str] | None = None,
+    timeout_ms: float = 30000.0,
+) -> str:
+    """Confirm a selected navigation marker or newly appeared workspace text."""
+    expected = ' '.join(target.split())
+    script = """expected => {
+      const norm = value => (value || '').replace(/\\s+/g, ' ').trim();
+      const visible = element => !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+      const root = document.querySelector('#funcPanel') ||
+        [...document.querySelectorAll('main,[role="main"],[role="application"],#workspace,.workspace,.frameMain,.frameWork,.frameContent')]
+          .filter(visible).sort((left, right) => (right.innerText || '').length - (left.innerText || '').length)[0];
+      const lines = root ? (root.innerText || '').split(/\\n/).map(line => norm(line)).filter(Boolean) : [];
+      const menu = document.querySelector('#themesCellLimiter');
+      const navRoot = menu || document;
+      let active = false;
+      for (const element of navRoot.querySelectorAll('*')) {
+        if (!visible(element) || norm(element.innerText || element.textContent) !== expected) continue;
+        for (let node = element; node && node !== navRoot.parentElement; node = node.parentElement) {
+          const current = node.getAttribute('aria-current');
+          const selected = node.getAttribute('aria-selected') === 'true';
+          const classes = typeof node.className === 'string' ? node.className.toLowerCase().split(/\\s+/) : [];
+          if (current === 'page' || current === 'true' || selected ||
+              classes.some(name => /^(?:is-)?(?:active|selected|current|select)$/.test(name))) {
+            active = true;
+            break;
+          }
+        }
+        if (active) break;
+      }
+      return {active, lines};
+    }"""
+    previous = set(before_lines or [])
+    deadline = time.monotonic() + max(timeout_ms, 0) / 1000
+    while True:
+        after_lines = []
+        for frame in page.frames:
+            try:
+                state = frame.evaluate(script, expected)
+            except Exception:
+                continue
+            if state['active']:
+                return f"Выбор раздела «{target}» подтверждён классом select выбранного пункта навигации"
+            after_lines.extend(state['lines'])
+        for line in after_lines:
+            if line not in previous and expected.casefold() in line.casefold():
+                return f"Выбор раздела «{target}» подтверждён новой строкой рабочей области «{line}»"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        page.wait_for_timeout(min(250, max(1, int(remaining * 1000))))
+    raise AssertionError(
+        f"Раздел «{target}» не подтверждён: активный маркер или новая строка рабочей области не найдены"
+    )
+
+
+
+
 class WebClientRunner:
     """Исполнитель сценариев в веб-клиенте 1С:Предприятие 8.3."""
 
@@ -44,7 +122,7 @@ class WebClientRunner:
         self.profile = profile
         self.headless = headless
         self.default_timeout = default_timeout
-        self.web_url = (profile.web_url or profile.odata_url).rstrip('/')
+        self.web_url = container_access_url(profile.web_url or profile.odata_url).rstrip('/')
 
     def handle_login(self, page) -> None:
         """Обработка стандартного окна авторизации веб-клиента 1С (8.3 и 8.5)."""
@@ -144,14 +222,17 @@ class WebClientRunner:
                 report.screenshots.append(shot)
 
                 # Выполнение переданных шагов
+                section_baseline = None
                 for idx, step in enumerate(steps, 1):
                     s_start = time.perf_counter()
                     action = step.get('action')
                     target = step.get('target', '')
                     val = step.get('value')
+                    step_message = 'OK'
                     
                     try:
                         if action == 'click':
+                            section_baseline = _workspace_lines(page)
                             clicked = False
                             for loc in (
                                 page.get_by_text(target, exact=True).filter(visible=True).first,
@@ -181,6 +262,8 @@ class WebClientRunner:
                                     pass
                             if not filled:
                                 page.locator(target).first.fill(str(val))
+                        elif action == 'assert_section':
+                            step_message = assert_section(page, target, section_baseline, self.default_timeout)
                         elif action == 'assert_text':
                             loc = page.get_by_text(target, exact=True).filter(visible=True).first
                             try:
@@ -200,8 +283,8 @@ class WebClientRunner:
                             action=action,
                             target=target,
                             value=val,
+                            message=step_message,
                             status='passed',
-                            message='OK',
                             duration_seconds=s_duration,
                             screenshot=shot
                         ))

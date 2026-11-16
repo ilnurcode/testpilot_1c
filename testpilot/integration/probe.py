@@ -4,7 +4,8 @@ import json
 import os
 import ssl
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
+from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 from xml.etree import ElementTree as ET
 
 import httpx
@@ -25,6 +26,23 @@ def validated_url(value):
     if any(part in ('.','..') for part in parts.path.split('/')):
         raise ValueError('Недопустимый путь публикации')
     return value.rstrip('/')
+
+
+def is_containerized():
+    return Path('/.dockerenv').exists()
+
+
+def container_access_url(value):
+    """Route loopback publication URLs to the Docker host from containers."""
+    if not value or not is_containerized():
+        return value
+    parts = urlsplit(value)
+    if parts.hostname not in ('localhost', '127.0.0.1'):
+        return value
+    netloc = 'host.docker.internal'
+    if parts.port:
+        netloc += f':{parts.port}'
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
 @dataclass(frozen=True)

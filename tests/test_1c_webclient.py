@@ -1,6 +1,9 @@
 """Тесты раннера веб-клиента 1С."""
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import httpx
+import testpilot.integration.probe as probe
+from testpilot.integration.odata import ODataClient
 import pytest
 from testpilot.integration.probe import Profile
 from testpilot.integration.webclient import WebClientRunner, StepResult, ScenarioReport
@@ -31,7 +34,8 @@ def test_scenario_report_data_structures():
     assert report.status == 'passed'
 
 
-def test_webclient_runner_real_playwright_execution():
+def test_webclient_runner_real_playwright_execution(monkeypatch):
+    monkeypatch.setattr(probe, 'is_containerized', lambda: False)
     html = """<!DOCTYPE html>
     <html><head><meta charset="utf-8"><title>1С:Предприятие</title></head>
     <body>
@@ -102,6 +106,7 @@ def visible_text_runner(monkeypatch):
     srv = HTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
     thread.start()
+    monkeypatch.setattr(probe, 'is_containerized', lambda: False)
     monkeypatch.setattr(WebClientRunner, "handle_login", lambda self, page: None)
     url = f"http://127.0.0.1:{srv.server_address[1]}"
     try:
@@ -140,3 +145,82 @@ def test_click_does_not_use_hidden_text(visible_text_runner):
     assert report.status == "failed"
     assert report.steps[-1].action == "click"
     assert report.steps[-1].status == "failed"
+
+
+def test_assert_section_requires_active_marker_from_mock_html(monkeypatch):
+    pages = {
+        '/active': '<html><body><nav><button class="themeBox select">Продажи</button></nav><main><h1>Информация</h1></main></body></html>',
+        '/idle': '<html><body><nav><button>Продажи</button></nav><main><h1>Информация</h1></main></body></html>',
+        '/content': "<html><body><nav><button onclick=\"document.getElementById('workspace').textContent='Оптовые продажи'\">Продажи</button></nav><main id='workspace'>Начальная страница</main></body></html>",
+    }
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = pages.get(self.path, '').encode('utf-8')
+            self.send_response(200 if body else 404)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            pass
+
+    srv = HTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr(probe, 'is_containerized', lambda: False)
+    monkeypatch.setattr(WebClientRunner, 'handle_login', lambda self, page: None)
+    base = f'http://127.0.0.1:{srv.server_address[1]}'
+    try:
+        active = WebClientRunner(Profile(odata_url=base + '/active', web_url=base + '/active'), default_timeout=100)
+        passed = active.run_scenario('Активный раздел', [{'action': 'assert_section', 'target': 'Продажи'}])
+        assert passed.status == 'passed', passed.error
+        assert 'классом select выбранного пункта навигации' in passed.steps[-1].message
+
+        idle = WebClientRunner(Profile(odata_url=base + '/idle', web_url=base + '/idle'), default_timeout=50)
+        failed = idle.run_scenario('Только пункт меню', [{'action': 'assert_section', 'target': 'Продажи'}])
+        assert failed.status == 'failed'
+        assert failed.steps[-1].message == 'Раздел «Продажи» не подтверждён: активный маркер или новая строка рабочей области не найдены'
+
+        content = WebClientRunner(Profile(odata_url=base + '/content', web_url=base + '/content'), default_timeout=2000)
+        changed = content.run_scenario('Новая строка рабочей области', [
+            {'action': 'click', 'target': 'Продажи'},
+            {'action': 'assert_section', 'target': 'Продажи'},
+        ])
+        assert changed.status == 'passed', changed.error
+        assert 'новой строкой рабочей области «Оптовые продажи»' in changed.steps[-1].message
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        thread.join()
+
+
+def test_container_loopback_routing_for_web_and_odata(monkeypatch):
+    monkeypatch.setattr(probe, 'is_containerized', lambda: True)
+    profile = Profile(
+        odata_url='http://localhost:8088/DemoTrd/odata',
+        web_url='http://127.0.0.1:8088/DemoTrd',
+    )
+    runner = WebClientRunner(profile)
+    assert runner.web_url == 'http://host.docker.internal:8088/DemoTrd'
+
+    requested = []
+
+    def handler(request):
+        requested.append(request.url)
+        return httpx.Response(200, json={'value': []})
+
+    assert ODataClient(profile, transport=httpx.MockTransport(handler)).get_entities('Catalog_Test') == []
+    assert requested[-1].host == 'host.docker.internal'
+    assert requested[-1].port == 8088
+    assert requested[-1].path == '/DemoTrd/odata/Catalog_Test'
+
+    explicit = Profile(odata_url='http://1c.example.test:8088/odata', web_url='http://1c.example.test:8088/web')
+    assert WebClientRunner(explicit).web_url == 'http://1c.example.test:8088/web'
+
+    monkeypatch.setattr(probe, 'is_containerized', lambda: False)
+    outside = Profile(odata_url='http://localhost:8088/odata', web_url='http://127.0.0.1:8088/web')
+    assert WebClientRunner(outside).web_url == 'http://127.0.0.1:8088/web'
+    assert ODataClient(outside, transport=httpx.MockTransport(handler)).get_entities('Catalog_Test') == []
+    assert requested[-1].host == 'localhost'
+    assert requested[-1].port == 8088

@@ -161,12 +161,6 @@ def run_demo(sid:str,request:Request,actor=Depends(expert),s=Depends(session,sco
 
 
 
-def _docker_host_url(url: str | None) -> str | None:
-    if not url:
-        return url
-    if Path('/.dockerenv').exists():
-        return url.replace('://localhost', '://host.docker.internal').replace('://127.0.0.1', '://host.docker.internal')
-    return url
 
 @router.post('/suites/{sid}/run-1c')
 def run_1c(sid:str,actor=Depends(expert),s=Depends(session,scope='function')):
@@ -189,8 +183,8 @@ def run_1c(sid:str,actor=Depends(expert),s=Depends(session,scope='function')):
 
     try:
         if proj and (proj.odata_url or proj.web_url):
-            odata_url = _docker_host_url(proj.odata_url or os.environ.get('TP_1C_ODATA_URL', ''))
-            web_url = _docker_host_url(proj.web_url or os.environ.get('TP_1C_WEB_URL') or None)
+            odata_url = proj.odata_url or os.environ.get('TP_1C_ODATA_URL', '')
+            web_url = proj.web_url or os.environ.get('TP_1C_WEB_URL') or None
             uname = proj.auth_username or os.environ.get('TP_1C_USERNAME') or None
             pwd = (proj.auth_password if proj.auth_password is not None else '') if uname else None
             auth_hdr = os.environ.get('TP_1C_AUTHORIZATION') or None if not uname else None
@@ -198,8 +192,8 @@ def run_1c(sid:str,actor=Depends(expert),s=Depends(session,scope='function')):
         else:
             env_prof = Profile.from_environment()
             profile = Profile(
-                odata_url=_docker_host_url(env_prof.odata_url),
-                web_url=_docker_host_url(env_prof.web_url),
+                odata_url=env_prof.odata_url,
+                web_url=env_prof.web_url,
                 username=env_prof.username,
                 password=env_prof.password,
                 authorization=env_prof.authorization,

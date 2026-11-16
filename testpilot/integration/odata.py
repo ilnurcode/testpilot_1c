@@ -5,7 +5,7 @@ import os
 import sys
 from typing import Any
 import httpx
-from testpilot.integration.probe import Profile, parse_metadata, validated_url
+from testpilot.integration.probe import Profile, container_access_url, parse_metadata, validated_url
 
 ALLOWED_PREFIXES = (
     'Catalog_',
@@ -38,7 +38,7 @@ class ODataClient:
         self.profile = profile
         self.transport = transport
         self.timeout = timeout
-        self.base_url = profile.odata_url.rstrip('/')
+        self.base_url = container_access_url(profile.odata_url).rstrip('/')
 
     def _client(self) -> httpx.Client:
         headers = {
