@@ -9,6 +9,20 @@ from testpilot.web.report_render import attachment, csv_document, markdown_cell,
 
 RUN_CSV_HEADER = 'Предложение;Case;Движок;Проверка;Статус;Сообщение;Длительность, мс;Evidence'
 
+ODATA_404_HINT = (
+    'База не публикует эту сущность в OData (публикация с 0 EntitySet или другой состав). '
+    'Проверку сущности на этой базе выполнить нельзя; доступность сервиса проверяется случаем `$metadata`.'
+)
+
+
+def _odata_404_hint(result: dict[str, Any], proposal: dict[str, Any]) -> str | None:
+    """Пояснение к отказу 404 по сущности: это свойство публикации, а не обязательно дефект изменения."""
+    engine = result.get('engine') or proposal.get('engine') or ''
+    message = str(result.get('message') or '')
+    if engine == 'odata' and 'не найдена (HTTP 404)' in message:
+        return ODATA_404_HINT
+    return None
+
 
 def _approved_proposals(suite: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
     selected = (suite.get('approval') or {}).get('selected_proposals') or []
@@ -97,6 +111,9 @@ def _proposal_line(number: int, proposal: dict[str, Any], results: list[dict[str
             f"- case {_case_number(result)}: {markdown_cell(status)} · {markdown_cell(message)} · "
             f"{duration or '—'} мс · evidence {evidence or '—'}"
         )
+        hint = _odata_404_hint(result, proposal)
+        if hint:
+            lines.append(f'  - пояснение: {hint}')
     lines.append('')
     return lines
 
