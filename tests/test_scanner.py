@@ -47,9 +47,9 @@ def test_scanner_demo_extension():
 
     summary = engine.scan_directory(demo_dir)
     assert summary.total_files == 8
-    assert summary.total_issues == 11
+    assert summary.total_issues == 12
     assert not summary.passed
-    assert summary.issues_by_severity == {"CRITICAL": 1, "HIGH": 6, "MEDIUM": 1, "LOW": 3}
+    assert summary.issues_by_severity == {"CRITICAL": 1, "HIGH": 7, "MEDIUM": 1, "LOW": 3}
 
 
 def test_audit_api_scan_endpoint(clients):
@@ -119,3 +119,49 @@ def test_sec012_flags_com_object_creation_positive_fixture():
 
 def test_sec012_ignores_comments_and_strings_negative_fixture():
     assert not any(i.rule_id == "SEC012" for i in _scan_security_fixture("sec012_negative.bsl"))
+
+
+def test_sec013_flags_credential_literals_and_masks_them():
+    issues = [i for i in _scan_security_fixture("sec013_positive.bsl") if i.rule_id == "SEC013"]
+    assert len(issues) == 4
+    assert {i.severity for i in issues} == {Severity.HIGH}
+    assert issues[0].message == ("Похоже на учётные данные в исходном коде: пароль/токен задан литералом. "
+                                 "Храните секреты вне кода (настройки, защищённое хранилище).")
+    for issue in issues:
+        assert len(issue.code_fragment) <= 140
+        assert '"***"' in issue.code_fragment
+    joined = "\n".join(i.code_fragment for i in issues)
+    assert "S3cr3t-value" not in joined
+    assert "qwerty" not in joined
+    assert "token-value" not in joined
+    assert "Secret123" not in joined
+
+
+def test_sec013_ignores_empty_undefined_comments_and_property_access():
+    issues = [i for i in _scan_security_fixture("sec013_negative.bsl") if i.rule_id == "SEC013"]
+    assert issues == []
+
+
+def test_sec013_masks_value_in_saved_scan_result(clients):
+    from testpilot.web.api import app
+
+    web = TestClient(app)
+    web.auth = ('expert', 'test-password-only')
+    response = web.post('/api/v1/audit/scan', json={'code': 'Пароль = "S3cr3t-value";'})
+    assert response.status_code == 200, response.text
+    issue = next(i for i in response.json()['issues'] if i['rule_id'] == 'SEC013')
+    assert issue['code_fragment'] == 'Пароль = "***";'
+    assert 'S3cr3t-value' not in issue['code_fragment']
+
+
+def test_sec014_flags_external_component_connections():
+    issues = [i for i in _scan_security_fixture("sec014_positive.bsl") if i.rule_id == "SEC014"]
+    assert len(issues) == 3
+    assert {i.severity for i in issues} == {Severity.HIGH}
+    assert issues[0].message == ("Подключение внешней компоненты: убедитесь, что источник и подпись проверяются — "
+                                 "иначе это риск исполнения чужого кода.")
+    assert [i.line for i in issues] == [3, 4, 5]
+
+
+def test_sec014_ignores_comments_and_plain_text():
+    assert not any(i.rule_id == "SEC014" for i in _scan_security_fixture("sec014_negative.bsl"))

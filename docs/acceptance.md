@@ -16,7 +16,7 @@
 
 | Что | Команда / путь | Ожидаемо |
 |---|---|---|
-| Демо-ZIP | UI: Проекты → загрузить `samples/demo_vulnerable_extension.zip` → «Аудит кода и стандарты v8std» | 11 замечаний в 8 файлах: 1 CRITICAL, 6 HIGH, 1 MEDIUM, 3 LOW |
+| Демо-ZIP | UI: Проекты → загрузить `samples/demo_vulnerable_extension.zip` → «Аудит кода и стандарты v8std» | 12 замечаний в 8 файлах: 1 CRITICAL, 7 HIGH, 1 MEDIUM, 3 LOW |
 | Бинарный контейнер | UI: загрузить `.cfe` без модулей BSL → «Аудит кода» | статус загрузки `metadata_only`, аудит `status=no_bsl_modules`, `passed=false` |
 | Вставленный код | `curl -s -u expert:$TP_EXPERT_PASSWORD -H 'Content-Type: application/json' -d '{"code":"ОтключитьБезопасныйРежим(Истина);"}' http://127.0.0.1:8000/api/v1/audit/scan` | `total_issues>=1`, `issues[0].rule_id=SEC010`, в ответе есть `scan_id` |
 | Без учётных данных | тот же запрос без `-u` | HTTP 401 |

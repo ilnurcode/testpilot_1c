@@ -39,7 +39,7 @@ CFE/CF/EPF/ERF/DT и ZIP принимаются на хранение до 64 М
 
 Синтетическая выгрузка исходников: ZIP `samples/demo_vulnerable_extension.zip` и тот же код распакованным каталогом `samples/demo_vulnerable_extension/`. Сценарий показа: загрузить ZIP в проекте, запустить аудит, затем «Рассчитать область влияния».
 
-Фактический результат на текущих исходниках — **11 замечаний в 8 проверенных файлах**: `SEC001` (CRITICAL), `SEC005`, `v8std:privileged-mode`, `v8std:query-in-loop`, `v8std:server-in-client-loop`, `v8std:virtual-tables-params`, `SEC011` (HIGH), `v8std:unconditional-server-context` (MEDIUM), `v8std:naming`, `v8std:empty-exception-handler`, `STD001` (LOW). Это 1 CRITICAL, 6 HIGH, 1 MEDIUM и 3 LOW.
+Фактический результат на текущих исходниках — **12 замечаний в 8 проверенных файлах**: `SEC001` (CRITICAL), `SEC005`, `v8std:privileged-mode`, `v8std:query-in-loop`, `v8std:server-in-client-loop`, `v8std:virtual-tables-params`, `SEC011`, `SEC013` (HIGH), `v8std:unconditional-server-context` (MEDIUM), `v8std:naming`, `v8std:empty-exception-handler`, `STD001` (LOW). Это 1 CRITICAL, 7 HIGH, 1 MEDIUM и 3 LOW.
 
 `SEC002` и `v8std:managed-lock-in-posting` на этих исходниках не срабатывают: `SEC002` проверяет однострочную конкатенацию `Запрос.Текст` с `+`, а `SEC011` — только многострочную, поэтому на этом присваивании нет дублирующего срабатывания. Учебная процедура проведения называется `ПримерОбработкиПроведения`. Комментарии-маркеры в коде описывают замысел примера, а не результат аудита. Полный список с файлами и строками — в [README выгрузки](samples/demo_vulnerable_extension/README.md).
 

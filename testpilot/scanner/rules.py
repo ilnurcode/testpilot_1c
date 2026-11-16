@@ -699,6 +699,104 @@ class EmptyExceptionHandlerRule(BSLRule):
         return issues
 
 
+
+class CredentialsInSourceRule(BSLRule):
+    """SEC013: строковый литерал пароля/токена в исходнике; значение в отчёте маскируется."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            rule_id="SEC013",
+            category=IssueCategory.SECURITY,
+            severity=Severity.HIGH,
+            message="Похоже на учётные данные в исходном коде: пароль/токен задан литералом. Храните секреты вне кода (настройки, защищённое хранилище).",
+            recommendation="Перенесите пароли и токены в настройки или защищённое хранилище и не храните их в исходниках.",
+        )
+        self.field_regex = re.compile(
+            r'(?i)\b([\w.]*(?:пароль|password|токен|token|секрет|secret)[\w.]*)\s*=\s*("(?:""|[^"])*")'
+        )
+        self.literal_regex = re.compile(r'"(?:""|[^"])*"')
+        self.connection_secret_regex = re.compile(r'(?i)(?:^|[;\s])(?:pwd|password)\s*=')
+        self.not_a_value = {"неопределено", "null", "undefined"}
+
+    def analyze(self, file_path: str, lines: list[str]) -> list[ScanIssue]:
+        code_lines = _strip_comments("".join(lines)).split("\n")
+        issues: list[ScanIssue] = []
+        for idx, raw in enumerate(lines, 1):
+            clean = code_lines[idx - 1] if idx - 1 < len(code_lines) else ""
+            literal = None
+            match = self.field_regex.search(clean)
+            if match:
+                literal = match.group(2)
+            else:
+                for candidate in self.literal_regex.finditer(clean):
+                    if self.connection_secret_regex.search(candidate.group()[1:-1]):
+                        literal = candidate.group()
+                        break
+            if not literal:
+                continue
+            value = literal[1:-1].strip()
+            if not value or value.lower() in self.not_a_value:
+                continue
+            issues.append(ScanIssue(
+                rule_id=self.rule_id,
+                category=self.category,
+                severity=self.severity,
+                message=self.message,
+                file_path=file_path,
+                line=idx,
+                col=max(1, raw.find(literal) + 1),
+                code_fragment=self._masked_fragment(raw, literal),
+                recommendation=self.recommendation,
+            ))
+        return issues
+
+    @staticmethod
+    def _masked_fragment(raw_line: str, literal: str) -> str:
+        """Фрагмент для отчёта: значение секрета заменяется, чтобы правило само его не печатало."""
+        return raw_line.replace(literal, '"***"', 1).strip()[:140]
+
+
+class ExternalComponentRule(BSLRule):
+    """SEC014: подключение внешней компоненты — сигнал проверить источник и подпись."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            rule_id="SEC014",
+            category=IssueCategory.SECURITY,
+            severity=Severity.HIGH,
+            message="Подключение внешней компоненты: убедитесь, что источник и подпись проверяются — иначе это риск исполнения чужого кода.",
+            recommendation="Проверяйте подпись и доверенный путь внешней компоненты; не загружайте компоненты по внешним ссылкам.",
+        )
+        self.patterns = [
+            re.compile(r'(?i)\bПодключитьВнешнююКомпоненту\s*\('),
+            re.compile(r'(?i)\bНовый\s*\(\s*"AddIn'),
+            re.compile(r'(?i)\bВнешниеКомпоненты\s*\.\s*Подключить'),
+        ]
+
+    def analyze(self, file_path: str, lines: list[str]) -> list[ScanIssue]:
+        code_lines = _strip_comments("".join(lines)).split("\n")
+        issues: list[ScanIssue] = []
+        for idx, raw in enumerate(lines, 1):
+            clean = code_lines[idx - 1] if idx - 1 < len(code_lines) else ""
+            for pattern in self.patterns:
+                match = pattern.search(clean)
+                if not match:
+                    continue
+                issues.append(ScanIssue(
+                    rule_id=self.rule_id,
+                    category=self.category,
+                    severity=self.severity,
+                    message=self.message,
+                    file_path=file_path,
+                    line=idx,
+                    col=match.start() + 1,
+                    code_fragment=raw.strip()[:140],
+                    recommendation=self.recommendation,
+                ))
+                break
+        return issues
+
+
 def get_default_rules() -> list[BSLRule]:
     """Returns the complete set of built-in BSL security and v8std rules."""
     return [
@@ -720,6 +818,8 @@ def get_default_rules() -> list[BSLRule]:
             message="Создание COM-объекта потенциально обходит типизацию и контроль прав — проверьте источник и подпись",
         ),
         HardcodedCredentialsRule(),
+        CredentialsInSourceRule(),
+        ExternalComponentRule(),
         ManagedLockInPostingRule(),
         QueryInLoopRule(),
         ServerCallInClientLoopRule(),
