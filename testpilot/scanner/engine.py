@@ -43,6 +43,21 @@ class ScannerEngine:
 
         return self.scan_code(content, str(path))
 
+    def source_files(self, directory: Path | str, recursive: bool = True) -> list[Path]:
+        """Файлы каталога, которые реально проверяются аудитом (порядок обхода glob не сортируется)."""
+        dir_path = Path(directory).resolve()
+        if not dir_path.is_dir():
+            raise NotADirectoryError(f"Каталог не найден: {dir_path}")
+        pattern = "**/*" if recursive else "*"
+        files: list[Path] = []
+        for p in dir_path.glob(pattern):
+            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS:
+                parts = p.parts
+                if any(part.startswith(".") or part in {"node_modules", "__pycache__", "build", "dist"} for part in parts):
+                    continue
+                files.append(p)
+        return files
+
     def scan_directory(
         self,
         directory: Path | str,
@@ -54,14 +69,7 @@ class ScannerEngine:
         if not dir_path.is_dir():
             raise NotADirectoryError(f"Каталог не найден: {dir_path}")
 
-        files_to_scan: list[Path] = []
-        pattern = "**/*" if recursive else "*"
-        for p in dir_path.glob(pattern):
-            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS:
-                parts = p.parts
-                if any(part.startswith(".") or part in {"node_modules", "__pycache__", "build", "dist"} for part in parts):
-                    continue
-                files_to_scan.append(p)
+        files_to_scan = self.source_files(dir_path, recursive=recursive)
 
         all_issues: list[ScanIssue] = []
         for file in files_to_scan:

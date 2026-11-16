@@ -181,3 +181,97 @@ def test_code_audit_row_keeps_only_report_columns_and_indexes_created_at():
         'ix_code_audit_sha256',
         'ix_code_audit_created_at',
     }
+
+
+def _scan_path(web: TestClient, path: str) -> dict:
+    response = web.post('/api/v1/audit/scan', json={'path': path})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _manifest(root, paths) -> str:
+    entries = [
+        f"{path.relative_to(root).as_posix()}\0{hashlib.sha256(path.read_bytes()).hexdigest()}"
+        for path in sorted(paths, key=lambda item: item.relative_to(root).as_posix())
+    ]
+    return hashlib.sha256('\n'.join(entries).encode('utf-8')).hexdigest()
+
+
+def test_directory_scan_fingerprint_is_stable_manifest_and_follows_content(clients, tmp_path):
+    sources = tmp_path / 'src'
+    (sources / 'Sub').mkdir(parents=True)
+    first = sources / 'A.bsl'
+    second = sources / 'Sub' / 'B.bsl'
+    first.write_text('Процедура А()\nКонецПроцедуры\n', encoding='utf-8')
+    second.write_text('Процедура Б()\nКонецПроцедуры\n', encoding='utf-8')
+
+    web = _web()
+    run_one = _scan_path(web, str(sources))
+    run_two = _scan_path(web, str(sources))
+    assert run_one['sha256'] == run_two['sha256']
+    assert run_one['sha256'] == _manifest(sources, [first, second])
+    assert run_one['sha256'] != hashlib.sha256(str(sources).encode('utf-8')).hexdigest()
+
+    second.write_text('Процедура Б()\nКонецПроцедуры \n', encoding='utf-8')
+    changed = _scan_path(web, str(sources))
+    assert changed['sha256'] != run_one['sha256']
+    assert changed['sha256'] == _manifest(sources, [first, second])
+
+    single = _scan_path(web, str(first))
+    assert single['sha256'] == hashlib.sha256(first.read_bytes()).hexdigest()
+    assert single['sha256'] != hashlib.sha256(str(first).encode('utf-8')).hexdigest()
+
+
+def test_pasted_code_scan_fingerprint_is_the_text(clients):
+    web = _web()
+    created = _scan(web)
+    assert created['sha256'] == hashlib.sha256(CODE.strip().encode('utf-8')).hexdigest()
+    assert created['sha256'] != hashlib.sha256(b'web_input.bsl').hexdigest()
+
+
+def test_saved_fragments_are_clipped_before_storage():
+    from testpilot.web.audit_api import FRAGMENT_LIMIT, _code_audit_row
+
+    row = _code_audit_row('источник', '0' * 64, {'issues': [{'rule_id': 'SEC010', 'code_fragment': 'я' * 5000}]})
+    assert FRAGMENT_LIMIT == 140
+    assert len(row.issues[0]['code_fragment']) == FRAGMENT_LIMIT
+    assert row.issues[0]['rule_id'] == 'SEC010'
+
+
+def test_pasted_code_keeps_no_full_source_and_clips_secret_fragment(clients):
+    import json
+
+    from testpilot import db
+
+    secret = 'password=hunter2'
+    long_line = 'ОтключитьБезопасныйРежим(Истина); ' + 'П = 1; ' * 700 + secret
+    assert len(long_line) > 4000
+
+    web = _web()
+    created = _scan(web, long_line)
+    assert created['issues'], 'нужно хотя бы одно замечание, чтобы проверить фрагмент'
+    assert all(len(issue['code_fragment']) <= 140 for issue in created['issues'])
+    assert all(len(issue['code_fragment']) < len(long_line) for issue in created['issues'])
+
+    with db._factory() as s:
+        row = s.get(db.CodeAuditRow, created['scan_id'])
+        stored = json.dumps({'issues': row.issues, 'issues_by_severity': row.issues_by_severity}, ensure_ascii=False)
+        assert len(row.sha256) == 64
+        assert 'code' not in [column.name for column in db.CodeAuditRow.__table__.columns]
+    assert secret not in stored
+    assert 'hunter2' not in stored
+
+    detail = web.get(f"/api/v1/audit/scans/{created['scan_id']}")
+    assert detail.status_code == 200
+    assert secret not in detail.text
+    listed = web.get('/api/v1/audit/scans', params={'limit': 100})
+    assert listed.status_code == 200
+    assert secret not in listed.text
+
+    report_md = web.get(f"/api/v1/audit/scans/{created['scan_id']}/report")
+    report_csv = web.get(f"/api/v1/audit/scans/{created['scan_id']}/report", params={'format': 'csv'})
+    assert report_md.status_code == report_csv.status_code == 200
+    assert secret not in report_md.text
+    assert secret not in report_csv.text
+    csv_rows = list(csv.reader(io.StringIO(report_csv.content.decode('utf-8'), newline=''), delimiter=';'))
+    assert all(len(row[4]) <= 140 for row in csv_rows[1:])

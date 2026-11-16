@@ -17,6 +17,33 @@ from testpilot.web.audit_report import render_audit_report
 
 router = APIRouter(prefix="/api/v1/audit", tags=["Аудит и v8std"])
 _engine = ScannerEngine()
+# Граница хранения: в замечаниях сохраняются только фрагменты строк, не длиннее FRAGMENT_LIMIT символов.
+FRAGMENT_LIMIT = 140
+
+
+def _text_fingerprint(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _directory_fingerprint(directory: Path) -> str:
+    """Отпечаток проверенного каталога: sha256 манифеста «относительный путь + sha256(содержимое файла)».
+
+    Манифест упорядочен по относительному пути в posix-виде, поэтому перепечатка не зависит от обхода файловой системы.
+    """
+    directory = directory.resolve()
+    entries = []
+    for path in sorted(_engine.source_files(directory), key=lambda item: item.relative_to(directory).as_posix()):
+        relative = path.relative_to(directory).as_posix()
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            digest = "unreadable"
+        entries.append(f"{relative}\0{digest}")
+    return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()
+
+
+def _clip_fragment(issue: dict[str, Any]) -> dict[str, Any]:
+    return {**issue, "code_fragment": str(issue.get("code_fragment") or "")[:FRAGMENT_LIMIT]}
 
 
 def _summarize(issues, total_files: int, *, status: str = "scanned", message: str | None = None,
@@ -50,7 +77,8 @@ def _no_sources(status: str, message: str) -> dict[str, Any]:
 def _code_audit_result(row: CodeAuditRow) -> dict[str, Any]:
     """Карточка сохранённого аудита в той же форме, что отдаёт POST /scan.
 
-    Полный исходник не сохраняется: в замечаниях есть только фрагменты строк (code_fragment).
+    `sha256` — отпечаток проверенного входа: текст вставленного кода либо манифест файлов каталога.
+    Полный исходник не сохраняется: в замечаниях есть только фрагменты строк (code_fragment), не длиннее FRAGMENT_LIMIT.
     """
     return {
         "scan_id": row.id,
@@ -70,16 +98,16 @@ def _code_audit_result(row: CodeAuditRow) -> dict[str, Any]:
     }
 
 
-def _code_audit_row(source_name: str, source_text: str, result: dict[str, Any]) -> CodeAuditRow:
+def _code_audit_row(source_name: str, fingerprint: str, result: dict[str, Any]) -> CodeAuditRow:
     return CodeAuditRow(
         source_name=source_name,
-        sha256=hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
+        sha256=fingerprint,
         total_files=int(result.get("total_files") or 0),
         sources_checked=result.get("sources_checked"),
         total_issues=int(result.get("total_issues") or 0),
         issues_by_severity=result.get("issues_by_severity") or {},
         issues_by_category=result.get("issues_by_category") or {},
-        issues=result.get("issues") or [],
+        issues=[_clip_fragment(issue) for issue in (result.get("issues") or [])],
         passed=bool(result.get("passed")),
         status=result.get("status") or "scanned",
         message=result.get("message"),
@@ -103,7 +131,7 @@ async def scan_endpoint(
     min_sev_str = data.get("min_severity")
     min_sev = Severity(min_sev_str) if min_sev_str else None
     source_name = "вставленный код"
-    source_text = code
+    fingerprint = _text_fingerprint(code)
 
     if code:
         issues = _engine.scan_code(code, "web_input.bsl")
@@ -112,12 +140,12 @@ async def scan_endpoint(
         p = Path(path_str).resolve()
         source_name = p.name
         if p.is_file():
-            source_text = p.read_text(encoding="utf-8-sig", errors="replace")
             issues = _engine.scan_file(p)
+            fingerprint = _text_fingerprint(p.read_text(encoding="utf-8-sig", errors="replace"))
             result = _summarize(issues, 1, sources_checked=1)
         elif p.is_dir():
             summary = _engine.scan_directory(p, min_severity=min_sev)
-            source_text = path_str
+            fingerprint = _directory_fingerprint(p)
             if not summary.total_files:
                 result = _no_sources("no_sources", "В каталоге не найдено файлов .bsl/.os для проверки.")
             else:
@@ -128,7 +156,7 @@ async def scan_endpoint(
     else:
         raise HTTPException(400, "Передайте 'code' или 'path' для анализа.")
 
-    record = _code_audit_row(source_name, source_text, result)
+    record = _code_audit_row(source_name, fingerprint, result)
     s.add(record)
     s.flush()
     return _code_audit_result(record)
