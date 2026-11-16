@@ -21,8 +21,9 @@ def _origin(url: str) -> tuple[str, str, int] | None:
         return None
     return scheme, host, port
 
-# Откат с mapped-адреса допустим только когда документ не доставлен: отказ в соединении,
-# неразрешимое имя или недостижимый адрес. Ответы 401/403 и таймауты локаторов сюда не входят.
+# Откат с mapped-адреса допустим только для ошибок уровня соединения: отказ, неразрешимое имя
+# или недостижимый адрес. Таймауты (загрузки документа и локаторов) и ответы 401/403 сюда не входят:
+# таймаут не отличает медленный сервер от недоступного, а откат лишь удвоил бы ожидание.
 NAVIGATION_NETWORK_ERRORS = (
     'ERR_NAME_NOT_RESOLVED',
     'ERR_CONNECTION_REFUSED',
@@ -30,10 +31,12 @@ NAVIGATION_NETWORK_ERRORS = (
 )
 
 
-def navigation_error_is_network(error: BaseException) -> bool:
-    """Сетевая ли ошибка загрузки документа (единственный повод повторить переход по другому адресу)."""
-    if type(error).__name__ == 'TimeoutError':
-        return True
+def navigation_error_is_connection_level(error: BaseException) -> bool:
+    """Ошибка уровня соединения — единственный повод повторить переход по другому адресу.
+
+    Таймауты и прочие сбои загрузки сюда не входят: они не отличают недоступный хост
+    от медленного сервера, а откат лишь удвоил бы ожидание.
+    """
     message = str(error)
     return any(marker in message for marker in NAVIGATION_NETWORK_ERRORS)
 
@@ -59,8 +62,11 @@ def navigate(page, url: str, addresses: list[str] | None = None, timeout: float 
     """Открывает публикацию по адресам container_access_urls: mapped, затем исходный loopback.
 
     `addresses` позволяет передать уже вычисленные адреса публикации (например, для open_url).
-    Повтор выполняется только после сетевой ошибки загрузки документа; любая другая ошибка
-    пробрасывается без второго захода. Возвращает адрес, по которому документ открылся.
+    Откат на следующий адрес выполняется только для ошибок уровня соединения
+    (ERR_NAME_NOT_RESOLVED / ERR_CONNECTION_REFUSED / ERR_ADDRESS_UNREACHABLE);
+    таймаут загрузки документа и ответы 401/403 пробрасываются без второго адреса.
+    Гонка с остатком chrome-error даёт один повтор того же адреса.
+    Возвращает адрес, по которому документ открылся.
     """
     addresses = list(addresses) if addresses else container_access_urls(url)
     for index, address in enumerate(addresses):
@@ -73,7 +79,7 @@ def navigate(page, url: str, addresses: list[str] | None = None, timeout: float 
                     if attempt == 0:
                         continue
                     raise
-                if index == len(addresses) - 1 or not navigation_error_is_network(error):
+                if index == len(addresses) - 1 or not navigation_error_is_connection_level(error):
                     raise
                 _settle_navigation(page)
                 break

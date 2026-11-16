@@ -294,16 +294,19 @@ def test_navigation_does_not_retry_non_network_errors(monkeypatch, failure):
     assert page.visits == ['http://host.docker.internal:8098']
 
 
-def test_navigation_falls_back_after_document_load_timeout(monkeypatch):
+def test_navigation_document_load_timeout_does_not_fall_back(monkeypatch):
     import testpilot.integration.probe as probe_module
     from testpilot.integration.webclient import navigate
 
     monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
-    page = _FakePage(lambda url: _timeout_error('Timeout 45000ms exceeded.')
-                     if 'host.docker.internal' in url else None)
+    page = _FakePage(lambda url: _timeout_error('page.goto: Timeout 45000ms exceeded.'))
 
-    assert navigate(page, 'http://127.0.0.1:8098') == 'http://127.0.0.1:8098'
-    assert len(page.visits) == 2
+    with pytest.raises(Exception) as failure:
+        navigate(page, 'http://127.0.0.1:8098')
+
+    assert 'Timeout 45000ms exceeded' in str(failure.value)
+    assert 'откат' not in str(failure.value).lower()
+    assert page.visits == ['http://host.docker.internal:8098']
 
 
 def test_navigation_explicit_host_has_single_address(monkeypatch):
