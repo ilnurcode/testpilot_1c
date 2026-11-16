@@ -59,7 +59,10 @@ def app(title, *, lifespan=None):
             c.execute(text('SELECT 1'))
             revision=c.execute(text('SELECT version_num FROM alembic_version')).scalar()
             if revision not in ('0004', '0005', '0006', '0007'): raise HTTPException(503,f'Миграции не обновлены: {revision}')
-        return {'status':'ok','executor_1c':'not_connected'}
+            with_connection=c.execute(text("SELECT count(*) FROM impact_projects WHERE coalesce(web_url,'')<>'' OR coalesce(odata_url,'')<>''")).scalar()
+        env_configured=bool((os.environ.get('TP_1C_ODATA_URL') or '').strip() or (os.environ.get('TP_1C_WEB_URL') or '').strip())
+        return {'status':'ok','executor_1c_env':'configured' if env_configured else 'not_configured',
+                'projects_with_connection':int(with_connection or 0)}
     return a
 
 def require(value,detail='Запись не найдена'):

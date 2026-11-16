@@ -9,7 +9,7 @@
 |---|---|---|
 | Сборка и запуск | `docker compose up -d --build --wait` | db, impact, intelligence, web — Healthy; migrate — Exited (0) |
 | Ревизия БД | `docker compose exec -T intelligence alembic current` | `0007 (head)` |
-| Health | `curl -s http://127.0.0.1:8000/health` | `{"status":"ok","executor_1c":"not_connected"}` |
+| Health | `curl -s http://127.0.0.1:8000/health` | `{"status":"ok","executor_1c_env":"not_configured","projects_with_connection":<N>}` |
 | Интерфейс | `http://127.0.0.1:8000` | рабочая область открыта, в подвале профиль роли |
 
 ## Аудит кода
@@ -41,5 +41,6 @@
 - `.cfe`/`.cf` без модулей BSL — только метаданные (`metadata_only`, `no_bsl_modules`), аудит не выполняется.
 - Защита от изменяющих шагов эвристична (маркеры кнопок + любой `fill`): не распознаются «ОК», «Подтвердить», пользовательские подписи, клики по строкам и иконкам, ввод без отправки, автодействия платформы. Подробнее — [api.md](api.md).
 - `strict_read_only=true` разрешает только `assert_text`, `assert_section`, `wait`, `open_url` — это единственный режим без побочных эффектов.
+- `executor_1c_env` относится только к env-профилю `TP_1C_*`; прогоны используют настройки подключения проекта (`projects_with_connection`).
 - Коммит `a244b67` в истории нерабочий — не использовать как точку отката.
 - Ветка `main` опережает `origin/main` на 28 коммитов, `git push` не выполнялся.

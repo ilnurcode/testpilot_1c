@@ -838,9 +838,10 @@ def test_run_report_explains_odata_404_without_changing_status(clients, monkeypa
     response = c.get(f"/api/v1/ai/suites/{run['suite_id']}/report")
     assert response.status_code == 200, response.text
     body = response.text
-    hint = 'База не публикует эту сущность в OData'
+    hint = 'Возможная причина: EntitySet не опубликован, неверный base URL/путь или имя сущности'
     assert body.count(hint) == 1
     assert 'пояснение:' in body
+    assert '$metadata' in body and 'имя сущности' in body
     assert run['results'][1]['status'] == 'failed'
 
     csv_body = c.get(f"/api/v1/ai/suites/{run['suite_id']}/report", params={'format': 'csv'}).text
@@ -851,4 +852,4 @@ def test_run_report_has_no_odata_hint_for_passed_results(clients, monkeypatch):
     c, project, run = _suite_with_two_cases(clients, monkeypatch)
     body = c.get(f"/api/v1/ai/suites/{run['suite_id']}/report").text
     assert [r['status'] for r in run['results']] == ['passed', 'failed']
-    assert 'База не публикует эту сущность в OData' not in body
+    assert 'Возможная причина: EntitySet не опубликован' not in body
