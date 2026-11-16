@@ -222,7 +222,7 @@ class SecurityCallRule(BSLRule):
 
 
 class QueryTextConcatenationRule(BSLRule):
-    """Detects dynamic concatenation assigned to Запрос.Текст, including multiline code."""
+    """Detects multiline dynamic concatenation assigned to Запрос.Текст; inline forms belong to SEC002."""
 
     def __init__(self) -> None:
         super().__init__(
@@ -242,6 +242,9 @@ class QueryTextConcatenationRule(BSLRule):
         code = _mask_string_literals(source, marker='\x01')
         issues = []
         for match in self.regex.finditer(code):
+            plus_offset = match.group(0).find("+")
+            if "\n" not in code[match.start():match.start() + plus_offset]:
+                continue
             if not re.search(r'\b[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*\b', match.group(1)):
                 continue
             line_number = code.count('\n', 0, match.start()) + 1
@@ -707,14 +710,14 @@ def get_default_rules() -> list[BSLRule]:
             rule_id="SEC010",
             severity=Severity.CRITICAL,
             pattern=r'\bОтключитьБезопасныйРежим\s*\(',
-            message="Отключение безопасного режима даёт исполняемому коду полный доступ к серверу.",
+            message="Отключение безопасного режима потенциально даёт исполняемому коду полный доступ к серверу — проверьте необходимость",
         ),
         QueryTextConcatenationRule(),
         SecurityCallRule(
             rule_id="SEC012",
             severity=Severity.HIGH,
             pattern=r'\bCOMОбъект\s*\(',
-            message="Создание COM-объекта на сервере обходит типизацию и контроль прав.",
+            message="Создание COM-объекта потенциально обходит типизацию и контроль прав — проверьте источник и подпись",
         ),
         HardcodedCredentialsRule(),
         ManagedLockInPostingRule(),

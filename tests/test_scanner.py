@@ -86,7 +86,7 @@ def test_sec010_flags_safe_mode_disable_positive_fixture():
     issues = [i for i in _scan_security_fixture("sec010_positive.bsl") if i.rule_id == "SEC010"]
     assert len(issues) == 1
     assert issues[0].severity == Severity.CRITICAL
-    assert issues[0].message == "Отключение безопасного режима даёт исполняемому коду полный доступ к серверу."
+    assert issues[0].message == "Отключение безопасного режима потенциально даёт исполняемому коду полный доступ к серверу — проверьте необходимость"
 
 
 def test_sec010_ignores_comments_and_strings_negative_fixture():
@@ -100,6 +100,11 @@ def test_sec011_flags_multiline_query_concatenation_positive_fixture():
     assert issues[0].message == "Склейка строк в запросе — риск внедрения условий; используй параметры (&Имя)."
 
 
+def test_sec002_handles_single_line_query_concat_without_sec011_duplicate():
+    issues = _scan_security_fixture("sec011_single_line.bsl")
+    assert [issue.rule_id for issue in issues if issue.rule_id in {"SEC002", "SEC011"}] == ["SEC002"]
+
+
 def test_sec011_ignores_comments_and_plain_strings_negative_fixture():
     assert not any(i.rule_id == "SEC011" for i in _scan_security_fixture("sec011_negative.bsl"))
 
@@ -108,7 +113,7 @@ def test_sec012_flags_com_object_creation_positive_fixture():
     issues = [i for i in _scan_security_fixture("sec012_positive.bsl") if i.rule_id == "SEC012"]
     assert len(issues) == 1
     assert issues[0].severity == Severity.HIGH
-    assert issues[0].message == "Создание COM-объекта на сервере обходит типизацию и контроль прав."
+    assert issues[0].message == "Создание COM-объекта потенциально обходит типизацию и контроль прав — проверьте источник и подпись"
 
 
 def test_sec012_ignores_comments_and_strings_negative_fixture():
