@@ -165,3 +165,19 @@ def test_sec014_flags_external_component_connections():
 
 def test_sec014_ignores_comments_and_plain_text():
     assert not any(i.rule_id == "SEC014" for i in _scan_security_fixture("sec014_negative.bsl"))
+
+
+def test_rules_doc_matches_scanner_rules():
+    import re
+
+    from testpilot.scanner import ScannerEngine
+
+    doc = (Path(__file__).parent.parent / 'docs' / 'rules.md').read_text(encoding='utf-8')
+    documented = set(re.findall(r'^\| `([A-Za-z0-9:_-]+)` \|', doc, re.MULTILINE))
+    implemented = {rule.rule_id for rule in ScannerEngine().rules}
+
+    assert documented == implemented, (
+        f'нет в docs/rules.md: {implemented - documented}; лишние в docs/rules.md: {documented - implemented}'
+    )
+    assert 'DEMO_NOT_A_SECRET' not in doc
+    assert 'S3cr3t-value' not in doc

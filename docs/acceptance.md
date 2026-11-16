@@ -24,6 +24,8 @@
 | Журнал | `curl -s -u expert:$TP_EXPERT_PASSWORD 'http://127.0.0.1:8000/api/v1/audit/scans?limit=1'` | массив с `scan_id`, `total_issues`, `created_at` |
 | Отчёт по скану | `.../api/v1/audit/scans/<scan_id>/report` и `?format=csv` | md/csv как `attachment`, `audit-<id>.md` / `.csv` |
 
+Список правил с уровнями, условиями и честными границами — [rules.md](rules.md).
+
 ## План и прогон
 
 | Что | Команда / путь | Ожидаемо |
