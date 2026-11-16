@@ -1,6 +1,5 @@
 """Логистическая регрессия; параметры в JSON, без небезопасного pickle."""
 import math
-from collections import defaultdict
 from itertools import groupby
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -17,7 +16,7 @@ def features(test,past):
     return [min(n,100)/100,sum(past)/n if n else .1,CRITICALITY[test['criticality']],min(test['duration_seconds'],3600)/3600]
 
 def train(tests,events):
-    by_id={t['test_id']:t for t in tests};past=defaultdict(list);x=[];y=[];times=[]
+    by_id={t['test_id']:t for t in tests};x=[];y=[];times=[]
     valid=sorted([r for r in events if r['status'] in ('passed','failed') and r['test_id'] in by_id],key=lambda r:(r['started_at'],r['test_id']))
     # Признаки используют только результаты, завершённые СТРОГО до начала события.
     for r in valid:

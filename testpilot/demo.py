@@ -65,6 +65,7 @@ async def run(impact_url,intelligence_url,auth=None,authorization=None,budget=33
                     await call('PUT',intelligence_url+'/api/v1/tests/'+t['test_id']+'/coverage',json={'object_id':oid,'state':state,'source':'synthetic:эталон','reason':'Учебная карта покрытия'})
         for h in histories():await call('POST',intelligence_url+'/api/v1/history',json=h)
         p=await call('POST',impact_url+'/api/v1/analyses',json={'configuration_id':CONFIG,'base_version':'1.0','target_version':'2.0','max_depth':10})
+        # Проверка доставки — сам вызов: call() бросает RuntimeError на любой не-2xx ответ.
         delivery=await call('POST',impact_url+'/api/v1/analyses/'+p['analysis_id']+'/deliver')
         plan=await call('POST',intelligence_url+'/api/v1/plans',json={'package_id':p['package_id'],'budget_seconds':budget,'min_coverage':.9,'use_ml':False})
         assert p['changed_objects'] and 'order' in p['affected_objects']

@@ -73,7 +73,6 @@ def _missing_cells() -> list[str]:
 
 
 def _csv_body(suite: dict[str, Any]) -> str:
-    proposals = (suite.get('suggestion') or {}).get('proposals') or []
     results = suite.get('results') or []
     rows = []
     covered: set[Any] = set()

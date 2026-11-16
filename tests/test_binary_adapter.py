@@ -27,7 +27,7 @@ def build_mock_v8_container(files: dict[str, bytes]) -> bytes:
     
     # Пишем пустой заголовок каталога
     out.seek(0)
-    out.write(b'\r\n00000000 00000200 7fffffff \r\n' + b'\x00' * 512)
+    out.write(f"\r\n{catalog_data_len:08x} {catalog_block_len:08x} 7fffffff \r\n".encode('ascii') + b'\x00' * catalog_block_len)
 
     current_offset = out.tell()
 
@@ -54,7 +54,7 @@ def build_mock_v8_container(files: dict[str, bytes]) -> bytes:
     # Теперь перезаписываем каталог
     out.seek(0)
     cat_data = b''.join(struct.pack('<III', h, d, m) for h, d, m in catalog_entries)
-    cat_header = f"\r\n{len(cat_data):08x} 00000200 7fffffff \r\n".encode('ascii')
+    cat_header = f"\r\n{len(cat_data):08x} {catalog_block_len:08x} 7fffffff \r\n".encode('ascii')
     out.write(cat_header)
     out.write(cat_data)
 
