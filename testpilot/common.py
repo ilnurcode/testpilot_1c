@@ -3,7 +3,7 @@ import secrets
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from testpilot.db import engine
@@ -28,8 +28,17 @@ def runner(actor=Depends(user)):
     if actor not in ('runner','expert'): raise HTTPException(403,'Требуется роль исполнителя')
     return actor
 
+def openapi_is_public():
+    """Схема API открыта только при явном TP_OPENAPI_PUBLIC=1 (локальная разработка)."""
+    return (os.environ.get('TP_OPENAPI_PUBLIC') or '').strip().lower() in ('1','true','yes','on')
+
+
 def app(title, *, lifespan=None):
-    a=FastAPI(title=title,version='1.0',dependencies=[],lifespan=lifespan)
+    public_docs=openapi_is_public()
+    a=FastAPI(title=title,version='1.0',dependencies=[],lifespan=lifespan,
+              docs_url='/docs' if public_docs else None,
+              redoc_url='/redoc' if public_docs else None,
+              openapi_url='/openapi.json' if public_docs else None)
     @a.middleware('http')
     async def limits(request:Request,call_next):
         if request.method in ('POST','PUT','PATCH'):
@@ -44,6 +53,19 @@ def app(title, *, lifespan=None):
                 chunks.append(chunk)
             request._body=b''.join(chunks)
         return await call_next(request)
+    if not public_docs:
+        # По умолчанию схема и UI документации закрыты Basic Auth: TP_OPENAPI_PUBLIC=1 открывает их локально.
+        from fastapi.openapi.docs import get_redoc_html,get_swagger_ui_html
+        from fastapi.responses import HTMLResponse, JSONResponse as SchemaResponse
+        @a.get('/openapi.json',include_in_schema=False)
+        def openapi_schema(actor=Depends(user)):
+            return SchemaResponse(a.openapi())
+        @a.get('/docs',include_in_schema=False,response_class=HTMLResponse)
+        def api_docs(actor=Depends(user)):
+            return get_swagger_ui_html(openapi_url='/openapi.json',title=f'{title} — документация')
+        @a.get('/redoc',include_in_schema=False,response_class=HTMLResponse)
+        def api_redoc(actor=Depends(user)):
+            return get_redoc_html(openapi_url='/openapi.json',title=f'{title} — документация')
     @a.exception_handler(HTTPException)
     async def http_error(request,exc):
         return JSONResponse({'error':{'code':exc.status_code,'message':exc.detail}},status_code=exc.status_code,headers=exc.headers)
