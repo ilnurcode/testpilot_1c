@@ -7,13 +7,20 @@ from fastapi.responses import Response
 
 from testpilot.web.report_render import attachment, csv_document, markdown_cell, validate_format
 
-RUN_CSV_HEADER = 'Предложение;Движок;Проверка;Статус;Сообщение;Длительность, мс;Evidence'
+RUN_CSV_HEADER = 'Предложение;Case;Движок;Проверка;Статус;Сообщение;Длительность, мс;Evidence'
 
 
 def _approved_proposals(suite: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
     selected = (suite.get('approval') or {}).get('selected_proposals') or []
     proposals = (suite.get('suggestion') or {}).get('proposals') or []
     return [(index, proposals[index]) for index in selected if 0 <= index < len(proposals)]
+
+
+def _proposal_at(suite: dict[str, Any], index: Any) -> dict[str, Any]:
+    proposals = (suite.get('suggestion') or {}).get('proposals') or []
+    if isinstance(index, int) and 0 <= index < len(proposals):
+        return proposals[index]
+    return {}
 
 
 def _check_text(proposal: dict[str, Any]) -> str:
@@ -31,32 +38,67 @@ def _check_text(proposal: dict[str, Any]) -> str:
     return ' → '.join(steps) if steps else '—'
 
 
-def _result_for(results: list[dict[str, Any]], index: int) -> dict[str, Any] | None:
-    return next((result for result in results if result.get('proposal_index') == index), None)
+def _case_number(result: dict[str, Any]) -> Any:
+    """Номер кейса для отчёта: 1-based, как «набор N» в интерфейсе прогона."""
+    index = result.get('case_index')
+    return index + 1 if isinstance(index, int) else '—'
 
 
-def _result_cells(result: dict[str, Any] | None) -> list[str]:
-    if result is None:
-        return ['нет данных', 'Результат для этого предложения не сохранён', '', '']
+def _result_cells(result: dict[str, Any]) -> list[str]:
     duration = result.get('duration_seconds')
     return [
-        str(result.get('status') or ''),
+        str(result.get('status') or '—'),
         str(result.get('message') or ''),
         '' if duration is None else str(round(float(duration) * 1000)),
         str(result.get('evidence_id') or ''),
     ]
 
 
-def _csv_body(suite: dict[str, Any], results: list[dict[str, Any]]) -> str:
+def _missing_cells() -> list[str]:
+    return ['—', 'результата нет', '', '']
+
+
+def _csv_body(suite: dict[str, Any]) -> str:
+    proposals = (suite.get('suggestion') or {}).get('proposals') or []
+    results = suite.get('results') or []
     rows = []
-    for index, proposal in _approved_proposals(suite):
+    covered: set[Any] = set()
+    for result in results:
+        index = result.get('proposal_index')
+        proposal = _proposal_at(suite, index)
+        covered.add(index)
         rows.append([
             proposal.get('title', ''),
+            _case_number(result),
             proposal.get('engine', ''),
             _check_text(proposal),
-            *_result_cells(_result_for(results, index)),
+            *_result_cells(result),
         ])
+    for index, proposal in _approved_proposals(suite):
+        if index in covered:
+            continue
+        rows.append([proposal.get('title', ''), '—', proposal.get('engine', ''), _check_text(proposal), *_missing_cells()])
     return csv_document(RUN_CSV_HEADER.split(';'), rows)
+
+
+def _proposal_line(number: int, proposal: dict[str, Any], results: list[dict[str, Any]]) -> list[str]:
+    lines = [
+        f"### {number}. {proposal.get('title', '')}",
+        '',
+        f"- Движок: {proposal.get('engine', '')}",
+        f"- Проверка: {_check_text(proposal)}",
+        '- Результаты:',
+    ]
+    if not results:
+        lines.append('- результата нет (проверка не выполнялась)')
+    for result in results:
+        status, message, duration, evidence = _result_cells(result)
+        lines.append(
+            f"- case {_case_number(result)}: {markdown_cell(status)} · {markdown_cell(message)} · "
+            f"{duration or '—'} мс · evidence {evidence or '—'}"
+        )
+    lines.append('')
+    return lines
 
 
 def _markdown_body(suite: dict[str, Any], project_name: str) -> str:
@@ -93,24 +135,16 @@ def _markdown_body(suite: dict[str, Any], project_name: str) -> str:
     if not approved:
         lines += ['Утверждённых предложений нет.', '']
     for number, (index, proposal) in enumerate(approved, 1):
-        status, message, duration, evidence = _result_cells(_result_for(results, index))
-        lines += [
-            f"### {number}. {proposal.get('title', '')}",
-            '',
-            f"- Движок: {proposal.get('engine', '')}",
-            f"- Проверка: {_check_text(proposal)}",
-            f"- Результат: {markdown_cell(status)} · {markdown_cell(message)} · "
-            f"{duration or '—'} мс · evidence {evidence or '—'}",
-            '',
-        ]
+        proposal_results = [result for result in results if result.get('proposal_index') == index]
+        lines += _proposal_line(number, proposal, proposal_results)
     return '\n'.join(lines)
 
 
 def render_run_report(suite: dict[str, Any], project_name: str, format: str) -> Response:
-    """Отдаёт отчёт по сохранённому прогону плана; ничего не пересчитывает."""
+    """Отдаёт отчёт по сохранённому прогону плана; одна строка csv — один результат кейса."""
     validate_format(format)
     if format == 'csv':
-        body = _csv_body(suite, suite.get('results') or [])
+        body = _csv_body(suite)
     else:
         body = _markdown_body(suite, project_name)
     return attachment(body, format, 'run', str(suite.get('suite_id', '')))

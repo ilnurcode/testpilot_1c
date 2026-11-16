@@ -531,20 +531,20 @@ def test_run_report_markdown_contains_result_and_evidence(clients, monkeypatch):
     assert 'Результатов нет' not in body
 
 
-def test_run_report_csv_has_header_and_row_per_approved_proposal(clients, monkeypatch):
+def test_run_report_csv_has_header_and_row_per_result(clients, monkeypatch):
     c, project, run = _executed_suite(clients, monkeypatch)
     response = c.get(f"/api/v1/ai/suites/{run['suite_id']}/report", params={'format': 'csv'})
 
     assert response.status_code == 200, response.text
     assert response.headers['content-type'].startswith('text/csv')
     assert response.content.startswith(
-        'Предложение;Движок;Проверка;Статус;Сообщение;Длительность, мс;Evidence'.encode('utf-8'))
+        'Предложение;Case;Движок;Проверка;Статус;Сообщение;Длительность, мс;Evidence'.encode('utf-8'))
     rows = list(csv.reader(io.StringIO(response.content.decode('utf-8'), newline=''), delimiter=';'))
-    assert rows[0] == ['Предложение', 'Движок', 'Проверка', 'Статус', 'Сообщение', 'Длительность, мс', 'Evidence']
-    assert len(rows) == len(run['approval']['selected_proposals']) + 1 == 3
-    assert rows[1][3] == 'passed' and rows[1][6] == run['results'][0]['evidence_id']
-    assert rows[1][5] == '1250'
-    assert rows[2][3] == 'failed' and 'HTTP 404' in rows[2][4]
+    assert rows[0] == ['Предложение', 'Case', 'Движок', 'Проверка', 'Статус', 'Сообщение', 'Длительность, мс', 'Evidence']
+    assert len(rows) == len(run['results']) + 1 == 3
+    assert rows[1][1] == '1' and rows[1][4] == 'passed' and rows[1][7] == run['results'][0]['evidence_id']
+    assert rows[1][6] == '1250'
+    assert rows[2][4] == 'failed' and 'HTTP 404' in rows[2][5]
 
 
 def test_run_report_rejects_unknown_format(clients, monkeypatch):
@@ -571,7 +571,8 @@ def test_run_report_without_run_marks_no_results(clients):
 
     csv_response = c.get(f"/api/v1/ai/suites/{created['suite_id']}/report", params={'format': 'csv'})
     rows = list(csv.reader(io.StringIO(csv_response.content.decode('utf-8'), newline=''), delimiter=';'))
-    assert len(rows) == 2 and rows[1][3] == 'нет данных'
+    assert len(rows) == 2
+    assert rows[1][1] == '—' and rows[1][4] == '—' and rows[1][5] == 'результата нет'
 
 
 def test_run_report_and_audit_report_share_render_primitives(clients, monkeypatch):
@@ -597,3 +598,56 @@ def test_run_report_and_audit_report_share_render_primitives(clients, monkeypatc
 
     assert response.status_code == 200 and response.text == 'rendered'
     assert seen == [(run['suite_id'], project['name'], 'csv')]
+
+
+def _suite_with_two_cases(clients, monkeypatch):
+    impact, c, project, p = _project_with_package(clients)
+    assert impact.put(
+        f"/api/v1/projects/{project['id']}/connection",
+        json={'odata_url': 'https://1c.example.test/odata/standard.odata'},
+    ).status_code == 200
+    created = _create_demo_suite(c, p, project['id'])
+    assert c.post(
+        f"/api/v1/ai/suites/{created['suite_id']}/approve",
+        json={'reason': 'Два кейса', 'selected_proposals': [0]},
+    ).status_code == 200
+
+    from testpilot.ai import executor as executor_module
+
+    def fake_execute(suite, profile):
+        return ([
+            {'proposal_index': 0, 'case_index': 0, 'engine': 'odata', 'title': 'Первый кейс',
+             'status': 'passed', 'message': 'Коллекция прочитана', 'duration_seconds': 0.25, 'started_at': 'unit'},
+            {'proposal_index': 0, 'case_index': 1, 'engine': 'odata', 'title': 'Второй кейс',
+             'status': 'failed', 'message': 'Расхождение: ожидалось 2 записи, получено 1',
+             'duration_seconds': 0.5, 'started_at': 'unit'},
+        ], [(0, b'\x89PNG-unit')])
+
+    monkeypatch.setattr(executor_module, 'execute_1c', fake_execute)
+    run = c.post(f"/api/v1/ai/suites/{created['suite_id']}/run-1c")
+    assert run.status_code == 200, run.text
+    return c, project, run.json()
+
+
+def test_run_report_has_one_row_per_case_and_matches_counts(clients, monkeypatch):
+    c, project, run = _suite_with_two_cases(clients, monkeypatch)
+    assert len(run['results']) == 2
+    assert sum(run['counts'].values()) == len(run['results'])
+
+    csv_response = c.get(f"/api/v1/ai/suites/{run['suite_id']}/report", params={'format': 'csv'})
+    assert csv_response.status_code == 200, csv_response.text
+    rows = list(csv.reader(io.StringIO(csv_response.content.decode('utf-8'), newline=''), delimiter=';'))
+    data_rows = rows[1:]
+    assert len(data_rows) == len(run['results']) == 2
+    assert [row[1] for row in data_rows] == ['1', '2']
+    assert [row[4] for row in data_rows] == ['passed', 'failed']
+    assert data_rows[1][5] == 'Расхождение: ожидалось 2 записи, получено 1'
+    statuses = [row[4] for row in data_rows]
+    for status, count in run['counts'].items():
+        assert statuses.count(status) == count
+
+    md_response = c.get(f"/api/v1/ai/suites/{run['suite_id']}/report")
+    body = md_response.text
+    assert 'case 2' in body
+    assert 'Расхождение: ожидалось 2 записи, получено 1' in body
+    assert '- Расхождений: 1' in body
