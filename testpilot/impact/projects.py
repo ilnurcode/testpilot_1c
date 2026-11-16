@@ -56,7 +56,7 @@ def upload_or_404(s,pid,upload_id):
 
 
 def upload_dict(r):
-    return {k:getattr(r,k) for k in ('id','project_id','number','filename','kind','component','label','size_bytes','checksum','status','message','version_id','baseline_id','created_by','created_at','summary')} | {'mode':'changes' if r.baseline_id else 'full'}
+    return {k:getattr(r,k) for k in ('id','project_id','number','filename','kind','component','label','size_bytes','checksum','status','message','version_id','baseline_id','created_by','created_at','summary')} | {'mode':'changes' if r.baseline_id else 'full','has_audit':r.audit_result is not None}
 
 
 def project_dict(s,p):

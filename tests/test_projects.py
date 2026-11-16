@@ -293,3 +293,35 @@ def test_audit_scan_upload_rejects_non_container_binary(clients):
         data = r.json()
         assert data['status'] == 'not_a_container'
         assert data['passed'] is False and data['total_files'] == 0
+def test_saved_upload_audit_is_returned_unchanged(clients):
+    from fastapi.testclient import TestClient
+    from testpilot.web.api import app as web
+
+    c, _ = clients
+    p = project(c)
+    archive = io.BytesIO()
+    with ZipFile(archive, 'w') as z:
+        z.writestr('Module.bsl', 'Процедура Проверка()\nКонецПроцедуры\n')
+    info = upload(c, p, archive.getvalue(), 'sources.zip').json()
+
+    with TestClient(web) as w:
+        w.auth = ('expert', 'test-password-only')
+        scanned = w.post('/api/v1/audit/scan-upload', json={'project_id': p, 'upload_id': info['id']})
+        assert scanned.status_code == 200, scanned.text
+        saved = w.get(f"/api/v1/audit/uploads/{info['id']}")
+        assert saved.status_code == 200, saved.text
+        assert saved.json() == scanned.json()
+
+
+def test_upload_audit_get_returns_404_when_absent(clients):
+    from fastapi.testclient import TestClient
+    from testpilot.web.api import app as web
+
+    c, _ = clients
+    p = project(c)
+    info = upload(c, p, b'not-scanned', 'source.cfe').json()
+
+    with TestClient(web) as w:
+        w.auth = ('expert', 'test-password-only')
+        response = w.get(f"/api/v1/audit/uploads/{info['id']}")
+        assert response.status_code == 404

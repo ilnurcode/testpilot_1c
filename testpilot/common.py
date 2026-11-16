@@ -58,7 +58,7 @@ def app(title, *, lifespan=None):
         with engine().connect() as c:
             c.execute(text('SELECT 1'))
             revision=c.execute(text('SELECT version_num FROM alembic_version')).scalar()
-            if revision not in ('0004', '0005'): raise HTTPException(503,f'Миграции не обновлены: {revision}')
+            if revision not in ('0004', '0005', '0006'): raise HTTPException(503,f'Миграции не обновлены: {revision}')
         return {'status':'ok','executor_1c':'not_connected'}
     return a
 

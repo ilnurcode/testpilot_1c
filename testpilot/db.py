@@ -182,6 +182,7 @@ class UploadRow(Base):
     created_by: Mapped[str]=mapped_column(String(100))
     created_at: Mapped[str]=mapped_column(String(50),default=now)
     summary: Mapped[dict]=mapped_column(JSON)
+    audit_result: Mapped[dict|None]=mapped_column(JSON,nullable=True)
 
 class UploadAnalysisRow(Base):
     __tablename__='impact_upload_analyses'

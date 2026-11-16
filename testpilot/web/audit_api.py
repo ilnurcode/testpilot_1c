@@ -40,6 +40,10 @@ def _no_sources(status: str, message: str) -> dict[str, Any]:
     result = _summarize([], 0, status=status, message=message, sources_checked=0)
     result["passed"] = False
     return result
+def _save_result(row, result):
+    row.audit_result=result
+    return result
+
 
 
 @router.post("/scan")
@@ -98,36 +102,43 @@ def scan_upload_endpoint(data: dict[str, Any], actor=Depends(user), s=Depends(se
         except BadZipFile:
             raise HTTPException(422, "Поврежденный ZIP-архив")
         if not scanned:
-            return _no_sources("no_sources",
-                               "Архив прочитан, но файлов .bsl/.os/.xml в нём нет: проверять нечего, аудит не выполнялся.")
-        return _summarize(all_issues, scanned, sources_checked=scanned)
+            return _save_result(row, _no_sources("no_sources",
+                               "Архив прочитан, но файлов .bsl/.os/.xml в нём нет: проверять нечего, аудит не выполнялся."))
+        return _save_result(row, _summarize(all_issues, scanned, sources_checked=scanned))
 
     if filename.endswith((".cfe", ".epf", ".erf", ".cf")) or raw.startswith((b"\r\n", b"\n")):
         from testpilot.impact.v8_container import V8Container
         from testpilot.impact.binary_adapter import bsl_sources
         container = V8Container(raw)
         if not container.is_valid():
-            return _no_sources("not_a_container",
+            return _save_result(row, _no_sources("not_a_container",
                                "Файл сохранён, но это не контейнер 1С v8: внутренних потоков для проверки нет. "
-                               "Загрузите ZIP выгрузки исходников (1cv8.exe DESIGNER /DumpConfigToFiles).")
+                               "Загрузите ZIP выгрузки исходников (1cv8.exe DESIGNER /DumpConfigToFiles)."))
         try:
             streams = container.extract_files()
         except Exception:
-            return _no_sources("container_error",
-                               "Контейнер 1С не удалось прочитать: внутренняя структура повреждена или не поддерживается.")
+            return _save_result(row, _no_sources("container_error",
+                               "Контейнер 1С не удалось прочитать: внутренняя структура повреждена или не поддерживается."))
         sources = bsl_sources(streams)
         if not sources:
-            return _no_sources("no_bsl_modules",
+            return _save_result(row, _no_sources("no_bsl_modules",
                                f"Контейнер 1С прочитан: внутренних потоков — {len(streams)}, "
-                               "модулей BSL в них не найдено. Проверять исходники нечего, аудит не выполнялся.")
+                               "модулей BSL в них не найдено. Проверять исходники нечего, аудит не выполнялся."))
         all_issues = []
         for name, text in sources.items():
             all_issues.extend(_engine.scan_code(text, name))
-        return _summarize(all_issues, len(sources), sources_checked=len(sources))
+        return _save_result(row, _summarize(all_issues, len(sources), sources_checked=len(sources)))
 
     text = raw.decode("utf-8-sig", errors="replace")
     issues = _engine.scan_code(text, row.filename)
-    return _summarize(issues, 1, sources_checked=1)
+    return _save_result(row, _summarize(issues, 1, sources_checked=1))
+
+@router.get("/uploads/{upload_id}")
+def get_upload_audit(upload_id: str, actor=Depends(user), s=Depends(session, scope="function")) -> dict[str, Any]:
+    row=s.get(UploadRow, upload_id)
+    if row is None or row.audit_result is None:
+        raise HTTPException(404, "Сохранённый аудит не найден")
+    return row.audit_result
 
 
 @router.get("/rules")
