@@ -107,13 +107,17 @@
 | POST | scan-upload | Аудит файла или архива, загруженного в проект |
 | GET | uploads/{upload_id}/report?format=md/csv | Отчёт по сохранённому аудиту загрузки |
 
-Карточка записи: `scan_id`, `source_name`, `sha256`, `created_at`, `status`, `message`, `total_files`, `sources_checked`, `total_issues`, `issues_by_severity`, `issues_by_category`, `issues`, `passed`, `duration_ms`. `GET /scans/{scan_id}` отдаёт её без изменений относительно ответа `POST /scan`.
+Карточка записи: `scan_id`, `source_name`, `sha256`, `created_at`, `status`, `message`, `total_files`, `sources_checked`, `total_issues`, `issues_by_severity`, `issues_by_category`, `issues`, `issues_kept`, `issues_truncated`, `passed`, `duration_ms`. `GET /scans/{scan_id}` отдаёт её без изменений относительно ответа `POST /scan`.
+
+Детализация ограничена: `MAX_ISSUES_KEPT = 5000` (см. `testpilot/scanner/engine.py`). Счётчики `total_issues`, `issues_by_severity` и `issues_by_category` считаются по всем замечаниям, а в записи и ответе хранятся только первые 5000 — `issues_kept` показывает, сколько деталей сохранено, `issues_truncated` — сработал ли срез. Это же ограничение действует для `POST /scan-upload` и сохранённого `audit_result` загрузки.
 
 Доступ: `POST /scan` и `POST /scan-upload` требуют Basic Auth, потому что пишут запись в БД. Чтение — `GET /scans`, `GET /scans/{id}` и оба `/report` — ничего не записывает. Без учётных данных или с неверным паролем ответ 401; 403 отдают маршруты с ограничением роли (на этих маршрутах роль не ограничена, достаточно любой аутентифицированной). Отчёты отдаются как `attachment` с `Content-Disposition: attachment; filename="audit-<id>.md|csv"`.
 
 `sha256` в карточке — отпечаток проверенного входа: текст вставленного кода либо манифест файлов каталога (упорядоченные по относительному пути пары «относительный путь + sha256 содержимого файла», свернутые в один sha256). Путь каталога и его mtime в отпечаток не входят.
 
 Полный исходник не сохраняется; сохраняются отпечаток, сводка и фрагменты найденных строк (до 140 символов, обрезка при сохранении, а не при отображении). Отчёты загрузок и журнала сканов строит один рендер `testpilot.web.audit_report.render_audit_report`: md и csv с колонками «Правило; Уровень; Файл:строка; Сообщение; Фрагмент кода».
+
+Если детализация была урезана, md-отчёт печатает строку «показаны первые N из M замечаний (детализация ограничена)». CSV остаётся строго табличным (шапка + сохранённые строки), поэтому признак среза виден в заголовках ответа `X-Audit-Issues-Kept`, `X-Audit-Issues-Total`, `X-Audit-Issues-Truncated`.
 
 ## Режимы прогона плана на базе 1С
 

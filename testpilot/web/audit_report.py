@@ -21,6 +21,15 @@ def _issue_row(issue: dict[str, Any]) -> list[Any]:
     ]
 
 
+def truncation_note(result: dict[str, Any]) -> str | None:
+    """Строка о неполной детализации: печатается, только если срез сработал."""
+    total = int(result.get('total_issues') or 0)
+    kept = len(result.get('issues') or [])
+    if not (result.get('issues_truncated') or kept < total):
+        return None
+    return f'показаны первые {kept} из {total} замечаний (детализация ограничена)'
+
+
 def _markdown_body(heading: str, created_at: str, result: dict[str, Any], issues: list[dict[str, Any]]) -> str:
     levels = ', '.join(f"{level}: {count}" for level, count in result.get('issues_by_severity', {}).items()) or 'нет'
     lines = [
@@ -35,6 +44,11 @@ def _markdown_body(heading: str, created_at: str, result: dict[str, Any], issues
         '',
         '## Замечания',
         '',
+    ]
+    note = truncation_note(result)
+    if note:
+        lines += [f'> {note}', '']
+    lines += [
         AUDIT_MARKDOWN_HEADER,
         '| --- | --- | --- | --- | --- |',
     ]
@@ -58,4 +72,9 @@ def render_audit_report(record_id: str, heading: str, created_at: str, result: d
         body = csv_document(AUDIT_CSV_HEADER.split(';'), [_issue_row(issue) for issue in issues])
     else:
         body = _markdown_body(heading, created_at, result, issues)
-    return attachment(body, format, 'audit', record_id)
+    response = attachment(body, format, 'audit', record_id)
+    # CSV остаётся строго табличным (шапка + сохранённые строки), поэтому срез виден в заголовке ответа.
+    response.headers['X-Audit-Issues-Kept'] = str(len(issues))
+    response.headers['X-Audit-Issues-Total'] = str(int(result.get('total_issues') or 0))
+    response.headers['X-Audit-Issues-Truncated'] = 'true' if truncation_note(result) else 'false'
+    return response

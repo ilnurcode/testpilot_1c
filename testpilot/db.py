@@ -77,6 +77,8 @@ class CodeAuditRow(Base):
     issues_by_severity: Mapped[dict] = mapped_column(JSON)
     issues_by_category: Mapped[dict] = mapped_column(JSON)
     issues: Mapped[list] = mapped_column(JSON)
+    issues_kept: Mapped[int] = mapped_column(Integer, default=0)
+    issues_truncated: Mapped[bool] = mapped_column(Boolean, default=False)
     passed: Mapped[bool] = mapped_column(Boolean)
     status: Mapped[str] = mapped_column(String(30))
     message: Mapped[str | None] = mapped_column(Text, nullable=True)

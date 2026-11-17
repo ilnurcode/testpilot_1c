@@ -26,6 +26,8 @@ EXPECTED_COLUMNS = [
     'issues_by_severity',
     'issues_by_category',
     'issues',
+    'issues_kept',
+    'issues_truncated',
     'passed',
     'status',
     'message',

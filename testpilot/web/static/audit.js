@@ -158,6 +158,10 @@ function renderAuditResultInto(summary, selector, options = {}) {
       `;
     });
     html += '</div>';
+    if (summary.issues_truncated) {
+      const kept = Number(summary.issues_kept ?? summary.issues.length);
+      html += `<p class="caption" style="margin-top: 8px;">Показаны первые ${kept} из ${Number(summary.total_issues || 0)}; полное число в сводке</p>`;
+    }
   }
 
   html += '</div>';

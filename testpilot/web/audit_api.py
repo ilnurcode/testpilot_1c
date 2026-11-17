@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from testpilot.common import user
 from testpilot.db import session, UploadRow, CodeAuditRow
-from testpilot.scanner import ScannerEngine, Severity, ScanSummary
+from testpilot.scanner import MAX_ISSUES_KEPT, ScannerEngine, Severity, ScanSummary
 from testpilot.web.audit_report import render_audit_report
 
 router = APIRouter(prefix="/api/v1/audit", tags=["Аудит и v8std"])
@@ -48,22 +48,33 @@ def _clip_fragment(issue: dict[str, Any]) -> dict[str, Any]:
 
 def _summarize(issues, total_files: int, *, status: str = "scanned", message: str | None = None,
                sources_checked: int | None = None) -> dict[str, Any]:
-    """Сводка аудита. status отличает реальную проверку от случая, когда проверять было нечего."""
+    """Сводка аудита. status отличает реальную проверку от случая, когда проверять было нечего.
+
+    Счётчики (total_issues, issues_by_severity/category) считаются по всем замечаниям, а детализация
+    в записи и ответе ограничена MAX_ISSUES_KEPT: 1.6-МБ файл даёт 200k замечаний и десятки МБ JSON.
+    """
     sev_counts: dict[str, int] = {}
     cat_counts: dict[str, int] = {}
     for issue in issues:
         sev_counts[issue.severity.value] = sev_counts.get(issue.severity.value, 0) + 1
         cat_counts[issue.category.value] = cat_counts.get(issue.category.value, 0) + 1
+    kept = issues[:MAX_ISSUES_KEPT]
     summary = ScanSummary(
         total_files=total_files,
         total_issues=len(issues),
         issues_by_severity=sev_counts,
         issues_by_category=cat_counts,
         passed=(sev_counts.get(Severity.CRITICAL.value, 0) == 0 and sev_counts.get(Severity.HIGH.value, 0) == 0),
-        issues=issues,
+        issues=kept,
     )
     result = summary.to_dict()
-    result.update({"status": status, "message": message, "sources_checked": sources_checked})
+    result.update({
+        "status": status,
+        "message": message,
+        "sources_checked": sources_checked,
+        "issues_kept": len(kept),
+        "issues_truncated": len(issues) > len(kept),
+    })
     return result
 
 
@@ -93,6 +104,8 @@ def _code_audit_result(row: CodeAuditRow) -> dict[str, Any]:
         "issues_by_severity": row.issues_by_severity,
         "issues_by_category": row.issues_by_category,
         "issues": row.issues,
+        "issues_kept": row.issues_kept if row.issues_kept is not None else len(row.issues),
+        "issues_truncated": bool(row.issues_truncated),
         "passed": row.passed,
         "duration_ms": row.duration_ms,
     }
@@ -108,6 +121,9 @@ def _code_audit_row(source_name: str, fingerprint: str, result: dict[str, Any]) 
         issues_by_severity=result.get("issues_by_severity") or {},
         issues_by_category=result.get("issues_by_category") or {},
         issues=[_clip_fragment(issue) for issue in (result.get("issues") or [])],
+        issues_kept=int(result.get("issues_kept") if result.get("issues_kept") is not None
+                         else len(result.get("issues") or [])),
+        issues_truncated=bool(result.get("issues_truncated")),
         passed=bool(result.get("passed")),
         status=result.get("status") or "scanned",
         message=result.get("message"),
@@ -182,6 +198,8 @@ def list_code_audits(
             "sha256": row.sha256,
             "total_issues": row.total_issues,
             "issues_by_severity": row.issues_by_severity,
+            "issues_kept": row.issues_kept if row.issues_kept is not None else len(row.issues),
+            "issues_truncated": bool(row.issues_truncated),
             "passed": row.passed,
             "status": row.status,
             "created_at": row.created_at,
