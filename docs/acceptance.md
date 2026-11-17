@@ -2,6 +2,8 @@
 
 После `docker compose up -d --build --wait`.
 
+Приёмка вызывает compose только через предохранители `scripts/compose.sh`/`compose.ps1`: они отказывают (код 3) на `down -v`, `volume rm` и `volume prune` рабочего проекта; разрешены только `-p testpilot-ci`/`-p testpilot-restore`.
+
 **Автоматический прогон:** `scripts/acceptance.ps1` (PowerShell 5.1+) или `scripts/acceptance.sh` (bash) — одна команда, PASS/FAIL/SKIP по шагам и код возврата 1 при любом FAIL. По умолчанию выполняются только локальные проверки: стек, `/health`, миграции, демо-ZIP, журнал аудита с отчётами, `pytest`. Внешние шаги включаются явно: `-IncludeLLM`/`--llm` — генерация плана у внешнего провайдера, `-IncludeLive1C`/`--live-1c` — прогон на базе 1С; без них эти шаги дают SKIP и сетевых вызовов не делают. Фактическое число тестов печатает `scripts/acceptance.sh` и `pytest tests/ -q`; в документации числа не дублируются.
 
 UI smoke: `tests/test_ui_smoke.py` (маркер `ui`) обходит `#overview`, `#projects`, `#audit`, `#ai` и карточку проекта в Chromium через Playwright и падает на console-ошибках, `pageerror`, тексте `undefined`/`NaN`/`[object Object]` и JS-падениях вида «is not a function». Запуск требует `TP_UI_BASE_URL` (в compose-скрипте — `http://web:8000`, для ручного прогона на host — `http://127.0.0.1:8000`) и `TP_EXPERT_PASSWORD`; в обычном прогоне и CI без этих переменных тест пропускается; в приёмке он обязателен — скрипты выставляют `TP_UI_REQUIRED=1`, и недоступный интерфейс (остановленный `web`, нет Chromium, страница не отвечает) даёт FAIL с текстом причины, а не SKIP. Приёмка выставляет обе переменные сама и печатает строку `UI smoke: N проверок OK (overview, projects, project, audit, ai)`.

@@ -18,10 +18,10 @@ with sync_playwright() as p:
  b=p.chromium.launch(executable_path=browser_path(),headless=True,args=['--no-sandbox']);b.close()
 print('Chromium и Playwright: готовы к проверке учебного стенда')
 PY
-docker compose up -d --wait db
+"$(dirname "$0")/compose.sh" up -d --wait db
 .venv/bin/alembic upgrade head
 # Порты приложений освобождаем только у контейнеров и процессов этого проекта.
-docker compose stop impact intelligence web
+"$(dirname "$0")/compose.sh" stop impact intelligence web
 .venv/bin/python - <<'PY'
 import os,time
 from pathlib import Path

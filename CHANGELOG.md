@@ -49,7 +49,9 @@
 
 - CI: pyflakes-страж на `undefined name`, прогон тестов на push/pull_request, джоба полной приёмки на собранном стеке в изолированном проекте `testpilot-ci`.
 - `scripts/backup.sh`/`.ps1` — `pg_dump` в `.runtime/backups`; `restore.sh`/`.ps1` — черновик восстановления только в пустую схему.
-- `scripts/compose.sh` — обёртка, блокирующая `down -v` и удаление томов рабочего проекта.
+- `scripts/compose.sh`/`compose.ps1` — обёртки, через которые ходят `acceptance`, `backup`, `restore`, `start-presentation`:
+  `down -v`, `volume rm` и `volume prune` рабочего проекта получают отказ (код 3), `CI=1` запрет не снимает;
+  прямой вызов `docker compose` в обход обёртки она не перехватывает.
 - `scripts/forensic-copy.ps1` — консистентная копия диска Docker с проверкой SHA-256.
 - Нормализация переводов строк (LF) для изменённых файлов — отдельными служебными коммитами.
 
