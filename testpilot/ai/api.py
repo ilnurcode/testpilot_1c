@@ -2,9 +2,10 @@ import asyncio
 import os
 from fastapi import APIRouter,Depends,HTTPException,Request
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from testpilot.common import analyst,expert,user,require
-from testpilot.db import session,AISuiteRow,PackageRow,TestRow,CoverageRow,EvidenceRow,ProjectRow,audit,uid
+from testpilot.db import (session,AISuiteRow,PackageRow,TestRow,CoverageRow,EvidenceRow,ProjectRow,audit,uid,
+                          RunRow,ResultRow,DefectRow,PriorityRow)
 from testpilot.contracts import now,RunInput
 from testpilot.ai.models import GenerateRequest,Decision,CodexStatus
 from testpilot.ai import provider,codex
@@ -426,6 +427,36 @@ def rerun_suite(sid:str,allow_mutations:bool=False,strict_read_only:bool=False,a
         row.status='error';row.payload=failed
         audit(s,'intelligence',actor,'rerun_suite_failed',new_id,{'source_suite':sid})
         return _suite_response({**failed,'counts':{state:0 for state in ('passed','failed','error','skipped')}})
+
+
+@router.delete('/suites/{sid}')
+def delete_suite(sid:str,confirm:str|None=None,actor=Depends(expert),s=Depends(session,scope='function')):
+    """Адресное удаление прогона одной транзакцией: evidence, тесты ai-<sid>-*, прогон ai-run-<sid> и их строки.
+
+    Пакет и планы не трогаем: они могут использоваться другими suite. Без confirm=<sid> удаление не выполняется.
+    """
+    row=require(s.get(AISuiteRow,sid),'Сохранённый план не найден')
+    if confirm!=sid:
+        raise HTTPException(409,f'подтвердите удаление: передайте confirm={sid}')
+    run_ids=[f'ai-run-{sid}']
+    # Только тесты, созданные этим планом: id ai-<sid>-N. Тесты каталога (catalog_test_ids) могут быть общими.
+    test_ids=sorted(s.scalars(select(TestRow.id).where(TestRow.id.like(f'ai-{sid}-%'))))
+    deleted={}
+    deleted['evidence']=s.execute(delete(EvidenceRow).where(EvidenceRow.suite_id==sid)).rowcount
+    deleted['defects']=s.execute(delete(DefectRow).where(DefectRow.run_id.in_(run_ids))).rowcount
+    if test_ids:
+        deleted['defects']+=s.execute(delete(DefectRow).where(DefectRow.test_id.in_(test_ids))).rowcount
+        deleted['results']=s.execute(delete(ResultRow).where(ResultRow.test_id.in_(test_ids))).rowcount
+    else:
+        deleted['results']=0
+    deleted['results']+=s.execute(delete(ResultRow).where(ResultRow.run_id.in_(run_ids))).rowcount
+    deleted['coverage']=s.execute(delete(CoverageRow).where(CoverageRow.test_id.in_(test_ids))).rowcount if test_ids else 0
+    deleted['priorities']=s.execute(delete(PriorityRow).where(PriorityRow.test_id.in_(test_ids))).rowcount if test_ids else 0
+    deleted['tests']=s.execute(delete(TestRow).where(TestRow.id.in_(test_ids))).rowcount if test_ids else 0
+    deleted['runs']=s.execute(delete(RunRow).where(RunRow.id.in_(run_ids))).rowcount
+    deleted['suites']=s.execute(delete(AISuiteRow).where(AISuiteRow.id==sid)).rowcount
+    audit(s,'intelligence',actor,'delete_suite',sid,{'deleted':deleted,'package_id':row.package_id})
+    return {'suite_id':sid,'deleted':deleted}
 
 
 @router.get('/evidence/{eid}')
