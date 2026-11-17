@@ -4,15 +4,19 @@
 
 ## Состояние БД после инцидента
 
-2026-11-17 при локальной проверке CI-джобы была выполнена `docker compose down -v`, которая удалила рабочую БД (`testpilot_pgdata`: 33 проекта, 39 загрузок, 45 suite, 42 записи `code_audit`, 107 evidence) и `testpilot_codex_auth`. Подробности и результаты поиска бэкапов — [incident-2026-11-17.md](incident-2026-11-17.md). До восстановления данных приёмка на этой машине покажет 0 проектов; для проверки используйте чистый проект `-p testpilot-ci`. Пересоздание демо-данных по шагам — [recreate-demo.md](recreate-demo.md). Репозиторий и тестовые ассеты не пострадали.
+Данные до инцидента **не восстановлены**: 33 проекта, 39 загрузок, 45 suite, 42 записи `code_audit` и 107 evidence утрачены вместе с томом `testpilot_pgdata` (плюс `testpilot_codex_auth`). Причина, поиск бэкапов и выводы — [incident-2026-11-17.md](incident-2026-11-17.md); пересоздание данных по шагам — [recreate-demo.md](recreate-demo.md). Репозиторий и тестовые ассеты не пострадали.
+
+Текущая БД (снимок после приёмки t101) наполнена двумя демо-проектами — см. ниже.
 
 ## Состояние
 
-- Коммит кода: `3b79162` (последний перед этим документом), ветка `main`; точный HEAD — `git log -1 --oneline`.
+- Коммит кода: `7515430` (последний перед этим документом), ветка `main`; точный HEAD — `git log -1 --oneline`.
 - Тесты: число печатает `docker compose exec -T intelligence python -m pytest tests/ -q` и `scripts/acceptance.sh`; в документе не фиксируется.
 - Миграции: `0008 (head)` (`docker compose exec -T intelligence alembic current`).
-- Compose: `db`, `impact`, `intelligence`, `web` — Up (healthy); `migrate` — Exited (0).
-- Dev-БД: после инцидента 2026-11-17 пуста — 0 проектов и 0 записей `code_audit`; прежние данные (33 проекта, 39 загрузок, 45 suite, 107 evidence) утрачены, см. [incident-2026-11-17.md](incident-2026-11-17.md).
+- Compose: стек поднят из образов текущего HEAD (`db`, `impact`, `intelligence`, `web` — Up (healthy), `migrate` — Exited (0)).
+- Dev-БД: `7f87c09d` «Демо 2026-11-17 · аудит» — 1 загрузка `demo_vulnerable_extension.zip`, аудит 12 замечаний (1/7/1/3, 8 файлов), analyze 4 объекта, план `08ea3e37` в статусе `draft`, md/csv отчёты по загрузке; подключение не заполнено.
+- Dev-БД: `d6f2fe6f` «Демо 2026-11-17 · аудит и проверки» — те же аудит/анализ плюс `web_url`/`odata_url` на `localhost:8088/DemoTrd` и пользователь `Администратор` (пароль пустой); прогон `2474f655`: 0 passed / 1 failed (вход в 1С не выполнен), evidence `7a4bd9f7`.
+- Журнал `code_audit` пуст (приёмка удаляет свои сканы).
 - CI: `.github/workflows/tests.yml` — push/pull_request в `main`, PostgreSQL 17, pyflakes-страж на `undefined name`, pytest.
 
 ## Что проверено живьём (снимок на момент подготовки)
@@ -56,7 +60,7 @@
 ## Рекомендуемые следующие шаги
 
 1. Вернуть `TP_LLM_API_KEY`, перезапустить `intelligence` и прогнать приёмку с `--llm --live-1c`, чтобы восстановить живое подтверждение ИИ-пути.
-2. Разобрать 33 проекта поштучно (имя/дата/загрузки/suite), удалять только подтверждённо мусорные через `DELETE /api/v1/projects/{id}?confirm={id}`; журнал сканов чистить `DELETE /api/v1/audit/scans/{id}?confirm={id}`.
+2. Разобрать два демо-проекта (`7f87c09d`, `d6f2fe6f`) поштучно; удалять только подтверждённо мусорные через `DELETE /api/v1/projects/{id}?confirm={id}`, журнал сканов — `DELETE /api/v1/audit/scans/{id}?confirm={id}`.
 3. Перед выносом наружу: TLS-терминатор, смена дефолтных паролей, закрытые `/docs` и `/openapi.json`, роли на чтение отчётов и evidence.
 4. Шифрование или secret-store для пароля подключения 1С (`impact_projects.auth_password`).
 5. CRUD-сценарий с `allow_mutations=true` — важный непокрытый сценарий: успешных живых прогонов записи/проведения на 1С не было (проверены навигация, OData-чтение и синтетический стенд).
