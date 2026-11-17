@@ -34,6 +34,8 @@ def openapi_is_public():
 
 
 def app(title, *, lifespan=None):
+    from testpilot.config import validate_startup_urls
+    validate_startup_urls()
     public_docs=openapi_is_public()
     a=FastAPI(title=title,version='1.0',dependencies=[],lifespan=lifespan,
               docs_url='/docs' if public_docs else None,
