@@ -1043,3 +1043,42 @@ def test_evidence_unknown_id_is_404(clients):
         response = client.get('/api/v1/ai/evidence/00000000-0000-0000-0000-000000000000')
 
     assert response.status_code == 404
+
+
+def test_suite_validator_accepts_local_odata_case_with_entity(clients, monkeypatch):
+    impact, c = clients
+    p = package()
+    assert c.post('/api/v1/impact-packages', json=p).status_code == 200
+    project = impact.post('/api/v1/projects', json={'name': 'OData case', 'description': ''}).json()
+    suggestion = _suite_plan(p, 'odata', [{'entity': 'Document_ЗаказКлиента', 'expected': 'HTTP 200 OK'}])
+    monkeypatch.setattr(provider, 'generate', lambda *a, **kw: (suggestion, 'mock-model'))
+
+    response = c.post('/api/v1/ai/suites', json={
+        'package_id': p['package_id'],
+        'project_id': project['id'],
+        'provider': 'llm',
+        'consent': True,
+    })
+
+    assert response.status_code == 200, response.text
+    cases = response.json()['suggestion']['proposals'][0]['cases']
+    assert cases and cases[0]['entity'] == 'Document_ЗаказКлиента'
+
+
+def test_suite_validator_rejects_odata_case_without_entity_or_metadata(clients, monkeypatch):
+    impact, c = clients
+    p = package()
+    assert c.post('/api/v1/impact-packages', json=p).status_code == 200
+    project = impact.post('/api/v1/projects', json={'name': 'OData без entity', 'description': ''}).json()
+    suggestion = _suite_plan(p, 'odata', [{'expected': 'HTTP 200 OK'}])
+    monkeypatch.setattr(provider, 'generate', lambda *a, **kw: (suggestion, 'mock-model'))
+
+    response = c.post('/api/v1/ai/suites', json={
+        'package_id': p['package_id'],
+        'project_id': project['id'],
+        'provider': 'llm',
+        'consent': True,
+    })
+
+    assert response.status_code == 422, response.text
+    assert "укажите entity или check='metadata'" in response.json()['error']['message']
