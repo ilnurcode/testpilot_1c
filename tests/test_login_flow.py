@@ -165,9 +165,9 @@ def test_failure_message_contains_form_dump(page):
     page.set_content(
         """
         <div id="authWindow">
-          <input name="userName" type="text" placeholder="Пользователь">
+          <input id="userField" name="userName" type="text" placeholder="Пользователь">
           <input type="password" placeholder="Пароль">
-          <button>Войти</button>
+          <button id="loginBtn">Войти</button>
         </div>
         """
     )
@@ -177,10 +177,14 @@ def test_failure_message_contains_form_dump(page):
 
     message = str(error.value)
     assert 'форма входа:' in message
-    assert 'input[name=userName,type=text,placeholder=Пользователь]' in message
-    assert 'input[type=password,placeholder=Пароль]' in message
-    assert 'button[text=Войти]' in message
+    assert 'input[id=userField,name=userName,type=text]' in message
+    assert 'input[type=password]' in message
+    assert 'button[id=loginBtn]' in message
     assert '#authWindow' in message
+    dump_line = message.split('\n')[-1]
+    assert 'Пользователь' not in dump_line, 'placeholder не должна попадать в диагностику'
+    assert 'Войти' not in dump_line, 'текст кнопки не должен попадать в диагностику'
+    assert len(dump_line) <= 300
 
 
 def test_failure_message_does_not_leak_field_values(page):
@@ -200,6 +204,7 @@ def test_failure_message_does_not_leak_field_values(page):
     message = str(error.value)
     assert 'СЕКРЕТ_ЗАГЛУШКА' not in message, 'значение пароля не должно попадать в диагностику'
     assert 'ТайныйЛогин' not in message, 'значения полей не собираются вовсе'
+    assert 'value=' not in message, 'атрибут value в дамп не попадает'
 
 
 def test_successful_login_has_no_dump(page):
@@ -215,3 +220,21 @@ def test_successful_login_has_no_dump(page):
     _runner().handle_login(page)  # ошибки нет — дампа тоже нет
 
     assert 'форма входа:' not in page.inner_text('body')
+
+
+def test_slow_workspace_within_grace_has_no_error(page, monkeypatch):
+    page.set_content(
+        """
+        <div id="authWindow">
+          <input name="userName" type="text">
+          <button onclick="setTimeout(() => { document.body.innerHTML = '<div>Продажи</div>'; }, 1200);">Войти</button>
+        </div>
+        """
+    )
+    from testpilot.integration.webclient import WebClientRunner
+
+    monkeypatch.setattr(WebClientRunner, 'LOGIN_GRACE_SECONDS', 3.0)
+
+    _runner().handle_login(page)  # рабочая область появилась в пределах grace — ошибки нет
+
+    assert 'Продажи' in page.inner_text('body')

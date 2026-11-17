@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 from testpilot.ai.executor import browser_path
+from testpilot.config import int_env
 from testpilot.integration.probe import Profile, container_access_url, container_access_urls
 
 
@@ -233,7 +234,8 @@ class WebClientRunner:
     )
     LOGIN_FORM_HINT = 'input[type="password"], #authWindow, #authWindowBasic'
     # Сколько ждём ухода формы логина после одной попытки, прежде чем считать вход неудачным.
-    LOGIN_GRACE_SECONDS = 4.0
+    # Настраивается TP_1C_LOGIN_GRACE_SECONDS (2..60): на медленном стенде дефолт 10 с может быть мал.
+    LOGIN_GRACE_SECONDS = int_env('TP_1C_LOGIN_GRACE_SECONDS', 10, 2, 60)
     LOGIN_FAILED = ('Вход в 1С не выполнен: форма логина осталась на экране '
                     '(селектор не найден или кнопка «Войти» не сработала)')
 
@@ -269,38 +271,37 @@ class WebClientRunner:
 
     LOGIN_DUMP_SCRIPT = """() => {
         const visible = element => !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
-        const clip = (value, limit) => (value || '').replace(/\\s+/g, ' ').trim().slice(0, limit);
-        const inputs = [...document.querySelectorAll('input')].filter(visible).slice(0, 8).map(element => ({
-            id: clip(element.id, 60),
-            name: clip(element.getAttribute('name'), 60),
-            type: clip(element.getAttribute('type'), 60),
-            placeholder: clip(element.getAttribute('placeholder'), 60),
+        const safe = (value, limit) => (value || '').replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, limit);
+        const inputs = [...document.querySelectorAll('input')].filter(visible).slice(0, 6).map(element => ({
+            id: safe(element.id, 40),
+            name: safe(element.getAttribute('name'), 40),
+            type: safe(element.getAttribute('type'), 40),
         }));
         const buttons = [...document.querySelectorAll('button, [role="button"], input[type="submit"]')]
-            .filter(visible).slice(0, 5).map(element => ({
-                id: clip(element.id, 40),
-                text: clip(element.innerText || element.value, 40),
-            }));
-        const auth = [...document.querySelectorAll('[id^="authWindow"]')].map(element => clip(element.id, 60));
+            .filter(visible).slice(0, 3).map(element => ({id: safe(element.id, 40)}));
+        const auth = [...document.querySelectorAll('[id^="authWindow"]')].map(element => safe(element.id, 40)).filter(Boolean);
         return {inputs, buttons, auth};
     }"""
 
     def _login_form_dump(self, page) -> str:
-        """Компактное описание видимой формы входа: теги, id/name/type/placeholder, кнопки. Без значений полей."""
+        """Компактное описание видимой формы входа: tag, type и короткие id/name.
+
+        Текст кнопок, placeholder и значения полей не собираются: там бывают пользовательские строки.
+        """
         try:
             state = page.evaluate(self.LOGIN_DUMP_SCRIPT) or {}
         except Exception:
             return ''
         parts: list[str] = []
         for item in state.get('inputs') or []:
-            attributes = [f'{key}={item[key]}' for key in ('id', 'name', 'type', 'placeholder') if item.get(key)]
+            attributes = [f'{key}={item[key]}' for key in ('id', 'name', 'type') if item.get(key)]
             parts.append('input[' + ','.join(attributes) + ']')
         for item in state.get('buttons') or []:
-            attributes = [f'{key}={item[key]}' for key in ('id', 'text') if item.get(key)]
-            parts.append('button[' + ','.join(attributes) + ']')
+            if item.get('id'):
+                parts.append(f"button[id={item['id']}]")
         for container in state.get('auth') or []:
             parts.append(f'#{container}')
-        return ('форма входа: ' + ', '.join(parts))[:400] if parts else ''
+        return ('форма входа: ' + ', '.join(parts))[:300] if parts else ''
 
     def _login_failure(self, page, reason: str = '', note: str = '') -> RuntimeError:
         """Ошибка входа с причиной и компактным дампом видимой формы (без значений полей)."""
