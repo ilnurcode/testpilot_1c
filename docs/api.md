@@ -71,7 +71,7 @@
 | PUT | ai/settings/llm | `base_url`/`model`/`api_key` — только в памяти процесса; `persist=true` требует `TP_ALLOW_ENV_WRITE=1` и пишет в файл `TP_ENV_FILE` (по умолчанию `.env`) |
 | POST / GET | ai/codex/login, ai/codex/logout | Вход и выход Codex (expert) |
 | GET | ai/evidence/{id} | PNG-скриншот прогона (хранится в БД, таблица `ti_ai_evidence`, колонка BYTEA; отдаётся с `X-Content-Type-Options: nosniff`) |
-| POST | ai/connection/probe-login | Read-only зонд формы входа: адрес берётся только из сохранённого `web_url` проекта, без ввода, кликов и fill; 404 без проекта, 422 без `web_url` |
+| POST | ai/connection/probe-login | Read-only зонд формы входа: адрес берётся только из сохранённого `web_url` проекта (в контейнере loopback переписывается на `host.docker.internal`), без ввода, кликов и fill. Тело: `project_id`, необязательный `boot` (bool, по умолчанию false): при `boot=true` same-origin non-GET разрешены, чтобы 1С отрисовала форму, чужой origin блокируется до отправки; учётные данные не отправляются (`credentials_sent=false`). Ответ: `mode` (`get`/`boot`), `fields`, `buttons`, `containers`, `frame_url`, `web_url_used`, `non_get_requests`, `blocked_requests`, `blocked_non_get`. 404 без проекта, 422 без `web_url` или при `boot` не bool, 503 при ошибке открытия/origin/отсутствии формы (с диагностикой фреймов) |
 
 `PUT /api/v1/ai/settings/llm` отвечает `persisted`, `env_file`, `env_write_allowed` и `note`: по умолчанию настройки меняются только в памяти процесса (`persisted: false`), `api_key` никогда не возвращается (только `has_key`). Запись в файл окружения включается `TP_ALLOW_ENV_WRITE=1`, путь берётся из `TP_ENV_FILE`; попытка `persist=true` без флага — 409 «Запись в .env отключена…».
 
