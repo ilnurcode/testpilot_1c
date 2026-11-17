@@ -85,13 +85,23 @@ def _no_sources(status: str, message: str) -> dict[str, Any]:
     return result
 
 
-def _code_audit_result(row: CodeAuditRow) -> dict[str, Any]:
+def _issues_url(row: CodeAuditRow) -> str:
+    return f"/api/v1/audit/scans/{row.id}/issues"
+
+
+def _code_audit_result(row: CodeAuditRow, *, include_issues: bool | None = None) -> dict[str, Any]:
     """Карточка сохранённого аудита в той же форме, что отдаёт POST /scan.
 
     `sha256` — отпечаток проверенного входа: текст вставленного кода либо манифест файлов каталога.
     Полный исходник не сохраняется: в замечаниях есть только фрагменты строк (code_fragment), не длиннее FRAGMENT_LIMIT.
+
+    Совместимость: пока замечаний не больше MAX_ISSUES_KEPT, карточка несёт `issues` как раньше.
+    Если их больше, детали в карточку не попадают — их отдаёт постранично `issues_url`
+    (иначе ответ на скан с 5000 деталями весит мегабайты).
     """
-    return {
+    kept = row.issues_kept if row.issues_kept is not None else len(row.issues)
+    keep_details = row.total_issues <= MAX_ISSUES_KEPT if include_issues is None else include_issues
+    result = {
         "scan_id": row.id,
         "source_name": row.source_name,
         "sha256": row.sha256,
@@ -103,12 +113,15 @@ def _code_audit_result(row: CodeAuditRow) -> dict[str, Any]:
         "total_issues": row.total_issues,
         "issues_by_severity": row.issues_by_severity,
         "issues_by_category": row.issues_by_category,
-        "issues": row.issues,
-        "issues_kept": row.issues_kept if row.issues_kept is not None else len(row.issues),
+        "issues_url": _issues_url(row),
+        "issues_kept": kept,
         "issues_truncated": bool(row.issues_truncated),
         "passed": row.passed,
         "duration_ms": row.duration_ms,
     }
+    if keep_details:
+        result["issues"] = row.issues
+    return result
 
 
 def _code_audit_row(source_name: str, fingerprint: str, result: dict[str, Any]) -> CodeAuditRow:
@@ -216,6 +229,53 @@ def get_code_audit(scan_id: str, actor=Depends(user), s=Depends(session, scope="
     return _code_audit_result(row)
 
 
+def _ordered_issues(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Стабильный порядок выдачи: файл, строка, колонка, затем порядок сохранения (индекс в срезе).
+
+    Сортировка не зависит от порядка обхода каталога при сканировании, поэтому страницы
+    между запросами не пересекаются и не переставляются.
+    """
+    def key(item: tuple[int, dict[str, Any]]) -> tuple[str, int, int, int]:
+        index, issue = item
+        try:
+            line = int(issue.get("line") or 0)
+        except (TypeError, ValueError):
+            line = 0
+        try:
+            col = int(issue.get("col") or 1)
+        except (TypeError, ValueError):
+            col = 1
+        return (str(issue.get("file_path") or ""), line, col, index)
+
+    return [issue for _, issue in sorted(enumerate(issues), key=key)]
+
+
+@router.get("/scans/{scan_id}/issues")
+def list_code_audit_issues(
+    scan_id: str,
+    offset: int = 0,
+    limit: int = 100,
+    actor=Depends(user),
+    s=Depends(session, scope="function"),
+) -> dict[str, Any]:
+    if limit < 1 or limit > 1000:
+        raise HTTPException(400, "limit должен быть от 1 до 1000")
+    if offset < 0:
+        raise HTTPException(400, "offset не может быть отрицательным")
+    row = s.get(CodeAuditRow, scan_id)
+    if row is None:
+        raise HTTPException(404, "Сохранённый аудит не найден")
+    ordered = _ordered_issues(row.issues or [])
+    kept = row.issues_kept if row.issues_kept is not None else len(ordered)
+    return {
+        "items": ordered[offset:offset + limit],
+        "total": row.total_issues,
+        "offset": offset,
+        "limit": limit,
+        "issues_truncated": bool(row.issues_truncated),
+        "issues_kept": kept,
+    }
+
 @router.get("/scans/{scan_id}/report")
 def get_code_audit_report(
     scan_id: str,
@@ -226,7 +286,8 @@ def get_code_audit_report(
     row = s.get(CodeAuditRow, scan_id)
     if row is None:
         raise HTTPException(404, "Сохранённый аудит не найден")
-    return render_audit_report(row.id, row.source_name, row.created_at, _code_audit_result(row), format)
+    return render_audit_report(row.id, row.source_name, row.created_at,
+                               _code_audit_result(row, include_issues=True), format)
 
 
 @router.post("/scan-upload")

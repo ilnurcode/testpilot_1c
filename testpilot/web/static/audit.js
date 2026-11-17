@@ -94,7 +94,27 @@ function renderAuditResult(summary) {
   return renderAuditResultInto(summary, '#auditResult');
 }
 
-function renderAuditResultInto(summary, selector, options = {}) {
+const AUDIT_PAGE_SIZE = 100;
+
+function auditIssueCard(iss) {
+  const isCrit = iss.severity === 'CRITICAL';
+  const isHigh = iss.severity === 'HIGH';
+  const badgeCls = isCrit ? 'error' : isHigh ? 'warning' : 'pending';
+  return `
+    <div class="card audit-issue" style="border-left: 4px solid ${isCrit ? '#d32f2f' : isHigh ? '#ed6c02' : '#8b949e'}; padding: 12px;">
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+        <span class="badge ${badgeCls}">${E(iss.severity)}</span>
+        <strong>${E(iss.rule_id)}</strong>
+        <span class="caption">(${E(iss.category)})</span>
+      </div>
+      <p style="font-weight: 500;">${E(iss.message)}</p>
+      <p class="caption" style="font-family: monospace;">Файл: ${E(iss.file_path)} : строка ${E(iss.line)}</p>
+      ${iss.code_fragment ? `<pre style="margin: 6px 0; background: rgba(0,0,0,0.05); padding: 6px; border-radius: 4px; overflow-x: auto;"><code>${E(iss.code_fragment)}</code></pre>` : ''}
+      ${iss.recommendation ? `<p class="helper" style="margin-top: 4px;"><strong>Стандарт v8std:</strong> ${E(iss.recommendation)}</p>` : ''}
+    </div>`;
+}
+
+async function renderAuditResultInto(summary, selector, options = {}) {
   const target = $(selector);
   if (!target) return;
 
@@ -103,10 +123,11 @@ function renderAuditResultInto(summary, selector, options = {}) {
   const sev = summary.issues_by_severity || {};
   const critical = sev.CRITICAL || 0;
   const high = sev.HIGH || 0;
+  const total = Number(summary.total_issues || 0);
 
   const stats = [];
   if (Number.isFinite(summary.total_files)) stats.push(`<div><strong>${summary.total_files}</strong>проверено файлов</div>`);
-  stats.push(`<div><strong>${summary.total_issues || 0}</strong>замечаний</div>`);
+  stats.push(`<div><strong>${total}</strong>замечаний</div>`);
   stats.push(`<div><strong style="color: ${critical ? '#d32f2f' : 'inherit'}">${critical}</strong>критичных</div>`);
   stats.push(`<div><strong style="color: ${high ? '#ed6c02' : 'inherit'}">${high}</strong>высоких</div>`);
 
@@ -133,38 +154,66 @@ function renderAuditResultInto(summary, selector, options = {}) {
     ${facts.length ? `<p class="caption">${facts.join(' · ')}</p>` : ''}
   `;
 
+  let pager = null;
   if (nothingChecked) {
     html += `<p class="warning" style="margin-top: 12px;">${E(summary.message || 'Исходники для проверки не найдены: аудит не выполнялся.')}</p>`;
-  } else if (!summary.issues || summary.issues.length === 0) {
+  } else if (!total) {
     html += '<p class="success" style="margin-top: 12px;">✓ Уязвимостей и нарушений стандартов v8std не обнаружено.</p>';
   } else {
-    html += '<div style="display: flex; flex-direction: column; gap: 10px; margin-top: 16px;">';
-    summary.issues.forEach((iss) => {
-      const isCrit = iss.severity === 'CRITICAL';
-      const isHigh = iss.severity === 'HIGH';
-      const badgeCls = isCrit ? 'error' : isHigh ? 'warning' : 'pending';
-      html += `
-        <div class="card" style="border-left: 4px solid ${isCrit ? '#d32f2f' : isHigh ? '#ed6c02' : '#8b949e'}; padding: 12px;">
-          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-            <span class="badge ${badgeCls}">${E(iss.severity)}</span>
-            <strong>${E(iss.rule_id)}</strong>
-            <span class="caption">(${E(iss.category)})</span>
-          </div>
-          <p style="font-weight: 500;">${E(iss.message)}</p>
-          <p class="caption" style="font-family: monospace;">Файл: ${E(iss.file_path)} : строка ${E(iss.line)}</p>
-          ${iss.code_fragment ? `<pre style="margin: 6px 0; background: rgba(0,0,0,0.05); padding: 6px; border-radius: 4px; overflow-x: auto;"><code>${E(iss.code_fragment)}</code></pre>` : ''}
-          ${iss.recommendation ? `<p class="helper" style="margin-top: 4px;"><strong>Стандарт v8std:</strong> ${E(iss.recommendation)}</p>` : ''}
-        </div>
-      `;
-    });
-    html += '</div>';
-    if (summary.issues_truncated) {
-      const kept = Number(summary.issues_kept ?? summary.issues.length);
-      html += `<p class="caption" style="margin-top: 8px;">Показаны первые ${kept} из ${Number(summary.total_issues || 0)}; полное число в сводке</p>`;
-    }
+    html += `
+      <div data-audit-list style="display: flex; flex-direction: column; gap: 10px; margin-top: 16px;"></div>
+      <p class="caption" data-audit-counter style="margin-top: 10px;"></p>
+      <p class="helper" data-audit-limit style="margin-top: 4px; display: none;"></p>
+      <div class="actions" style="margin-top: 10px;"><button class="secondary" data-audit-more style="display: none;"></button></div>`;
+    pager = { summary, total };
   }
 
   html += '</div>';
   target.innerHTML = html;
   if (options.scroll !== false) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (pager) await fillAuditIssues(target, pager.summary, pager.total);
+}
+
+async function fillAuditIssues(target, summary, total) {
+  const list = target.querySelector('[data-audit-list]');
+  const counter = target.querySelector('[data-audit-counter]');
+  const limitNote = target.querySelector('[data-audit-limit]');
+  const more = target.querySelector('[data-audit-more]');
+  const url = summary.issues_url || '';
+  const kept = Number(summary.issues_kept ?? (summary.issues || []).length ?? total);
+  const truncated = Boolean(summary.issues_truncated);
+  const available = url ? kept : Math.min(total, (summary.issues || []).length || total);
+  const state = { url, items: url ? [] : (summary.issues || []).slice(0, AUDIT_PAGE_SIZE), offset: 0 };
+
+  if (truncated) {
+    limitNote.textContent = `Детализация в хранилище ограничена ${kept} замечаниями; полное число (${total}) — в сводке.`;
+    limitNote.style.display = '';
+  }
+
+  const paint = () => {
+    list.innerHTML = state.items.map(auditIssueCard).join('');
+    counter.textContent = `показано ${state.items.length} из ${total}`;
+    const next = Math.min(AUDIT_PAGE_SIZE, available - state.items.length);
+    more.style.display = next > 0 ? '' : 'none';
+    if (next > 0) more.textContent = `Показать ещё ${next}`;
+  };
+
+  const loadNext = async () => {
+    if (state.url) {
+      const page = await request(`${state.url}?offset=${state.offset}&limit=${AUDIT_PAGE_SIZE}`);
+      state.items = state.items.concat(page.items || []);
+      state.offset += (page.items || []).length;
+    } else {
+      const slice = (summary.issues || []).slice(state.items.length, state.items.length + AUDIT_PAGE_SIZE);
+      state.items = state.items.concat(slice);
+      state.offset = state.items.length;
+    }
+    paint();
+  };
+
+  if (state.url) await loadNext(); else paint();
+  more.onclick = () => task(async () => {
+    more.disabled = true;
+    try { await loadNext(); } finally { more.disabled = false; }
+  });
 }

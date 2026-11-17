@@ -30,8 +30,9 @@ def test_scan_caps_details_but_counts_every_issue(clients):
     assert result['total_issues'] == 6000
     assert result['issues_kept'] == MAX_ISSUES_KEPT == 5000
     assert result['issues_truncated'] is True
-    assert len(result['issues']) == 5000
-    assert [issue['rule_id'] for issue in result['issues'][:2]] == ['SEC002', 'SEC002']
+    # Детали больше не едут в карточке: их отдаёт постранично issues_url.
+    assert result.get('issues') in (None, [])
+    assert result['issues_url'] == f"/api/v1/audit/scans/{result['scan_id']}/issues"
 
 
 def test_severity_distribution_counts_all_issues_not_kept_slice(clients):
@@ -50,6 +51,7 @@ def test_scan_with_few_issues_is_not_truncated(clients):
     assert result['issues_kept'] == 10
     assert result['issues_truncated'] is False
     assert len(result['issues']) == 10
+    assert result['issues_url'] == f"/api/v1/audit/scans/{result['scan_id']}/issues"
 
 
 def test_get_scan_returns_same_truncation_fields(clients):
@@ -58,9 +60,9 @@ def test_get_scan_returns_same_truncation_fields(clients):
     assert response.status_code == 200, response.text
     fetched = response.json()
 
-    for key in ('total_issues', 'issues_kept', 'issues_truncated', 'issues_by_severity', 'issues_by_category', 'passed'):
+    for key in ('total_issues', 'issues_kept', 'issues_truncated', 'issues_by_severity', 'issues_by_category', 'passed', 'issues_url'):
         assert fetched[key] == posted[key], key
-    assert len(fetched['issues']) == 5000
+    assert fetched.get('issues') in (None, [])
 
 
 def test_markdown_report_states_truncation(clients):

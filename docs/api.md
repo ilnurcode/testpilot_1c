@@ -103,11 +103,16 @@
 | POST | scan | `code` или `path`; выполняет аудит и сохраняет запись, возвращает карточку с `scan_id` |
 | GET | scans?limit=1..100 | Последние сохранённые аудиты (по умолчанию 20), сортировка `created_at DESC, id DESC` |
 | GET | scans/{scan_id} | Карточка записи в той же форме, что ответ `POST /scan`; 404 без записи |
+| GET | scans/{scan_id}/issues?offset=0&limit=100 | Постраничная выдача замечаний: `limit` 1..1000, `offset` ≥ 0 (иначе 400), 404 без записи |
 | GET | scans/{scan_id}/report?format=md/csv | Отчёт по записи; 400 на другой формат, 404 без записи |
 | POST | scan-upload | Аудит файла или архива, загруженного в проект |
 | GET | uploads/{upload_id}/report?format=md/csv | Отчёт по сохранённому аудиту загрузки |
 
-Карточка записи: `scan_id`, `source_name`, `sha256`, `created_at`, `status`, `message`, `total_files`, `sources_checked`, `total_issues`, `issues_by_severity`, `issues_by_category`, `issues`, `issues_kept`, `issues_truncated`, `passed`, `duration_ms`. `GET /scans/{scan_id}` отдаёт её без изменений относительно ответа `POST /scan`.
+Карточка записи: `scan_id`, `source_name`, `sha256`, `created_at`, `status`, `message`, `total_files`, `sources_checked`, `total_issues`, `issues_by_severity`, `issues_by_category`, `issues_url`, `issues_kept`, `issues_truncated`, `issues`, `passed`, `duration_ms`. `GET /scans/{scan_id}` отдаёт её без изменений относительно ответа `POST /scan`.
+
+Совместимость: если замечаний не больше `MAX_ISSUES_KEPT` (5000), поле `issues` в карточке содержит их все, как раньше. Если больше — детали в карточке не отдаются (ключа `issues` нет), вместо них `issues_url` на постраничную выдачу; `total_issues` и распределение по уровням всегда считаются по полному числу.
+
+`GET /scans/{scan_id}/issues` отдаёт `{items, total, offset, limit, issues_truncated, issues_kept}`, где `total` — полное число замечаний (`total_issues`), а `items` — сохранённый срез. Порядок стабильный: файл, строка, колонка, затем порядок сохранения; он не зависит от порядка обхода каталога при сканировании.
 
 Детализация ограничена: `MAX_ISSUES_KEPT = 5000` (см. `testpilot/scanner/engine.py`). Счётчики `total_issues`, `issues_by_severity` и `issues_by_category` считаются по всем замечаниям, а в записи и ответе хранятся только первые 5000 — `issues_kept` показывает, сколько деталей сохранено, `issues_truncated` — сработал ли срез. Это же ограничение действует для `POST /scan-upload` и сохранённого `audit_result` загрузки.
 
