@@ -14,20 +14,29 @@ pytestmark = pytest.mark.ui
 
 BASE = (os.environ.get('TP_UI_BASE_URL') or '').rstrip('/')
 EXPERT = os.environ.get('TP_EXPERT_PASSWORD') or ''
+# В приёмке UI обязателен: недоступность интерфейса должна валить прогон, а не давать ложную зелень.
+REQUIRED = (os.environ.get('TP_UI_REQUIRED') or '').strip() == '1'
 BAD_TEXT = re.compile(r'\bundefined\b|\bNaN\b|\[object Object\]')
 SECTION_TIMEOUT_MS = 20000
 SECTIONS = ('overview', 'projects', 'audit', 'ai')
 
 
+def _unavailable(reason: str) -> None:
+    """UI недоступен: в приёмке (TP_UI_REQUIRED=1) это падение, в обычном прогоне — skip."""
+    if REQUIRED:
+        raise AssertionError(f'UI обязателен (TP_UI_REQUIRED=1), но недоступен: {reason}')
+    pytest.skip(f'{reason} — UI smoke пропущен')
+
+
 def _require_ui_env() -> None:
     if not BASE:
-        pytest.skip('TP_UI_BASE_URL не задан — UI smoke пропущен (например http://127.0.0.1:8000)')
+        _unavailable('TP_UI_BASE_URL не задан (например http://127.0.0.1:8000)')
     if not EXPERT:
-        pytest.skip('TP_EXPERT_PASSWORD не задан — UI smoke пропущен')
+        _unavailable('TP_EXPERT_PASSWORD не задан')
     try:
         from playwright.sync_api import sync_playwright  # noqa: F401
     except ImportError:  # pragma: no cover - зависит от окружения
-        pytest.skip('playwright не установлен — UI smoke пропущен')
+        _unavailable('playwright не установлен')
 
 
 @pytest.fixture(scope='module')
@@ -40,8 +49,17 @@ def browser(  # noqa: ANN201
         try:
             launched = p.chromium.launch()
         except Exception as error:  # pragma: no cover - зависит от окружения
-            pytest.skip(f'Chromium недоступен ({error}) — UI smoke пропущен')
+            _unavailable(f'Chromium не запустился: {error}')
         try:
+            probe = launched.new_context().new_page()
+            try:
+                response = probe.goto(f'{BASE}/health', wait_until='domcontentloaded')
+            except Exception as error:
+                _unavailable(f'интерфейс {BASE} не отвечает: {error}')
+            finally:
+                probe.context.close()
+            if response is None or response.status >= 500:
+                _unavailable(f'интерфейс {BASE}/health вернул {getattr(response, "status", None)}')
             yield launched
         finally:
             launched.close()

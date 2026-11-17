@@ -235,7 +235,9 @@ echo "=== 6. Тесты ==="
 # Внутри compose web виден как web:8000; для host-запуска задайте TP_UI_BASE_URL=http://127.0.0.1:8000.
 export TP_UI_BASE_URL="${TP_UI_BASE_URL:-http://web:8000}"
 export TP_EXPERT_PASSWORD="${TP_EXPERT_PASSWORD:-TestPilotLocal123!}"
-UI_OUT="$(docker compose exec -T -e TP_UI_BASE_URL="$TP_UI_BASE_URL" -e TP_EXPERT_PASSWORD="$TP_EXPERT_PASSWORD" intelligence python -m pytest tests/test_ui_smoke.py -q 2>&1)"
+# В приёмке интерфейс обязателен: недоступный UI — FAIL, а не SKIP.
+export TP_UI_REQUIRED=1
+UI_OUT="$(docker compose exec -T -e TP_UI_BASE_URL="$TP_UI_BASE_URL" -e TP_EXPERT_PASSWORD="$TP_EXPERT_PASSWORD" -e TP_UI_REQUIRED=1 intelligence python -m pytest tests/test_ui_smoke.py -q 2>&1)"
 UI_RC=$?
 UI_SKIPPED="$(printf '%s' "$UI_OUT" | grep -E '[0-9]+ skipped' | tail -1)"
 UI_SUMMARY="$(printf '%s' "$UI_OUT" | grep -E '[0-9]+ passed' | tail -1)"
@@ -249,7 +251,7 @@ else
   FAILED=$((FAILED+1))
   echo "FAIL  UI smoke: $(printf '%s' "$UI_OUT" | grep -E 'раздел #|AssertionError' | head -3 | tr '\n' ' ')"
 fi
-PYTEST_OUT="$(docker compose exec -T -e TP_UI_BASE_URL="$TP_UI_BASE_URL" -e TP_EXPERT_PASSWORD="$TP_EXPERT_PASSWORD" intelligence python -m pytest tests/ -q 2>&1)"
+PYTEST_OUT="$(docker compose exec -T -e TP_UI_BASE_URL="$TP_UI_BASE_URL" -e TP_EXPERT_PASSWORD="$TP_EXPERT_PASSWORD" -e TP_UI_REQUIRED=1 intelligence python -m pytest tests/ -q 2>&1)"
 PYTEST_RC=$?
 PYTEST_SUMMARY="$(printf '%s' "$PYTEST_OUT" | grep -E '[0-9]+ passed' | tail -1)"
 if [ "$PYTEST_RC" = "0" ] && [ -n "$PYTEST_SUMMARY" ]; then pass "pytest: $PYTEST_SUMMARY"; else fail "pytest: код $PYTEST_RC, ${PYTEST_SUMMARY:-нет сводки}"; fi
