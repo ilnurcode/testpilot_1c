@@ -37,7 +37,7 @@
 - Вход и навигация на локальной имитации с подтверждёнными id: `passed`, форма исчезает, `assert_section` находит «Продажи»; при неработающей кнопке — `RuntimeError` < 15 с (`tests/test_login_end_to_end_local.py`).
 - Режимы прогона с реальными счётчиками: без `allow_mutations` → 422 и 0 POST; с `allow_mutations=true` → 1 POST `/saved`; `strict_read_only` + click → 422 и 0 POST; `strict_read_only` + `assert_text` → 0 POST (`tests/test_run_modes_local.py`).
 - Зонд через API на локальной странице: 200, факты формы, `credentials_sent=false`, сервер видел только `GET /` (`probe-login`, boot=false и boot=true).
-- **Вход с учётными данными на реальном DemoTrd не выполнялся** — единственный непроверенный участок.
+- **Вход с учётными данными на реальном DemoTrd не выполнялся** — единственный непроверенный участок; порядок одного ручного прогона — [live-run.md](live-run.md).
 
 ## Заблокировано и требует вашего действия
 
