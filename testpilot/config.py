@@ -30,6 +30,15 @@ def int_env(name: str, default: int, minimum: int, maximum: int, *, raw: str | N
     return parsed
 
 
+def choice_env(name: str, default: str, allowed: tuple[str, ...], *, raw: str | None = None) -> str:
+    """Значение из фиксированного набора: неизвестное роняет старт, а не подменяется дефолтом."""
+    value = raw if raw is not None else os.environ.get(name)
+    text = (value or '').strip().lower() or default
+    if text not in allowed:
+        raise ValueError(f'{name}: ожидается ' + ' или '.join(allowed))
+    return text
+
+
 def url_env(
     name: str,
     default: str | None = None,

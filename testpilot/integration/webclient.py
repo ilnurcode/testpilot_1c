@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 from testpilot.ai.executor import browser_path
-from testpilot.config import int_env
+from testpilot.config import choice_env, int_env
 from testpilot.integration.probe import Profile, container_access_url, container_access_urls
 
 
@@ -251,6 +251,8 @@ class WebClientRunner:
     # Сколько ждём появления формы входа (или рабочего стола) после навигации: публикация DemoTrd
     # отдаёт форму примерно через 15 с. Настраивается TP_1C_LOGIN_WAIT_SECONDS (5..120).
     LOGIN_WAIT_SECONDS = int_env('TP_1C_LOGIN_WAIT_SECONDS', 25, 5, 120)
+    # Как отправляем форму входа: click — кнопка «Войти», enter — Enter в поле пароля. Одна попытка.
+    LOGIN_SUBMIT = choice_env('TP_1C_LOGIN_SUBMIT', 'click', ('click', 'enter'))
     LOGIN_FAILED = ('Вход в 1С не выполнен: форма логина осталась на экране '
                     '(селектор не найден или кнопка «Войти» не сработала)')
 
@@ -426,6 +428,7 @@ class WebClientRunner:
             'user_filled': False,
             'password_filled': False,
             'clicked': False,
+            'submitted_via': None,
             'form_visible_after': None,
         }
         state, frame = self._await_login_state(page)
@@ -459,19 +462,32 @@ class WebClientRunner:
             if pwd_input.is_visible(timeout=1000) and self.profile.password:
                 pwd_input.fill(self.profile.password)
                 self.last_login_diagnostics['password_filled'] = True
-            ok_btn = frame.get_by_role('button', name='Войти').first
-            if not ok_btn.is_visible(timeout=500):
-                ok_btn = frame.locator(', '.join(self.LOGIN_BUTTON_SELECTORS)).first
-            if not ok_btn.is_visible(timeout=1000):
-                raise RuntimeError('кнопка «Войти» не найдена на форме логина')
-            self._await_login_button_ready(frame, ok_btn)
-            # Снимок готовой формы до submit: fallback-evidence, если пост-кликовый снимок пуст.
-            try:
-                self.last_login_presubmit_shot = _safe_screenshot(page.context, page) or b''
-            except Exception:
-                self.last_login_presubmit_shot = b''
-            ok_btn.click()  # ровно одна попытка: повторных кликов и ретраев нет
-            self.last_login_diagnostics['clicked'] = True
+            if self.LOGIN_SUBMIT == 'enter':
+                # Enter в поле пароля (или логина, если пароля нет): тоже ровно одна попытка.
+                focus_target = pwd_input if pwd_input.is_visible(timeout=500) else user_input
+                # Снимок готовой формы до submit: fallback-evidence, если пост-кликовый снимок пуст.
+                try:
+                    self.last_login_presubmit_shot = _safe_screenshot(page.context, page) or b''
+                except Exception:
+                    self.last_login_presubmit_shot = b''
+                self.last_login_diagnostics['submitted_via'] = 'enter'
+                focus_target.focus()
+                focus_target.press('Enter')
+            else:
+                ok_btn = frame.get_by_role('button', name='Войти').first
+                if not ok_btn.is_visible(timeout=500):
+                    ok_btn = frame.locator(', '.join(self.LOGIN_BUTTON_SELECTORS)).first
+                if not ok_btn.is_visible(timeout=1000):
+                    raise RuntimeError('кнопка «Войти» не найдена на форме логина')
+                self._await_login_button_ready(frame, ok_btn)
+                # Снимок готовой формы до submit: fallback-evidence, если пост-кликовый снимок пуст.
+                try:
+                    self.last_login_presubmit_shot = _safe_screenshot(page.context, page) or b''
+                except Exception:
+                    self.last_login_presubmit_shot = b''
+                ok_btn.click()  # ровно одна попытка: повторных кликов и ретраев нет
+                self.last_login_diagnostics['clicked'] = True
+                self.last_login_diagnostics['submitted_via'] = 'click'
         except Exception as error:
             self.last_login_diagnostics.update(stage='submit',
                                                form_visible_after=self._login_form_visible(frame))

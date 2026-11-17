@@ -111,3 +111,15 @@ def test_login_wait_seconds_out_of_range_fails_start(raw):
     assert 'TP_1C_LOGIN_WAIT_SECONDS' in message
     assert 'от 5 до 120' in message
     assert WebClientRunner.LOGIN_WAIT_SECONDS == 25
+
+
+@pytest.mark.parametrize('raw, expected', [(None, 'click'), ('click', 'click'), (' ENTER ', 'enter')])
+def test_login_submit_choice_is_validated(raw, expected):
+    assert config.choice_env('TP_1C_LOGIN_SUBMIT', 'click', ('click', 'enter'), raw=raw) == expected
+
+
+@pytest.mark.parametrize('raw', ['tab', 'clickk', '1'])
+def test_login_submit_unknown_value_fails_start(raw):
+    with pytest.raises(ValueError) as error:
+        config.choice_env('TP_1C_LOGIN_SUBMIT', 'click', ('click', 'enter'), raw=raw)
+    assert str(error.value) == 'TP_1C_LOGIN_SUBMIT: ожидается click или enter'

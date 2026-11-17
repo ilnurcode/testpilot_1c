@@ -35,6 +35,10 @@
 
 ## 4. Результат
 
+Если клик по «Войти» не отправляет форму, попробуйте `TP_1C_LOGIN_SUBMIT=enter`: фокус ставится
+в поле пароля и нажимается Enter. Попытка всё равно одна, ретраев нет; значение проверяется на старте.
+
+
 `status`, `counts`, `message`, `evidence_id`; для playwright — `login.{stage, user_filled,
 password_filled, clicked, form_visible_after}` (значения полей не логируются) и `screenshot_unavailable`,
 если снимок не удался. Скриншот: `GET /api/v1/ai/evidence/{evidence_id}` (Basic Auth, PNG).

@@ -468,3 +468,66 @@ def test_late_form_and_late_button_are_awaited(page):
     assert page.evaluate('window.__clicks') == 1
     assert runner.last_login_diagnostics['clicked'] is True
     assert 'Продажи' in page.inner_text('body')
+
+
+ENTER_FORM = """
+<div id="authWindow">
+  <input id="authWindow_basic_login" name="login" type="text">
+  <input id="authWindow_basic_password" name="password" type="password"
+         onkeydown="if (event.key === 'Enter') { window.__enters = (window.__enters || 0) + 1; FORM_ACTION }">
+  <button id="authWindow_basic_okButton" onclick="window.__clicks = (window.__clicks || 0) + 1">Войти</button>
+</div>
+<script>window.__clicks = 0; window.__enters = 0;</script>
+"""
+
+
+def test_enter_mode_submits_with_key_and_hides_form(page):
+    action = ("document.getElementById('authWindow').style.display='none';"
+              "document.body.insertAdjacentHTML('beforeend','<div>Продажи</div>');")
+    page.set_content(ENTER_FORM.replace('FORM_ACTION', action))
+    runner = _runner()
+    runner.LOGIN_SUBMIT = 'enter'
+
+    runner.handle_login(page)
+
+    assert page.evaluate('window.__enters') == 1, 'ровно одно нажатие Enter'
+    assert page.evaluate('window.__clicks') == 0, 'клика по кнопке быть не должно'
+    assert runner.last_login_diagnostics['submitted_via'] == 'enter'
+    assert runner.last_login_diagnostics['form_visible_after'] is False
+
+
+def test_enter_mode_without_effect_fails_once(page):
+    page.set_content(ENTER_FORM.replace('FORM_ACTION', ';'))
+    runner = _runner()
+    runner.LOGIN_SUBMIT = 'enter'
+    runner.LOGIN_GRACE_SECONDS = 2
+
+    with pytest.raises(RuntimeError) as error:
+        runner.handle_login(page)
+
+    assert LOGIN_FAILED in str(error.value)
+    assert page.evaluate('window.__enters') == 1, 'второй попытки быть не должно'
+    assert page.evaluate('window.__clicks') == 0
+
+
+def test_click_mode_is_default(page):
+    assert WebClientRunner.LOGIN_SUBMIT in {'click', 'enter'}
+    page.set_content(
+        """
+        <div id="authWindow">
+          <input id="authWindow_basic_login" name="login" type="text">
+          <input id="authWindow_basic_password" name="password" type="password">
+          <button id="authWindow_basic_okButton" onclick="window.__clicks = (window.__clicks || 0) + 1;
+                  document.getElementById('authWindow').style.display='none';
+                  document.body.insertAdjacentHTML('beforeend','<div>Продажи</div>');">Войти</button>
+        </div>
+        <script>window.__clicks = 0;</script>
+        """
+    )
+    runner = _runner()
+    runner.LOGIN_SUBMIT = 'click'
+
+    runner.handle_login(page)
+
+    assert page.evaluate('window.__clicks') == 1
+    assert runner.last_login_diagnostics['submitted_via'] == 'click'
