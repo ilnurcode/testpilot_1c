@@ -36,15 +36,19 @@ curl -s -u "expert:$PASS" -X POST --data-binary @samples/demo_vulnerable_extensi
 Ожидание: `total_issues=12`, `{"CRITICAL":1,"HIGH":7,"MEDIUM":1,"LOW":3}`, `passed=false`.
 
 4. Анализ влияния (impact): `POST /api/v1/projects/<pid>/uploads/<uid>/analyze` с `{"baseline_id":"saved","max_depth":10}`.
-Ожидание: `affected_objects` = 4, в ответе `package_id`.
+Ожидание: `affected_objects` = 4, в ответе `analysis_id` и `package`.
 
-5. План проверок (intelligence, работает без ключа LLM):
+5. Доставка пакета в intelligence (impact): `POST /api/v1/analyses/<analysis_id>/deliver` (тело не нужно).
+Ожидание: 200 и `package_id`. Именно этот шаг создаёт пакет в сервисе intelligence; без него
+`POST /api/v1/ai/suites` отвечает **404** «Запись не найдена».
+
+6. План проверок (intelligence, работает без ключа LLM):
 `POST /api/v1/ai/suites` с `{"package_id":"<pkg>","project_id":"<pid>","provider":"local"}` → `<sid>`;
 `POST /api/v1/ai/suites/<sid>/approve` с `{"reason":"пересоздание демо","selected_proposals":[0]}`;
 `POST /api/v1/ai/suites/<sid>/run-1c`. Ожидание: `counts.passed=1`.
 Без `web_url`/`odata_url` и пользователя в настройках проекта (или `TP_1C_*` в окружении) — **422**
 «Параметры подключения к 1С не настроены».
 
-6. Артефакты (только чтение): `GET /api/v1/ai/suites/<sid>/report?format=md` (8002) и
+7. Артефакты (только чтение): `GET /api/v1/ai/suites/<sid>/report?format=md` (8002) и
 `GET /api/v1/audit/uploads/<uid>/report?format=md` (8000) → 200 `text/markdown`.
-7. Бэкап: `bash scripts/backup.sh` → `.runtime/backups/testpilot-<дата>.sql`, размер > 0.
+8. Бэкап: `bash scripts/backup.sh` → `.runtime/backups/testpilot-<дата>.sql`, размер > 0.
