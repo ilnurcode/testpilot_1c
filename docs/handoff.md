@@ -5,7 +5,7 @@
 ## Состояние
 
 - Коммит кода: `133b27c` (последний перед этим документом), ветка `main`; сам документ идёт следующим коммитом — точный HEAD смотрите `git log -1 --oneline`.
-- Тесты: **291 passed, 1 skipped** (`docker compose exec -T intelligence python -m pytest tests/ -q`, 73 с).
+- Тесты: число печатает `docker compose exec -T intelligence python -m pytest tests/ -q` (и `scripts/acceptance.sh`); в документе оно не фиксируется, чтобы не стареть.
 - Миграции: `0007 (head)` (`docker compose exec -T intelligence alembic current`).
 - Compose: `db`, `impact`, `intelligence`, `web` — Up (healthy); `migrate` — Exited (0).
 - Dev-БД: 33 проекта, 39 загрузок, 45 suite. Классификация проектов по названиям и датам: как минимум один презентационный (`cfeb99ee` «Продажи — презентационный стенд»), часть создана приёмками, происхождение остальных не установлено. Перед удалением сверять каждый проект по имени/дате/содержимому; массовое удаление без проверки не выполнять.
@@ -21,7 +21,7 @@
 - Отчёт о прогоне по кейсам: suite `62c44714` → csv 960 байт, 2 строки данных (`passed`, `failed`), md с `case 1`/`case 2`.
 - Удаление проекта: каскад `{suites 1, packages 1, tests 1, runs 1, results 1, coverage 1, uploads 1, audit 6, projects 1}`, SQL-проверка сирот — 0 (кроме штампа `audit.delete_project`).
 - `/health`: 200, `{"status":"ok","executor_1c_env":...,"projects_with_connection":...}`.
-- CI-прогон в чистом `python:3.12-slim`: 284 passed на тот момент (до последних трёх тестов).
+- CI-прогон в чистом `python:3.12-slim`: 284 passed на тот момент (снимок на момент подготовки, до последующих тестов).
 
 ## Заблокировано и требует вашего действия
 
