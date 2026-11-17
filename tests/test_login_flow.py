@@ -674,3 +674,102 @@ def test_hidden_busy_markers_do_not_look_like_processing(page):
         'скрытые aria-busy и disabled-кнопка вне #authWindow не означают обработку'
     )
     page.close()
+
+
+def test_login_value_case_rewritten_by_platform_still_passes(page):
+    page = page.context.new_page()
+    page.set_content(
+        """
+        <div id="authWindow">
+          <input id="authWindow_basic_login" name="login" type="text"
+                 oninput="this.value = this.value.toLowerCase();">
+          <input id="authWindow_basic_password" name="password" type="password">
+          <button id="authWindow_basic_okButton" onclick="
+            document.getElementById('authWindow').style.display='none';
+            document.body.insertAdjacentHTML('beforeend','<div>Продажи</div>');">Войти</button>
+        </div>
+        """
+    )
+    runner = _runner()
+
+    runner.handle_login(page)
+
+    assert runner.last_login_diagnostics['user_filled'] is True
+    assert runner.last_login_diagnostics['clicked'] is True
+    assert 'Продажи' in page.inner_text('body')
+    page.close()
+
+
+def test_button_inside_authwindow_wins_over_outside(page):
+    page = page.context.new_page()
+    page.set_content(
+        """
+        <button id="outsideLogin" onclick="window.__outside = (window.__outside || 0) + 1">Войти</button>
+        <div id="authWindow">
+          <input id="authWindow_basic_login" name="login" type="text">
+          <input id="authWindow_basic_password" name="password" type="password">
+          <button id="authWindow_basic_okButton" onclick="
+            window.__inside = (window.__inside || 0) + 1;
+            document.getElementById('authWindow').style.display='none';
+            document.body.insertAdjacentHTML('beforeend','<div>Продажи</div>');">Войти</button>
+        </div>
+        <script>window.__inside = 0; window.__outside = 0;</script>
+        """
+    )
+    runner = _runner()
+
+    runner.handle_login(page)
+
+    assert page.evaluate('window.__inside') == 1, 'клик должен идти по кнопке внутри #authWindow'
+    assert page.evaluate('window.__outside') == 0
+    page.close()
+
+
+def test_button_only_outside_authwindow_is_used_as_fallback(page):
+    page = page.context.new_page()
+    page.set_content(
+        """
+        <div id="authWindow">
+          <input id="authWindow_basic_login" name="login" type="text">
+          <input id="authWindow_basic_password" name="password" type="password">
+        </div>
+        <button id="outsideLogin" onclick="
+          window.__outside = (window.__outside || 0) + 1;
+          document.getElementById('authWindow').style.display='none';
+          document.body.insertAdjacentHTML('beforeend','<div>Продажи</div>');">Войти</button>
+        <script>window.__outside = 0;</script>
+        """
+    )
+    runner = _runner()
+
+    runner.handle_login(page)
+
+    assert page.evaluate('window.__outside') == 1, 'фолбэк на видимую кнопку вне контейнера'
+    assert runner.last_login_diagnostics['clicked'] is True
+    page.close()
+
+
+def test_enter_press_failure_has_no_submitted_via_flag(page):
+    page = page.context.new_page()
+    page.set_content(
+        """
+        <div id="authWindow">
+          <input id="authWindow_basic_login" name="login" type="text">
+          <input id="authWindow_basic_password" name="password" type="password"
+                 onfocus="this.remove()">
+          <button id="authWindow_basic_okButton" onclick="">Войти</button>
+        </div>
+        """
+    )
+    runner = _runner()
+    runner.LOGIN_SUBMIT = 'enter'
+    page.set_default_timeout(3000)
+
+    with pytest.raises(RuntimeError) as error:
+        runner.handle_login(page)
+
+    assert runner.last_login_diagnostics['submitted_via'] is None
+    assert runner.last_login_diagnostics['clicked'] is False
+    message = str(error.value)
+    assert 'Timeout' in message or 'not attached' in message
+    page.close()

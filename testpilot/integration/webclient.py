@@ -406,6 +406,23 @@ class WebClientRunner:
                 return 'timeout', None
             page.wait_for_timeout(500)
 
+    def _choose_login_button(self, frame):
+        """Кнопка входа: приоритет у видимой кнопки внутри #authWindow, затем прежние фолбэки."""
+        candidates = [
+            lambda: frame.locator('#authWindow').get_by_role('button', name='Войти').first,
+            lambda: frame.get_by_role('button', name='Войти').first,
+            lambda: frame.locator('#authWindow ' + ', #authWindow '.join(self.LOGIN_BUTTON_SELECTORS)).first,
+            lambda: frame.locator(', '.join(self.LOGIN_BUTTON_SELECTORS)).first,
+        ]
+        for build in candidates:
+            try:
+                locator = build()
+                if locator.is_visible(timeout=300):
+                    return locator
+            except Exception:
+                continue
+        return None
+
     def _await_login_form_ready(self, frame, user_input) -> None:
         """До 3 с (шаг 100 мс) ждём, что поле логина удержало значение: иначе submit не делаем.
 
@@ -418,7 +435,7 @@ class WebClientRunner:
                 value = (user_input.input_value(timeout=500) or '').strip()
             except Exception:
                 value = ''
-            if value == expected:
+            if value == expected or (expected and value.casefold() == expected.casefold()):
                 return
             if time.monotonic() >= deadline:
                 raise RuntimeError('форма не готова к отправке: поле логина не удержало значение')
@@ -491,14 +508,12 @@ class WebClientRunner:
                     self.last_login_presubmit_shot = _safe_screenshot(page.context, page) or b''
                 except Exception:
                     self.last_login_presubmit_shot = b''
-                self.last_login_diagnostics['submitted_via'] = 'enter'
                 focus_target.focus()
                 focus_target.press('Enter')
+                self.last_login_diagnostics['submitted_via'] = 'enter'
             else:
-                ok_btn = frame.get_by_role('button', name='Войти').first
-                if not ok_btn.is_visible(timeout=500):
-                    ok_btn = frame.locator(', '.join(self.LOGIN_BUTTON_SELECTORS)).first
-                if not ok_btn.is_visible(timeout=1000):
+                ok_btn = self._choose_login_button(frame)
+                if ok_btn is None:
                     raise RuntimeError('кнопка «Войти» не найдена на форме логина')
                 self._await_login_button_ready(frame, ok_btn)
                 # Снимок готовой формы до submit: fallback-evidence, если пост-кликовый снимок пуст.
