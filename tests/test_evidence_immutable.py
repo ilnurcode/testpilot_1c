@@ -97,3 +97,47 @@ def test_second_insert_with_same_evidence_id_fails(clients):
             if package is not None:
                 s.delete(package)
             s.commit()
+
+
+def _seed_suite(factory, db, suite_id='00000000-0000-0000-0000-0000000000bb'):
+    with factory() as s:
+        if s.get(db.PackageRow, 'pkg-immutable2') is None:
+            s.add(db.PackageRow(id='pkg-immutable2', checksum='1' * 64, configuration_id='cfg', payload={}))
+            s.flush()
+        if s.get(db.AISuiteRow, suite_id) is None:
+            s.add(db.AISuiteRow(id=suite_id, package_id='pkg-immutable2', project_id='immutable-test',
+                                status='approved', payload={}))
+        s.commit()
+    return suite_id
+
+
+def test_evidence_endpoint_still_returns_raw_png(clients):
+    from sqlalchemy.orm import sessionmaker
+
+    from testpilot import db
+
+    factory = sessionmaker(db.engine(), expire_on_commit=False)
+    suite_id = _seed_suite(factory, db)
+    evidence_id = '00000000-0000-0000-0000-0000000000dd'
+    payload = b'\x89PNG\r\n\x1a\n' + b'raw'
+    try:
+        with factory() as s:
+            s.add(db.EvidenceRow(id=evidence_id, suite_id=suite_id, content=payload))
+            s.commit()
+        _, c = clients
+        response = c.get(f'/api/v1/ai/evidence/{evidence_id}')
+        assert response.status_code == 200
+        assert response.headers['content-type'].startswith('image/png')
+        assert response.content == payload, 'эндпоинт отдаёт те же байты, created_at в ответ не попадает'
+    finally:
+        with factory() as s:
+            row = s.get(db.EvidenceRow, evidence_id)
+            if row is not None:
+                s.delete(row)
+            suite = s.get(db.AISuiteRow, suite_id)
+            if suite is not None:
+                s.delete(suite)
+            package = s.get(db.PackageRow, 'pkg-immutable2')
+            if package is not None:
+                s.delete(package)
+            s.commit()
