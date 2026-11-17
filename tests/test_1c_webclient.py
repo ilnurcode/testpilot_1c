@@ -43,6 +43,7 @@ def test_webclient_runner_real_playwright_execution(monkeypatch):
       <label for="clientInput">Имя клиента</label>
       <input name="Клиент" id="clientInput" />
       <div id="status">Список документов</div>
+      <div id="funcPanel">Главное</div>
     </body></html>
     """.encode("utf-8")
 

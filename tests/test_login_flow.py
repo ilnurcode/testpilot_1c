@@ -238,3 +238,61 @@ def test_slow_workspace_within_grace_has_no_error(page, monkeypatch):
     _runner().handle_login(page)  # рабочая область появилась в пределах grace — ошибки нет
 
     assert 'Продажи' in page.inner_text('body')
+
+
+CONFIRMED_FORM_TOP = """
+<script>window.__clicks = 0; window.__fills = 0; window.__login = null;</script>
+<div id="authWindow">
+  <input id="authWindow_basic_login" name="login" type="text"
+         oninput="window.__fills = (window.__fills || 0) + 1;">
+  <input id="authWindow_basic_password" name="password" type="password">
+  <button id="authWindow_basic_okButton" onclick="window.__clicks = (window.__clicks || 0) + 1;
+           window.__login = document.getElementById('authWindow_basic_login').value;
+           document.body.innerHTML = '<div>Продажи</div>';">Войти</button>
+</div>
+"""
+
+
+def test_confirmed_ids_are_filled_and_clicked_once(page):
+    page.set_content(CONFIRMED_FORM_TOP)
+
+    _runner().handle_login(page)
+
+    assert page.evaluate('window.__login') == 'Администратор'
+    assert page.evaluate('window.__clicks') == 1
+    assert page.evaluate('window.__fills') == 1, 'поле логина заполняется ровно один раз'
+    assert page.locator('#authWindow_basic_login').count() == 0
+
+
+def test_confirmed_form_inside_iframe_is_found(page):
+    inner = """<div id="authWindow">
+      <input id="authWindow_basic_login" name="login" type="text">
+      <input id="authWindow_basic_password" name="password" type="password">
+      <button id="authWindow_basic_okButton" onclick="window.__clicks = (window.__clicks || 0) + 1;
+               window.__login = document.getElementById('authWindow_basic_login').value;
+               document.getElementById('authWindow').remove();
+               parent.document.body.insertAdjacentHTML('beforeend', '<div>Продажи</div>');">Войти</button>
+    </div>"""
+    import html
+
+    page.set_content('<main><iframe id="client" srcdoc="' + html.escape(inner, quote=True) + '"></iframe></main>')
+    page.wait_for_timeout(300)
+
+    _runner().handle_login(page)
+
+    client = next(frame for frame in page.frames if frame != page.main_frame)
+    assert client.evaluate('window.__login') == 'Администратор'
+    assert client.evaluate('window.__clicks') == 1
+    assert 'Продажи' in page.inner_text('body')
+
+
+def test_no_form_in_any_frame_reports_frame_diagnostics(page):
+    page.set_content('<main><div id="empty">пусто</div></main>')
+
+    with pytest.raises(RuntimeError) as error:
+        _runner().handle_login(page)
+
+    message = str(error.value)
+    assert 'форма входа не найдена ни в одном фрейме' in message
+    assert 'фреймов: 1' in message
+    assert 'origin:' in message

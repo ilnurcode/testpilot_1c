@@ -224,6 +224,8 @@ class WebClientRunner:
 
 
     # Кандидаты в поле логина: только элементы самой формы входа, без угадывания любого text-поля страницы.
+    # id формы подтверждены read-only зондом 2026-11-17 (probe-login, boot=true): DemoTrd отдаёт
+    # input#authWindow_basic_login, input#authWindow_basic_password и button#authWindow_basic_okButton.
     LOGIN_FIELD_SELECTORS = (
         '#authWindow_basic_login',
         '#authWindow input[type="text"]',
@@ -232,7 +234,11 @@ class WebClientRunner:
         'input[name*="user" i]',
         'input[id*="login" i]',
     )
+    LOGIN_PASSWORD_SELECTORS = ('#authWindow_basic_password', 'input[type="password"]')
+    LOGIN_BUTTON_SELECTORS = ('#authWindow_basic_okButton', 'button[id*="ok"]', 'button:has-text("OK")')
     LOGIN_FORM_HINT = 'input[type="password"], #authWindow, #authWindowBasic'
+    WORKSPACE_MARKERS = ('Продажи', 'Главное', 'Закупки', 'Начальная страница', 'Не найдена лицензия',
+                         'вход в приложение невозможен', 'Выполнить запуск')
     # Сколько ждём ухода формы логина после одной попытки, прежде чем считать вход неудачным.
     # Настраивается TP_1C_LOGIN_GRACE_SECONDS (2..60): на медленном стенде дефолт 10 с может быть мал.
     LOGIN_GRACE_SECONDS = int_env('TP_1C_LOGIN_GRACE_SECONDS', 10, 2, 60)
@@ -313,9 +319,52 @@ class WebClientRunner:
             message += f'\n{dump}'
         return RuntimeError(message)
 
+    def _login_frame(self, page):
+        """Фрейм с формой входа: форма может жить в iframe, а не в верхнем документе."""
+        frames = _visible_frames(page)
+        for frame in frames:
+            try:
+                if frame.locator(', '.join(self.LOGIN_FIELD_SELECTORS)).first.is_visible(timeout=300):
+                    return frame
+            except Exception:
+                continue
+        for frame in frames:
+            try:
+                if frame.locator(self.LOGIN_FORM_HINT).first.is_visible(timeout=300):
+                    return frame
+            except Exception:
+                continue
+        return None
+
+    def _workspace_visible(self, page) -> bool:
+        """Рабочий стол уже открыт: маркеры ищем во всех фреймах, не только в верхнем документе."""
+        for frame in _visible_frames(page):
+            try:
+                text = frame.evaluate('() => (document.body && document.body.textContent) || ""') or ''
+            except Exception:
+                continue
+            if any(marker in text for marker in self.WORKSPACE_MARKERS):
+                return True
+        return False
+
+    def _login_frame_error(self, page) -> RuntimeError:
+        """Форма не найдена ни в одном фрейме: в ошибке — число фреймов и их origin."""
+        frames = _visible_frames(page)
+        origins = ', '.join(
+            f'#{index} {_origin_text(getattr(frame, "url", "") or "")}' for index, frame in enumerate(frames)
+        )
+        reason = f'форма входа не найдена ни в одном фрейме (фреймов: {len(frames)}; origin: {origins})'
+        return self._login_failure(page, reason=reason)
+
     def handle_login(self, page) -> None:
         """Авторизация в веб-клиенте 1С 8.3/8.5; ровно одна попытка, при неудаче — понятная ошибка."""
-        user_input = page.locator(', '.join(self.LOGIN_FIELD_SELECTORS)).first
+        frame = self._login_frame(page)
+        if frame is None:
+            if self._workspace_visible(page):
+                return  # формы входа нет — уже рабочий стол
+            raise self._login_frame_error(page)
+
+        user_input = frame.locator(', '.join(self.LOGIN_FIELD_SELECTORS)).first
         last_error: Exception | None = None
         try:
             user_input.wait_for(state='visible', timeout=3000)
@@ -324,9 +373,7 @@ class WebClientRunner:
             user_input = None
 
         if user_input is None:
-            if self._login_form_visible(page):
-                raise self._login_failure(page, reason=str(last_error) if last_error else '')
-            return  # формы входа нет — уже рабочий стол
+            raise self._login_failure(frame, reason=str(last_error) if last_error else '')
 
         # Пустой пароль легитимен (так настроен демо-стенд): заполняем только непустой, submit не блокируем.
         password_note = '' if self.profile.password else ' (пароль пустой — как настроено в проекте)'
@@ -335,34 +382,34 @@ class WebClientRunner:
                 user_input.fill(self.profile.username)
                 if not (user_input.input_value(timeout=2000) or '').strip():
                     raise RuntimeError('поле логина осталось пустым после заполнения')
-            pwd_input = page.locator('#authWindow_basic_password, input[type="password"]').first
+            pwd_input = frame.locator(', '.join(self.LOGIN_PASSWORD_SELECTORS)).first
             if pwd_input.is_visible(timeout=1000) and self.profile.password:
                 pwd_input.fill(self.profile.password)
-            ok_btn = page.get_by_role('button', name='Войти').first
+            ok_btn = frame.get_by_role('button', name='Войти').first
             if not ok_btn.is_visible(timeout=500):
-                ok_btn = page.locator('button[id*="ok"], button:has-text("OK")').first
+                ok_btn = frame.locator(', '.join(self.LOGIN_BUTTON_SELECTORS)).first
             if not ok_btn.is_visible(timeout=1000):
                 raise RuntimeError('кнопка «Войти» не найдена на форме логина')
             ok_btn.click()  # ровно одна попытка: повторных кликов и ретраев нет
         except Exception as error:
-            raise self._login_failure(page, reason=str(error), note=password_note) from error
+            raise self._login_failure(frame, reason=str(error), note=password_note) from error
 
         # Ждём исхода одной попытки: ошибка платформы, уход формы логина или рабочая область.
         started = time.monotonic()
         while time.monotonic() - started < 45.0:
-            if self._platform_login_error(page):
+            if self._platform_login_error(frame):
                 break
-            if not self._login_form_visible(page):
+            if not self._login_form_visible(frame):
                 break
             if time.monotonic() - started >= self.LOGIN_GRACE_SECONDS:
                 break  # форма не ушла за отведённое время — считаем вход неудачным
-            page.wait_for_timeout(200)
+            frame.wait_for_timeout(200)
 
-        platform_error = self._platform_login_error(page)
+        platform_error = self._platform_login_error(frame)
         if platform_error:
-            raise self._login_failure(page, reason=platform_error, note=password_note)
-        if self._login_form_visible(page):
-            raise self._login_failure(page, note=password_note)  # форма осталась — без ожидания 45 с
+            raise self._login_failure(frame, reason=platform_error, note=password_note)
+        if self._login_form_visible(frame):
+            raise self._login_failure(frame, note=password_note)  # форма осталась — без ожидания 45 с
 
         try:
             page.wait_for_function(
@@ -376,9 +423,9 @@ class WebClientRunner:
         except Exception:
             pass
 
-        platform_error = self._platform_login_error(page)
+        platform_error = self._platform_login_error(frame)
         if platform_error:
-            raise self._login_failure(page, reason=platform_error, note=password_note)
+            raise self._login_failure(frame, reason=platform_error, note=password_note)
         page.wait_for_timeout(1500)
 
     def wait_for_1c(self, page) -> None:
