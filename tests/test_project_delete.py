@@ -386,7 +386,7 @@ def test_projects_list_last_run_tiebreak_by_id(clients):
 
 def test_projects_list_has_no_n_plus_one(clients):
     impact, _ = clients
-    single = _project(impact, 'Один проект')
+    _project(impact, 'Один проект')
     one_query, one_page = _run_count(impact, '/api/v1/projects?limit=200')
     assert len(one_page['items']) >= 1
 

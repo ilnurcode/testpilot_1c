@@ -58,7 +58,7 @@ def app(title, *, lifespan=None):
     if not public_docs:
         # По умолчанию схема и UI документации закрыты Basic Auth: TP_OPENAPI_PUBLIC=1 открывает их локально.
         from fastapi.openapi.docs import get_redoc_html,get_swagger_ui_html
-        from fastapi.responses import HTMLResponse, JSONResponse as SchemaResponse
+        from fastapi.responses import JSONResponse as SchemaResponse
         @a.get('/openapi.json',include_in_schema=False)
         def openapi_schema(actor=Depends(user)):
             return SchemaResponse(a.openapi())
