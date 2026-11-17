@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# Исполняемая приёмка TestPilot 1C:	PASS/FAIL/SKIP по шагам, итоговая сводка и exit code.
+# Исполняемая приёмка TestPilot 1C: PASS/FAIL/SKIP по шагам, итоговая сводка и exit code.
 # ВНИМАНИЕ: не выполнять `docker compose down -v` на стенде с данными — это уничтожает БД и evidence.
 # Для чистого старта используйте отдельный compose-проект (`-p testpilot-ci`) или CI-раннер.
-# Использование: scripts/acceptance.sh [--cfe PATH] [--no-build] [--probe-login]
+# Использование: scripts/acceptance.sh [--cfe PATH] [--no-build] [--llm] [--live-1c] [--keep] [--probe-login]
+# --llm: план через внешнего провайдера (нужен TP_LLM_API_KEY), при пустом ключе — FAIL, а не SKIP.
+# --live-1c: approve навигационного предложения и run-1c на 1С; без --llm план строится provider=local.
+# Флаги независимы: --live-1c работает без ключа LLM, --llm без --live-1c только создаёт и утверждает план.
 # --probe-login: read-only зонд формы входа 1С для проекта из TP_ACCEPTANCE_PROJECT_ID (без ввода и кликов).
+# --help: эта справка.
 # Переменные окружения: EXPECT_DEMO_ISSUES (по умолчанию 12), CFE_PATH, TP_EXPERT_PASSWORD, TP_EXPERT_USER.
 set -u
 
@@ -27,6 +31,9 @@ while [ $# -gt 0 ]; do
     --live-1c) INCLUDE_LIVE_1C=1; shift ;;
     --keep) KEEP=1; shift ;;
     --probe-login) PROBE_LOGIN=1; shift ;;
+    --help|-h)
+      sed -n '5,10p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
     *) echo "Неизвестный аргумент: $1"; exit 2 ;;
   esac
 done
@@ -175,22 +182,36 @@ if [ "$CSV_CODE" = "200" ] && [ "$CSV_SIZE" -gt 0 ]; then pass "отчёт csv: 
 
 echo "=== 5. ИИ: план и прогон ==="
 LLM_KEY="$("$ROOT/scripts/compose.sh" exec -T intelligence sh -c 'printf "%s" "${TP_LLM_API_KEY:-}"' 2>/dev/null | tr -d '\r')"
-if [ "$INCLUDE_LLM" = "0" ]; then
-  skip "генерация плана и прогон отключены: добавьте --llm (внешний провайдер) и --live-1c (прогон на 1С)"
-elif [ -z "$LLM_KEY" ]; then
-  skip "генерация плана: TP_LLM_API_KEY не задан"
-elif [ -z "${PACKAGE:-}" ] || [ "$PACKAGE" = "None" ]; then
-  fail "генерация плана: нет package_id из анализа ZIP"
+if [ "$INCLUDE_LLM" = "0" ] && [ "$INCLUDE_LIVE_1C" = "0" ]; then
+  skip "генерация плана и прогон отключены: добавьте --llm (внешний провайдер) и/или --live-1c (прогон на 1С)"
 else
-  SUITE="$(api "$INTEL" POST /api/v1/ai/suites "{\"package_id\":\"$PACKAGE\",\"project_id\":\"$PROJECT\",\"provider\":\"llm\",\"consent\":true,\"object_names\":{},\"model_context\":[]}")"
-  if printf '%s' "$SUITE" | grep -q 'upstream_status'; then
-    skip "генерация плана недоступна (провайдер LLM): $(printf '%s' "$SUITE" | head -c 160)"
-    SUITE=""
-  elif printf '%s' "$SUITE" | grep -q '"error"'; then
-    fail "генерация плана: $(printf '%s' "$SUITE" | head -c 200)"
-    SUITE=""
+  PROVIDER=local
+  if [ "$INCLUDE_LLM" = "1" ]; then
+    PROVIDER=llm
   fi
-  SUITE_ID="$(printf '%s' "${SUITE:-}" | jget "d.get('suite_id') or ''" 2>/dev/null)"
+  SUITE=""
+  if [ "$PROVIDER" = "llm" ] && [ -z "$LLM_KEY" ]; then
+    fail "генерация плана llm: TP_LLM_API_KEY не задан"
+  elif [ -z "${PACKAGE:-}" ] || [ "$PACKAGE" = "None" ]; then
+    fail "генерация плана: нет package_id из анализа ZIP"
+  elif [ "$PROVIDER" = "llm" ]; then
+    SUITE="$(api "$INTEL" POST /api/v1/ai/suites "{\"package_id\":\"$PACKAGE\",\"project_id\":\"$PROJECT\",\"provider\":\"llm\",\"consent\":true,\"object_names\":{},\"model_context\":[]}")"
+    if printf '%s' "$SUITE" | grep -q 'upstream_status'; then
+      fail "генерация плана llm: $(printf '%s' "$SUITE" | head -c 200)"
+      SUITE=""
+    elif printf '%s' "$SUITE" | grep -q '"error"'; then
+      fail "генерация плана llm: $(printf '%s' "$SUITE" | head -c 200)"
+      SUITE=""
+    fi
+  else
+    SUITE="$(api "$INTEL" POST /api/v1/ai/suites "{\"package_id\":\"$PACKAGE\",\"project_id\":\"$PROJECT\",\"provider\":\"local\"}")"
+    if printf '%s' "$SUITE" | grep -q '"error"'; then
+      fail "генерация плана local: $(printf '%s' "$SUITE" | head -c 200)"
+      SUITE=""
+    fi
+  fi
+  if [ -n "${SUITE:-}" ]; then
+  SUITE_ID="$(printf '%s' "$SUITE" | jget "d.get('suite_id') or ''" 2>/dev/null)"
   INDEX="$(printf '%s' "$SUITE" | jget "$(cat <<'PY'
 markers = ('записать','провести','создать','удалить','отменить проведение','пометить на удаление','скопировать','изменить')
 def clean(p):
@@ -206,22 +227,17 @@ candidates = [i for i, p in enumerate(d.get('suggestion', {}).get('proposals') o
 print(candidates[0] if candidates else '')
 PY
 )" 2>/dev/null)"
-  if [ -z "${SUITE:-}" ]; then
-    : # причина уже напечатана выше
-  elif [ -z "${SUITE_ID:-}" ] || [ "$SUITE_ID" = "None" ]; then
-    fail "генерация плана llm: ${SUITE:0:200}"
+  if [ -z "${SUITE_ID:-}" ] || [ "$SUITE_ID" = "None" ]; then
+    fail "генерация плана $PROVIDER: ${SUITE:0:200}"
   elif [ -z "${INDEX:-}" ] || [ "$INDEX" = "None" ]; then
     fail "в плане $SUITE_ID нет неразрушающего playwright-предложения"
   else
-    pass "план llm: suite_id=$SUITE_ID, предложение $INDEX (навигация)"
+    pass "план $PROVIDER: suite_id=$SUITE_ID, предложение $INDEX (навигация)"
     APPROVED="$(api "$INTEL" POST "/api/v1/ai/suites/$SUITE_ID/approve" "{\"reason\":\"acceptance\",\"selected_proposals\":[$INDEX]}")"
     APPROVED_STATUS="$(printf '%s' "$APPROVED" | jget "d.get('status')" 2>/dev/null)"
     if [ "$APPROVED_STATUS" = "approved" ]; then pass "approve: approved"; else fail "approve: ${APPROVED_STATUS:-нет ответа}"; fi
     if [ "$INCLUDE_LIVE_1C" = "0" ]; then
       skip "прогон на 1С отключён: добавьте --live-1c"
-      PASSED_N=""
-      EVIDENCE=""
-      REPORT_CODE=""
     else
     RUN="$(api "$INTEL" POST "/api/v1/ai/suites/$SUITE_ID/run-1c")"
     PASSED_N="$(printf '%s' "$RUN" | jget "(d.get('counts') or {}).get('passed', 0)" 2>/dev/null)"
@@ -233,6 +249,7 @@ PY
       if [ "$REPORT_CODE" = "200" ]; then pass "отчёт о прогоне md: 200"; else fail "отчёт о прогоне md: $REPORT_CODE"; fi
     fi
     fi
+  fi
   fi
 fi
 

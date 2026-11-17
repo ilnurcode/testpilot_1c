@@ -5,8 +5,9 @@
     Для чистого старта используйте отдельный compose-проект (`-p testpilot-ci`) или CI-раннер.
 .DESCRIPTION
     Тот же набор шагов, что в scripts/acceptance.sh. PowerShell 5.1+, без внешних модулей.
-    Запуск: powershell -ExecutionPolicy Bypass -File scripts\acceptance.ps1 [-CfePath <file>] [-NoBuild] [-IncludeLLM] [-IncludeLive1C] [-Keep]
+    Запуск: powershell -ExecutionPolicy Bypass -File scripts\acceptance.ps1 [-CfePath <file>] [-NoBuild] [-IncludeLLM] [-IncludeLive1C] [-Keep] [-ProbeLogin] [-Help]
     По умолчанию проверяются только локальные вещи: без -IncludeLLM нет обращений к провайдеру, без -IncludeLive1C нет прогона на 1С.
+    Флаги независимы: -IncludeLive1C работает без ключа LLM (план строится provider=local), при пустом ключе с -IncludeLLM — FAIL.
     Созданный этим запуском проект удаляется в конце (даже при провале); -Keep оставляет его.
     Переменные окружения: EXPECT_DEMO_ISSUES (по умолчанию 12), CFE_PATH, TP_EXPERT_PASSWORD, TP_EXPERT_USER.
 #>
@@ -16,8 +17,17 @@ param(
     [switch]$IncludeLLM,
     [switch]$IncludeLive1C,
     [switch]$Keep,
-    [switch]$ProbeLogin
+    [switch]$ProbeLogin,
+    [switch]$Help
 )
+
+if ($Help) {
+    Write-Host 'Использование: scripts\acceptance.ps1 [-CfePath <file>] [-NoBuild] [-IncludeLLM] [-IncludeLive1C] [-Keep] [-ProbeLogin] [-Help]'
+    Write-Host '-IncludeLLM: план через внешнего провайдера (нужен TP_LLM_API_KEY); при пустом ключе — FAIL, а не SKIP.'
+    Write-Host '-IncludeLive1C: approve навигационного предложения и run-1c на 1С; без -IncludeLLM план строится provider=local.'
+    Write-Host 'Флаги независимы. Без обработки 1С: живой прогон запускает владелец.'
+    exit 0
+}
 
 $ErrorActionPreference = 'Stop'
 # Все compose-вызовы идут через предохранитель scripts/compose.ps1 (запрет down -v на рабочем проекте).
@@ -186,22 +196,26 @@ function Test-CleanProposal($proposal) {
     }
     return $true
 }
-if (-not $IncludeLLM) {
-    Skip 'генерация плана и прогон отключены: добавьте -IncludeLLM (внешний провайдер) и -IncludeLive1C (прогон на 1С)'
-} elseif (-not $llmKey) {
-    Skip 'генерация плана: TP_LLM_API_KEY не задан'
-} elseif (-not $package) {
-    Fail 'генерация плана: нет package_id из анализа ZIP'
+if (-not $IncludeLLM -and -not $IncludeLive1C) {
+    Skip 'генерация плана и прогон отключены: добавьте -IncludeLLM (внешний провайдер) и/или -IncludeLive1C (прогон на 1С)'
 } else {
+    $provider = if ($IncludeLLM) { 'llm' } else { 'local' }
     $suite = $null
-    try {
-        $suite = Post-Json "$Intel/api/v1/ai/suites" @{ package_id = $package; project_id = $project; provider = 'llm'; consent = $true; object_names = @{}; model_context = @() }
-    } catch {
-        $response = $_.Exception.Response
-        if ($response -and [int]$response.StatusCode -in @(502, 503)) {
-            Skip "генерация плана недоступна (провайдер LLM): $($_.Exception.Message)"
-        } else {
+    if ($provider -eq 'llm' -and -not $llmKey) {
+        Fail 'генерация плана llm: TP_LLM_API_KEY не задан'
+    } elseif (-not $package) {
+        Fail 'генерация плана: нет package_id из анализа ZIP'
+    } elseif ($provider -eq 'llm') {
+        try {
+            $suite = Post-Json "$Intel/api/v1/ai/suites" @{ package_id = $package; project_id = $project; provider = 'llm'; consent = $true; object_names = @{}; model_context = @() }
+        } catch {
             Fail "генерация плана llm: $($_.Exception.Message)"
+        }
+    } else {
+        try {
+            $suite = Post-Json "$Intel/api/v1/ai/suites" @{ package_id = $package; project_id = $project; provider = 'local' }
+        } catch {
+            Fail "генерация плана local: $($_.Exception.Message)"
         }
     }
     if ($suite) {
@@ -212,7 +226,7 @@ if (-not $IncludeLLM) {
         if ($null -eq $index) {
             Fail "в плане $($suite.suite_id) нет неразрушающего playwright-предложения"
         } else {
-            Pass "план llm: suite_id=$($suite.suite_id), предложение $index (навигация)"
+            Pass "план ${provider}: suite_id=$($suite.suite_id), предложение $index (навигация)"
             try {
                 $approved = Post-Json "$Intel/api/v1/ai/suites/$($suite.suite_id)/approve" @{ reason = 'acceptance'; selected_proposals = @([int]$index) }
                 if ($approved.status -eq 'approved') { Pass 'approve: approved' } else { Fail "approve: $($approved.status)" }
