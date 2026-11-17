@@ -229,7 +229,24 @@ if (-not $IncludeLLM) {
 }
 
 Write-Host '=== 6. Тесты ==='
-$pytestOut = docker compose exec -T intelligence python -m pytest tests/ -q 2>&1 | Out-String
+# UI smoke требует адрес интерфейса и пароль эксперта; без них тест сам пропускается.
+# Внутри compose web виден как web:8000; для host-запуска задайте TP_UI_BASE_URL=http://127.0.0.1:8000.
+if (-not $env:TP_UI_BASE_URL) { $env:TP_UI_BASE_URL = 'http://web:8000' }
+if (-not $env:TP_EXPERT_PASSWORD) { $env:TP_EXPERT_PASSWORD = 'TestPilotLocal123!' }
+$uiOut = docker compose exec -T -e "TP_UI_BASE_URL=$env:TP_UI_BASE_URL" -e "TP_EXPERT_PASSWORD=$env:TP_EXPERT_PASSWORD" intelligence python -m pytest tests/test_ui_smoke.py -q 2>&1 | Out-String
+$uiCode = $LASTEXITCODE
+$uiPassed = ($uiOut -split "`n" | Where-Object { $_ -match '\d+ passed' } | Select-Object -Last 1)
+$uiSkipped = ($uiOut -split "`n" | Where-Object { $_ -match '\d+ skipped' } | Select-Object -Last 1)
+if ($uiCode -eq 0 -and $uiPassed) {
+    $uiCount = ([regex]::Match($uiPassed, '(\d+) passed')).Groups[1].Value
+    Pass "UI smoke: $uiCount проверок OK (overview, projects, project, audit, ai)"
+} elseif ($uiCode -eq 0 -and $uiSkipped) {
+    Write-Host "SKIP  UI smoke: $($uiSkipped.Trim())"
+    $script:Skipped = $script:Skipped + 1
+} else {
+    Fail "UI smoke: $(($uiOut -split "`n" | Where-Object { $_ -match 'раздел #|AssertionError' } | Select-Object -First 3) -join ' ')"
+}
+$pytestOut = docker compose exec -T -e "TP_UI_BASE_URL=$env:TP_UI_BASE_URL" -e "TP_EXPERT_PASSWORD=$env:TP_EXPERT_PASSWORD" intelligence python -m pytest tests/ -q 2>&1 | Out-String
 $pytestCode = $LASTEXITCODE
 $summary = ($pytestOut -split "`n" | Where-Object { $_ -match '\d+ passed' } | Select-Object -Last 1)
 if ($pytestCode -eq 0 -and $summary) { Pass "pytest: $($summary.Trim())" }
