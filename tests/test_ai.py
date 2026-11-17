@@ -1082,3 +1082,29 @@ def test_suite_validator_rejects_odata_case_without_entity_or_metadata(clients, 
 
     assert response.status_code == 422, response.text
     assert "укажите entity или check='metadata'" in response.json()['error']['message']
+
+
+def test_run_error_attaches_evidence_screenshot(clients, monkeypatch):
+    called = []
+    c, project, suite = _mutating_suite(
+        clients, monkeypatch, [{'action': 'assert_text', 'target': 'Продажи'}], called=called)
+
+    from testpilot.ai import executor as executor_module
+
+    png = b'\x89PNG\r\n\x1a\nunit-error'
+    monkeypatch.setattr(executor_module, 'execute_1c', lambda target_suite, profile: ([
+        {'proposal_index': 0, 'case_index': 0, 'engine': 'playwright', 'title': 'Вход',
+         'status': 'error', 'message': 'Вход в 1С не выполнен: форма логина осталась на экране',
+         'duration_seconds': 3.0, 'started_at': 'unit'},
+    ], [(0, png)]))
+
+    run = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c")
+    assert run.status_code == 200, run.text
+    result = run.json()['results'][0]
+    assert result['status'] == 'error'
+    assert result.get('evidence_id'), 'скриншот ошибки должен сохраняться и привязываться к результату'
+
+    evidence = c.get(f"/api/v1/ai/evidence/{result['evidence_id']}")
+    assert evidence.status_code == 200
+    assert evidence.headers['content-type'].startswith('image/png')
+    assert evidence.content == png

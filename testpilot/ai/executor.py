@@ -142,9 +142,18 @@ def execute_1c(suite, profile):
                         section_result.message if section_result else
                         f"Сценарий в веб-клиенте 1С выполнен ({len(report.steps)} шагов)"
                     )
+                    if getattr(web_runner, 'last_login_diagnostics', None):
+                        result['login'] = dict(web_runner.last_login_diagnostics)
+                    attached = False
                     for shot in report.screenshots:
-                        if len(shot) <= 2 * 1024 * 1024:
+                        if shot and len(shot) <= 2 * 1024 * 1024:
                             evidence.append((len(results), shot))
+                            attached = True
+                    if not attached:
+                        result['screenshot_unavailable'] = True
+                        result['screenshot_unavailable_reason'] = (
+                            'скриншот не получен: браузер закрылся до снимка или страница не отрисовалась'
+                        )
             except Exception as exc:
                 result['status'] = 'error'
                 result['message'] = f"Ошибка выполнения в 1С: {exc}"

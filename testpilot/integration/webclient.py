@@ -211,6 +211,8 @@ class WebClientRunner:
         self.raw_web_url = self.web_urls[-1]
         # Адрес, по которому реально открылась публикация (при откате — исходный loopback).
         self.last_web_url = self.web_url
+        # Факты последней попытки входа без значений полей (заполняется в handle_login).
+        self.last_login_diagnostics: dict | None = None
 
     def _checked_navigation_addresses(self, target: str) -> list[str]:
         """Адреса перехода для open_url: mapped и исходный, но только в пределах публикации проекта."""
@@ -382,7 +384,16 @@ class WebClientRunner:
 
     def handle_login(self, page) -> None:
         """Авторизация в веб-клиенте 1С 8.3/8.5; ровно одна попытка, при неудаче — понятная ошибка."""
+        # Диагностика для результата прогона: без значений полей, только факты действий.
+        self.last_login_diagnostics = {
+            'stage': 'wait_form',
+            'user_filled': False,
+            'password_filled': False,
+            'clicked': False,
+            'form_visible_after': None,
+        }
         state, frame = self._await_login_state(page)
+        self.last_login_diagnostics['stage'] = state
         if state == 'workspace':
             return  # формы входа нет — уже рабочий стол
         if state == 'timeout':
@@ -397,6 +408,8 @@ class WebClientRunner:
             user_input = None
 
         if user_input is None:
+            self.last_login_diagnostics.update(stage='login_field_missing',
+                                               form_visible_after=self._login_form_visible(frame))
             raise self._login_failure(frame, reason=str(last_error) if last_error else '')
 
         # Пустой пароль легитимен (так настроен демо-стенд): заполняем только непустой, submit не блокируем.
@@ -404,18 +417,23 @@ class WebClientRunner:
         try:
             if self.profile.username:
                 user_input.fill(self.profile.username)
+                self.last_login_diagnostics['user_filled'] = True
                 if not (user_input.input_value(timeout=2000) or '').strip():
                     raise RuntimeError('поле логина осталось пустым после заполнения')
             pwd_input = frame.locator(', '.join(self.LOGIN_PASSWORD_SELECTORS)).first
             if pwd_input.is_visible(timeout=1000) and self.profile.password:
                 pwd_input.fill(self.profile.password)
+                self.last_login_diagnostics['password_filled'] = True
             ok_btn = frame.get_by_role('button', name='Войти').first
             if not ok_btn.is_visible(timeout=500):
                 ok_btn = frame.locator(', '.join(self.LOGIN_BUTTON_SELECTORS)).first
             if not ok_btn.is_visible(timeout=1000):
                 raise RuntimeError('кнопка «Войти» не найдена на форме логина')
             ok_btn.click()  # ровно одна попытка: повторных кликов и ретраев нет
+            self.last_login_diagnostics['clicked'] = True
         except Exception as error:
+            self.last_login_diagnostics.update(stage='submit',
+                                               form_visible_after=self._login_form_visible(frame))
             raise self._login_failure(frame, reason=str(error), note=password_note) from error
 
         # Ждём исхода одной попытки: ошибка платформы, уход формы логина или рабочая область.
@@ -429,10 +447,12 @@ class WebClientRunner:
                 break  # форма не ушла за отведённое время — считаем вход неудачным
             frame.wait_for_timeout(200)
 
+        form_visible_after = self._login_form_visible(frame)
+        self.last_login_diagnostics.update(stage='after_click', form_visible_after=form_visible_after)
         platform_error = self._platform_login_error(frame)
         if platform_error:
             raise self._login_failure(frame, reason=platform_error, note=password_note)
-        if self._login_form_visible(frame):
+        if form_visible_after:
             raise self._login_failure(frame, note=password_note)  # форма осталась — без ожидания 45 с
 
         try:
@@ -613,6 +633,17 @@ class WebClientRunner:
                         report.error = f"Ошибка на шаге {idx} ({action} {target}): {step_exc}"
                         break
 
+            except Exception as error:
+                # Ошибка до шагов (навигация, вход): снимок делаем до закрытия страницы, иначе evidence теряется.
+                shot = _safe_screenshot(context, page)
+                if shot:
+                    report.steps.append(StepResult(
+                        step_number=0, action='open_url', target=report.url or self.raw_web_url, value=None,
+                        status='failed', message=str(error),
+                        duration_seconds=round(time.perf_counter() - start_time, 3), screenshot=shot,
+                    ))
+                    report.screenshots.append(shot)
+                raise
             finally:
                 try:
                     page.close(run_before_unload=True)
