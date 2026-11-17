@@ -684,19 +684,23 @@ def _login_probe_open_error(reason) -> RuntimeError:
     return RuntimeError(f'Не удалось открыть веб-клиент проекта: {reason}')
 
 
-def probe_route_guard(allowed, state):
-    """Прерывный фильтр: POST/PUT/... отклоняется всегда, GET/HEAD - только в пределах allowlist."""
+def probe_route_guard(allowed, state, boot: bool = False):
+    """Фильтр: чужой origin блокируется всегда; non-GET разрешён только same-origin и только в режиме boot."""
     def guard(route):
         request = route.request
         method = (getattr(request, 'method', 'GET') or 'GET').upper()
         url = getattr(request, 'url', '') or ''
         origin = _origin(url)
-        if method not in ('GET', 'HEAD'):
-            state['blocked_non_get'] += 1
-            route.abort()
-            return
         if origin in allowed:
-            route.continue_()
+            if method in ('GET', 'HEAD'):
+                route.continue_()
+                return
+            if boot:
+                state['non_get_allowed'] = state.get('non_get_allowed', 0) + 1
+                route.continue_()
+                return
+            state['blocked_non_get'] = state.get('blocked_non_get', 0) + 1
+            route.abort()
             return
         state['blocked'] += 1
         state['blocked_origins'].append(_origin_text(url))
@@ -721,13 +725,13 @@ def _is_connection_error(error) -> bool:
     return any(token in text for token in PROBE_RETRY_ERRORS)
 
 
-def probe_login_page(page, web_url: str, timeout_ms: int = 20000) -> dict:
+def probe_login_page(page, web_url: str, timeout_ms: int = 20000, boot: bool = False) -> dict:
     """Открывает web_url на переданной странице и возвращает факты; ошибки открытия/origin не скрываются."""
     targets = list(container_access_urls(web_url))
     allowed = {_origin(url) for url in targets}
-    state = {'blocked': 0, 'blocked_non_get': 0, 'blocked_origins': [], 'blocked_main': False}
+    state = {'blocked': 0, 'blocked_non_get': 0, 'non_get_allowed': 0, 'blocked_origins': [], 'blocked_main': False}
     if hasattr(page, 'route'):
-        page.route('**/*', probe_route_guard(allowed, state))
+        page.route('**/*', probe_route_guard(allowed, state, boot))
 
     tried: list[str] = []
     opened = False
@@ -769,10 +773,13 @@ def probe_login_page(page, web_url: str, timeout_ms: int = 20000) -> dict:
     facts['web_url_used'] = _origin_text(actual)
     facts['blocked_requests'] = state['blocked']
     facts['blocked_non_get'] = state['blocked_non_get']
+    facts['non_get_requests'] = state['non_get_allowed']
+    facts['mode'] = 'boot' if boot else 'get'
+    facts['credentials_sent'] = False
     return facts
 
 
-def probe_login_form(web_url: str, timeout_ms: int = 20000) -> dict:
+def probe_login_form(web_url: str, timeout_ms: int = 20000, boot: bool = False) -> dict:
     """Открывает web_url, ждёт форму входа или рабочий стол и возвращает только факты разметки."""
     from playwright.sync_api import sync_playwright
 
@@ -785,7 +792,7 @@ def probe_login_form(web_url: str, timeout_ms: int = 20000) -> dict:
             context = browser.new_context(viewport={'width': 1280, 'height': 800})
             page = context.new_page()
             page.set_default_timeout(timeout_ms)
-            return probe_login_page(page, web_url, timeout_ms)
+            return probe_login_page(page, web_url, timeout_ms, boot)
         finally:
             try:
                 context.close()

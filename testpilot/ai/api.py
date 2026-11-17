@@ -110,12 +110,20 @@ def _probe_login_context(data: dict, s):
     return project, web_url, origin
 
 
-def _probe_login_facts(web_url: str) -> dict:
+def _probe_boot_flag(data: dict) -> bool:
+    """boot=true разрешает same-origin non-GET (учётные данные не передаются); по умолчанию только GET/HEAD."""
+    value = data.get('boot', False)
+    if not isinstance(value, bool):
+        raise HTTPException(422, 'Параметр boot должен быть true или false')
+    return value
+
+
+def _probe_login_facts(web_url: str, boot: bool = False) -> dict:
     """Запуск зонда с маппингом ошибок: сбой открытия/origin — 503 с исходным текстом причины."""
     from testpilot.integration.webclient import probe_login_form
 
     try:
-        return probe_login_form(web_url)
+        return probe_login_form(web_url, boot=boot)
     except Exception as error:
         raise HTTPException(503, str(error)) from error
 
@@ -123,8 +131,9 @@ def _probe_login_facts(web_url: str) -> dict:
 @router.post('/connection/probe-login')
 async def probe_login(data: dict, actor=Depends(expert), s=Depends(session, scope='function')):
     """Read-only зонд разметки формы входа: адрес берётся только из web_url проекта, без ввода и кликов."""
+    boot = _probe_boot_flag(data)
     project, web_url, origin = _probe_login_context(data, s)
-    facts = await asyncio.to_thread(_probe_login_facts, web_url)
+    facts = await asyncio.to_thread(_probe_login_facts, web_url, boot)
     return {'project_id': project.id, 'web_url_origin': origin, **facts}
 
 @router.get('/codex/status',response_model=CodexStatus)

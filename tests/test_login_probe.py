@@ -268,7 +268,7 @@ def test_successful_probe_returns_facts(monkeypatch):
 def test_probe_errors_map_to_503(monkeypatch):
     from testpilot.ai.api import _probe_login_facts
 
-    def failing_probe(web_url):
+    def failing_probe(web_url, boot=False):
         raise RuntimeError('Не удалось открыть веб-клиент проекта: net::ERR_NAME_NOT_RESOLVED')
 
     monkeypatch.setattr('testpilot.integration.webclient.probe_login_form', failing_probe)
@@ -598,3 +598,77 @@ def test_form_in_top_document_still_works(monkeypatch):
     assert result['login_form_visible'] is True
     assert result['frame_url'] == 'http://project.test/DemoTrd/app'
     assert result['frame_name'] == ''
+
+
+def _guard_state():
+    return {'blocked': 0, 'blocked_non_get': 0, 'non_get_allowed': 0, 'blocked_origins': [], 'blocked_main': False}
+
+
+def test_boot_allows_same_origin_post_only():
+    from testpilot.integration.webclient import _origin, probe_route_guard
+
+    allowed = {_origin('http://project.test/DemoTrd')}
+    state = _guard_state()
+    guard = probe_route_guard(allowed, state, boot=True)
+
+    own_post = FakeRoute(FakeRequest('http://project.test/DemoTrd/api/boot', 'xhr', 'POST'))
+    foreign_post = FakeRoute(FakeRequest('http://evil.example.test/collect', 'xhr', 'POST'))
+    guard(own_post)
+    guard(foreign_post)
+
+    assert own_post.continued is True and own_post.aborted is False
+    assert state['non_get_allowed'] == 1
+    assert foreign_post.aborted is True and foreign_post.continued is False
+    assert state['blocked'] == 1
+
+
+def test_boot_false_blocks_same_origin_post():
+    from testpilot.integration.webclient import _origin, probe_route_guard
+
+    allowed = {_origin('http://project.test/DemoTrd')}
+    state = _guard_state()
+    guard = probe_route_guard(allowed, state, boot=False)
+
+    post = FakeRoute(FakeRequest('http://project.test/DemoTrd/api/boot', 'xhr', 'POST'))
+    guard(post)
+
+    assert post.aborted is True and post.continued is False
+    assert state['blocked_non_get'] == 1
+    assert state['non_get_allowed'] == 0
+
+
+def test_both_modes_report_no_credentials(monkeypatch):
+    from testpilot.integration import webclient
+
+    monkeypatch.setattr(webclient, 'navigate', lambda page, url, **kwargs: url)
+    page = RoutingPage(url='http://project.test/DemoTrd/app')
+
+    for boot in (False, True):
+        result = webclient.probe_login_page(page, 'http://project.test/DemoTrd', timeout_ms=0, boot=boot)
+        assert result['credentials_sent'] is False
+        assert result['mode'] == ('boot' if boot else 'get')
+        assert result['non_get_requests'] == 0
+
+
+def test_both_modes_never_click_or_fill(monkeypatch):
+    from testpilot.integration import webclient
+
+    monkeypatch.setattr(webclient, 'navigate', lambda page, url, **kwargs: url)
+    facts = {'inputs': [{'tag': 'input', 'type': 'password', 'id': 'pwd', 'name': ''}],
+             'buttons': [{'tag': 'button', 'id': 'ok'}], 'containers': ['authWindow'], 'loginFormVisible': True}
+
+    for boot in (False, True):
+        frame = FakeFrame('http://project.test/DemoTrd/app', ready=True, facts=facts)
+        page = FramePage('http://project.test/DemoTrd/app', [frame])
+        result = webclient.probe_login_page(page, 'http://project.test/DemoTrd', timeout_ms=0, boot=boot)
+        assert result['login_form_visible'] is True
+
+
+def test_boot_flag_validation():
+    from testpilot.ai.api import _probe_boot_flag
+
+    assert _probe_boot_flag({}) is False
+    assert _probe_boot_flag({'boot': True}) is True
+    with pytest.raises(HTTPException) as error:
+        _probe_boot_flag({'boot': 'yes'})
+    assert error.value.status_code == 422
