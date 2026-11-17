@@ -12,9 +12,6 @@ from testpilot.scanner.rules import BSLRule, get_default_rules
 
 logger = logging.getLogger(__name__)
 SUPPORTED_EXTENSIONS = {".bsl", ".os", ".xml", ".txt"}
-# Предел детализации: полный счётчик считается по всем замечаниям, но в записи и ответе
-# хранятся только первые MAX_ISSUES_KEPT — иначе файл в 1.6 МБ даёт 200k замечаний и десятки МБ JSON.
-MAX_ISSUES_KEPT = 5000
 
 
 class ScannerEngine:

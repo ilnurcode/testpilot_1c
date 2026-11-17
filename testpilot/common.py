@@ -83,8 +83,10 @@ def app(title, *, lifespan=None):
             if revision not in ('0004', '0005', '0006', '0007', '0008'): raise HTTPException(503,f'Миграции не обновлены: {revision}')
             with_connection=c.execute(text("SELECT count(*) FROM impact_projects WHERE coalesce(web_url,'')<>'' OR coalesce(odata_url,'')<>''")).scalar()
         env_configured=bool((os.environ.get('TP_1C_ODATA_URL') or '').strip() or (os.environ.get('TP_1C_WEB_URL') or '').strip())
+        from testpilot import audit_limit
         return {'status':'ok','executor_1c_env':'configured' if env_configured else 'not_configured',
-                'projects_with_connection':int(with_connection or 0)}
+                'projects_with_connection':int(with_connection or 0),
+                'audit_max_issues':audit_limit.MAX_ISSUES_KEPT}
     return a
 
 def require(value,detail='Запись не найдена'):

@@ -111,13 +111,15 @@
 
 Карточка записи: `scan_id`, `source_name`, `sha256`, `created_at`, `status`, `message`, `total_files`, `sources_checked`, `total_issues`, `issues_by_severity`, `issues_by_category`, `issues_url`, `issues_kept`, `issues_truncated`, `issues`, `passed`, `duration_ms`. `GET /scans/{scan_id}` отдаёт её без изменений относительно ответа `POST /scan`.
 
-Совместимость: если замечаний не больше `MAX_ISSUES_KEPT` (5000), поле `issues` в карточке содержит их все, как раньше. Если больше — детали в карточке не отдаются (ключа `issues` нет), вместо них `issues_url` на постраничную выдачу; `total_issues` и распределение по уровням всегда считаются по полному числу.
+Совместимость: если замечаний не больше `TP_AUDIT_MAX_ISSUES` (по умолчанию 5000), поле `issues` в карточке содержит их все, как раньше. Если больше — детали в карточке не отдаются (ключа `issues` нет), вместо них `issues_url` на постраничную выдачу; `total_issues` и распределение по уровням всегда считаются по полному числу.
 
 `GET /scans/{scan_id}/issues` и `GET /uploads/{upload_id}/issues` отдают `{items, total, offset, limit, issues_truncated, issues_kept}`, где `total` — полное число замечаний (`total_issues`), а `items` — сохранённый срез. `limit` — 1..1000, `offset` ≥ 0 (иначе 400), неизвестная запись без аудита — 404. Порядок стабильный: файл, строка, колонка, затем порядок сохранения; он не зависит от порядка обхода каталога при сканировании. Запрос за границей среза (`offset >= issues_kept`) возвращает 200 с пустым `items` и полным `total`.
 
 Карточка сохранённого аудита загрузки (`GET /uploads/{upload_id}`) подчиняется тому же правилу, что и карточка скана: до 5000 замечаний `issues` в ответе есть, больше — только `issues_url`, `issues_kept` и `total_issues`.
 
 Детализация ограничена: `MAX_ISSUES_KEPT = 5000` (см. `testpilot/scanner/engine.py`). Счётчики `total_issues`, `issues_by_severity` и `issues_by_category` считаются по всем замечаниям, а в записи и ответе хранятся только первые 5000 — `issues_kept` показывает, сколько деталей сохранено, `issues_truncated` — сработал ли срез. Это же ограничение действует для `POST /scan-upload` и сохранённого `audit_result` загрузки.
+
+`GET /health` отдаёт `audit_max_issues` — фактический предел детализации, с которым запущен сервис (значение `TP_AUDIT_MAX_ISSUES`, 100..20000, по умолчанию 5000).
 
 Доступ: `POST /scan` и `POST /scan-upload` требуют Basic Auth, потому что пишут запись в БД. Чтение — `GET /scans`, `GET /scans/{id}` и оба `/report` — ничего не записывает. Без учётных данных или с неверным паролем ответ 401; 403 отдают маршруты с ограничением роли (на этих маршрутах роль не ограничена, достаточно любой аутентифицированной). Отчёты отдаются как `attachment` с `Content-Disposition: attachment; filename="audit-<id>.md|csv"`.
 

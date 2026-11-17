@@ -1,7 +1,7 @@
 """Честные поля /health: env-профиль 1С отдельно от подключений проектов."""
 from __future__ import annotations
 
-HEALTH_FIELDS = {'status', 'executor_1c_env', 'projects_with_connection'}
+HEALTH_FIELDS = {'status', 'executor_1c_env', 'projects_with_connection', 'audit_max_issues'}
 
 
 def _connect_project(impact) -> dict:

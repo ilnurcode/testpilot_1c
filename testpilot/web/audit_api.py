@@ -12,7 +12,8 @@ from sqlalchemy import select
 
 from testpilot.common import user
 from testpilot.db import session, UploadRow, CodeAuditRow
-from testpilot.scanner import MAX_ISSUES_KEPT, ScannerEngine, Severity, ScanSummary
+from testpilot import audit_limit
+from testpilot.scanner import ScannerEngine, Severity, ScanSummary
 from testpilot.web.audit_report import render_audit_report
 
 router = APIRouter(prefix="/api/v1/audit", tags=["Аудит и v8std"])
@@ -51,14 +52,14 @@ def _summarize(issues, total_files: int, *, status: str = "scanned", message: st
     """Сводка аудита. status отличает реальную проверку от случая, когда проверять было нечего.
 
     Счётчики (total_issues, issues_by_severity/category) считаются по всем замечаниям, а детализация
-    в записи и ответе ограничена MAX_ISSUES_KEPT: 1.6-МБ файл даёт 200k замечаний и десятки МБ JSON.
+    в записи и ответе ограничена audit_limit.MAX_ISSUES_KEPT: 1.6-МБ файл даёт 200k замечаний и десятки МБ JSON.
     """
     sev_counts: dict[str, int] = {}
     cat_counts: dict[str, int] = {}
     for issue in issues:
         sev_counts[issue.severity.value] = sev_counts.get(issue.severity.value, 0) + 1
         cat_counts[issue.category.value] = cat_counts.get(issue.category.value, 0) + 1
-    kept = issues[:MAX_ISSUES_KEPT]
+    kept = issues[:audit_limit.MAX_ISSUES_KEPT]
     summary = ScanSummary(
         total_files=total_files,
         total_issues=len(issues),
@@ -95,12 +96,12 @@ def _code_audit_result(row: CodeAuditRow, *, include_issues: bool | None = None)
     `sha256` — отпечаток проверенного входа: текст вставленного кода либо манифест файлов каталога.
     Полный исходник не сохраняется: в замечаниях есть только фрагменты строк (code_fragment), не длиннее FRAGMENT_LIMIT.
 
-    Совместимость: пока замечаний не больше MAX_ISSUES_KEPT, карточка несёт `issues` как раньше.
+    Совместимость: пока замечаний не больше audit_limit.MAX_ISSUES_KEPT, карточка несёт `issues` как раньше.
     Если их больше, детали в карточку не попадают — их отдаёт постранично `issues_url`
     (иначе ответ на скан с 5000 деталями весит мегабайты).
     """
     kept = row.issues_kept if row.issues_kept is not None else len(row.issues)
-    keep_details = row.total_issues <= MAX_ISSUES_KEPT if include_issues is None else include_issues
+    keep_details = row.total_issues <= audit_limit.MAX_ISSUES_KEPT if include_issues is None else include_issues
     result = {
         "scan_id": row.id,
         "source_name": row.source_name,
@@ -148,11 +149,11 @@ def _save_result(row, result):
     """Сохраняет аудит загрузки и возвращает его карточку.
 
     В БД остаётся полный срез деталей (он нужен отчёту), а в ответе детали не отдаются,
-    если замечаний больше MAX_ISSUES_KEPT: их выдаёт постранично `issues_url`.
+    если замечаний больше audit_limit.MAX_ISSUES_KEPT: их выдаёт постранично `issues_url`.
     """
     row.audit_result = result
     response = {**result, "issues_url": _upload_issues_url(row.id)}
-    if int(result.get("total_issues") or 0) > MAX_ISSUES_KEPT:
+    if int(result.get("total_issues") or 0) > audit_limit.MAX_ISSUES_KEPT:
         response.pop("issues", None)
     return response
 
@@ -364,7 +365,7 @@ def _upload_issues_url(upload_id: str) -> str:
 def _upload_audit_result(row: UploadRow) -> dict[str, Any]:
     """Карточка сохранённого аудита загрузки в форме ответа POST /scan-upload.
 
-    Совместимость та же, что у журнала сканов: пока замечаний не больше MAX_ISSUES_KEPT,
+    Совместимость та же, что у журнала сканов: пока замечаний не больше audit_limit.MAX_ISSUES_KEPT,
     `issues` отдаются как раньше; выше — детали только постранично через `issues_url`.
     """
     stored = dict(row.audit_result or {})
@@ -377,7 +378,7 @@ def _upload_audit_result(row: UploadRow) -> dict[str, Any]:
               "issues_kept": int(kept),
               "issues_truncated": bool(stored.get("issues_truncated")),
               "issues_url": _upload_issues_url(row.id)}
-    if total > MAX_ISSUES_KEPT:
+    if total > audit_limit.MAX_ISSUES_KEPT:
         result.pop("issues", None)
     return result
 

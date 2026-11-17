@@ -9,6 +9,7 @@ x-app: &app
     TP_ANALYST_PASSWORD: ${TP_ANALYST_PASSWORD:-TestPilotAnalystLocal123!}
     TP_EXPERT_PASSWORD: ${TP_EXPERT_PASSWORD:-TestPilotLocal123!}
     TP_RUNNER_PASSWORD: ${TP_RUNNER_PASSWORD:-TestPilotRunnerLocal123!}
+    TP_AUDIT_MAX_ISSUES: ${TP_AUDIT_MAX_ISSUES:-5000}
   depends_on:
     migrate:
       condition: service_completed_successfully
