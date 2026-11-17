@@ -623,3 +623,54 @@ def test_platform_error_during_processing_fails_fast(page):
     assert 'Неверный пароль' in str(error.value)
     assert elapsed < 6, f'ошибка платформы должна прерывать ожидание сразу, прошло {elapsed:.1f} с'
     assert runner.last_login_diagnostics['after_click_state'] == 'platform_error'
+
+
+def test_presubmit_shot_does_not_leak_between_attempts(page):
+    page = page.context.new_page()
+    page.set_content(
+        """
+        <div id="authWindow">
+          <input id="authWindow_basic_login" name="login" type="text">
+          <input id="authWindow_basic_password" name="password" type="password">
+          <button id="authWindow_basic_okButton" onclick="
+            document.getElementById('authWindow').style.display='none';
+            document.body.insertAdjacentHTML('beforeend','<div>Продажи</div>');">Войти</button>
+        </div>
+        """
+    )
+    runner = _runner()
+
+    runner.handle_login(page)
+    assert runner.last_login_presubmit_shot[:8] == b'\x89PNG\r\n\x1a\n'
+
+    page.set_content('<div id="funcPanel">Главное</div>')
+    runner.handle_login(page)
+
+    assert runner.last_login_presubmit_shot == b'', 'снимок прошлой попытки не должен переходить в следующую'
+    page.close()
+
+
+def test_hidden_busy_markers_do_not_look_like_processing(page):
+    page = page.context.new_page()
+    page.set_content(
+        """
+        <div aria-busy="true" style="display:none"></div>
+        <button id="okHelper" disabled style="display:none">Служебная</button>
+        <div id="authWindow">
+          <input id="authWindow_basic_login" name="login" type="text">
+          <input id="authWindow_basic_password" name="password" type="password">
+          <button id="authWindow_basic_okButton" onclick="">Войти</button>
+        </div>
+        <main id="desk" hidden><div id="funcPanel">Продажи</div></main>
+        """
+    )
+    runner = _runner()
+    runner.LOGIN_GRACE_SECONDS = 2
+
+    with pytest.raises(RuntimeError):
+        runner.handle_login(page)
+
+    assert runner.last_login_diagnostics['after_click_state'] == 'form_idle', (
+        'скрытые aria-busy и disabled-кнопка вне #authWindow не означают обработку'
+    )
+    page.close()

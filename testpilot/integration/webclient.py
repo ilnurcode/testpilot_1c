@@ -278,10 +278,12 @@ class WebClientRunner:
     )
 
     LOGIN_PROCESSING_SCRIPT = """() => {
-        const busy = document.querySelector('[aria-busy="true"], .waitingOverlay, .blockUI');
+        const visible = element => !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+        const scope = document.querySelector('#authWindow');
+        if (!scope) return false;
+        const busy = [...scope.querySelectorAll('[aria-busy="true"], .waitingOverlay, .blockUI')].some(visible);
         if (busy) return true;
-        const fields = [...document.querySelectorAll('#authWindow input, #authWindow button, button[id*="ok"]')];
-        return fields.some(element => element.disabled);
+        return [...scope.querySelectorAll('input, button')].some(element => element.disabled);
     }"""
 
     def _login_processing(self, frame) -> bool:
@@ -438,6 +440,8 @@ class WebClientRunner:
 
     def handle_login(self, page) -> None:
         """Авторизация в веб-клиенте 1С 8.3/8.5; ровно одна попытка, при неудаче — понятная ошибка."""
+        # Раннер один на несколько кейсов: снимок прошлой попытки не должен прилипнуть к текущей.
+        self.last_login_presubmit_shot = b''
         # Диагностика для результата прогона: без значений полей, только факты действий.
         self.last_login_diagnostics = {
             'stage': 'wait_form',
