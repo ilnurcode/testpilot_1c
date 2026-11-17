@@ -146,17 +146,19 @@ def execute_1c(suite, profile):
                         result['login'] = dict(web_runner.last_login_diagnostics)
                     attached = False
                     tiny = False
-                    # Приоритет: снимок шага (после ошибки) → снимок формы до отправки → недоступно.
-                    candidates = list(report.screenshots) + [getattr(report, 'pre_submit_screenshot', b'')]
-                    valid = []
-                    for shot in candidates:
-                        if not shot or len(shot) < 100:
-                            tiny = True
-                            continue
-                        if len(shot) <= 2 * 1024 * 1024:
-                            valid.append(shot)
-                    if valid:
-                        evidence.append((len(results), valid[-1]))
+                    # Приоритет: валидный снимок шага (последний по порядку) → pre-submit → недоступно.
+                    shots = list(report.screenshots)
+                    pre = getattr(report, 'pre_submit_screenshot', b'') or b''
+
+                    def usable(shot: bytes) -> bool:
+                        return bool(shot) and 100 <= len(shot) <= 2 * 1024 * 1024
+
+                    step_valid = [shot for shot in shots if usable(shot)]
+                    pre_valid = pre if usable(pre) else b''
+                    chosen = step_valid[-1] if step_valid else pre_valid
+                    tiny = any(len(shot) < 100 for shot in shots + [pre])
+                    if chosen:
+                        evidence.append((len(results), chosen))
                         attached = True
                     if not attached:
                         result['screenshot_unavailable'] = True

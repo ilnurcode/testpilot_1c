@@ -154,3 +154,20 @@ def test_successful_run_saves_one_evidence_only(monkeypatch):
     assert results[0]['status'] == 'passed'
     assert len(evidence) == 1, 'на результат — ровно один evidence, без дубликатов'
     assert evidence[0] == (0, last), 'берётся последний осмысленный снимок шага'
+
+
+def test_step_screenshot_wins_over_pre_submit(monkeypatch):
+    post = b'\x89PNG\r\n\x1a\n' + b'p' * (2000 - 8)
+    pre = b'\x89PNG\r\n\x1a\n' + b'q' * (1500 - 8)
+    report = ScenarioReport(title='Веб-клиент 1С', status='error',
+                            error='Ошибка на шаге 1 (click Продажи): элемент не найден',
+                            screenshots=[post], pre_submit_screenshot=pre)
+    _patch_runner(monkeypatch, report, {'stage': 'after_click', 'user_filled': True,
+                                        'password_filled': False, 'clicked': True,
+                                        'form_visible_after': True})
+
+    results, evidence = executor.execute_1c(_suite(), _Profile())
+
+    assert len(evidence) == 1
+    assert evidence[0] == (0, post), 'снимок шага после ошибки должен перебивать pre-submit'
+    assert len(evidence[0][1]) == 2000
