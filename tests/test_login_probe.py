@@ -276,3 +276,101 @@ def test_probe_errors_map_to_503(monkeypatch):
 
     assert error.value.status_code == 503
     assert error.value.detail == 'Не удалось открыть веб-клиент проекта: net::ERR_NAME_NOT_RESOLVED'
+
+
+class FakeRequest:
+    def __init__(self, url, resource_type='document'):
+        self.url = url
+        self.resource_type = resource_type
+
+
+class FakeRoute:
+    def __init__(self, request):
+        self.request = request
+        self.aborted = False
+        self.continued = False
+
+    def abort(self):
+        self.aborted = True
+
+    def continue_(self):
+        self.continued = True
+
+
+class RoutingPage(FakeProbePage):
+    """Страница с перехватом маршрутов: позволяет стрелять guard-ом без сети."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.route_handler = None
+
+    def route(self, selector, handler):
+        self.route_handler = handler
+
+    def fire(self, url, resource_type='document'):
+        route = FakeRoute(FakeRequest(url, resource_type))
+        self.route_handler(route)
+        return route
+
+
+def test_route_guard_blocks_foreign_and_allows_own_origin():
+    from testpilot.integration.webclient import _origin, probe_route_guard
+
+    allowed = {_origin('http://project.test/DemoTrd')}
+    state = {'blocked': 0, 'blocked_origins': [], 'blocked_main': False}
+    guard = probe_route_guard(allowed, state)
+
+    own = FakeRoute(FakeRequest('http://project.test/DemoTrd/app.js', 'script'))
+    guard(own)
+    foreign = FakeRoute(FakeRequest('http://evil.example.test/track.js', 'script'))
+    guard(foreign)
+
+    assert own.continued is True and own.aborted is False
+    assert foreign.aborted is True and foreign.continued is False
+    assert state['blocked'] == 1
+    assert state['blocked_origins'] == ['http://evil.example.test']
+
+
+def test_blocked_main_navigation_is_503(monkeypatch):
+    from testpilot.integration import webclient
+
+    page = RoutingPage(url='about:blank')
+
+    def blocked_navigate(page_obj, url, **kwargs):
+        page_obj.fire('http://evil.example.test/redirect')
+        raise RuntimeError('net::ERR_FAILED')
+
+    monkeypatch.setattr(webclient, 'navigate', blocked_navigate)
+
+    with pytest.raises(RuntimeError) as error:
+        webclient.probe_login_page(page, 'http://project.test/DemoTrd')
+
+    assert str(error.value) == 'Запрос на сторонний origin отклонён: http://evil.example.test (разрешено: http://project.test)'
+
+
+def test_successful_navigation_blocks_nothing(monkeypatch):
+    from testpilot.integration import webclient
+
+    monkeypatch.setattr(webclient, 'navigate', lambda page, url, **kwargs: url)
+    page = RoutingPage(url='http://project.test/DemoTrd/app')
+
+    result = webclient.probe_login_page(page, 'http://project.test/DemoTrd')
+
+    assert result['blocked_requests'] == 0
+
+
+def test_blocked_subresource_does_not_fail_navigation(monkeypatch):
+    from testpilot.integration import webclient
+
+    def navigate_and_track(page_obj, url, **kwargs):
+        page_obj.fire('http://project.test/DemoTrd/app')
+        page_obj.fire('http://cdn.thirdparty.test/analytics.js', 'script')
+        return url
+
+    monkeypatch.setattr(webclient, 'navigate', navigate_and_track)
+    page = RoutingPage(url='http://project.test/DemoTrd/app')
+
+    result = webclient.probe_login_page(page, 'http://project.test/DemoTrd')
+
+    assert result['blocked_requests'] == 1
+    assert result['login_form_visible'] is False

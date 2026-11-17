@@ -624,17 +624,47 @@ def _login_probe_open_error(reason) -> RuntimeError:
     return RuntimeError(f'Не удалось открыть веб-клиент проекта: {reason}')
 
 
+def probe_route_guard(allowed, state):
+    """Прерывный фильтр: запрос вне allowlist отклоняется до отправки, разрешённые пропускаются."""
+    def guard(route):
+        request = route.request
+        url = getattr(request, 'url', '') or ''
+        origin = _origin(url)
+        if origin in allowed:
+            route.continue_()
+            return
+        state['blocked'] += 1
+        state['blocked_origins'].append(_origin_text(url))
+        if getattr(request, 'resource_type', '') == 'document':
+            state['blocked_main'] = True
+        route.abort()
+
+    return guard
+
+
+def _blocked_origin_error(state, web_url: str) -> RuntimeError:
+    allowed_text = ', '.join(sorted({_origin_text(url) for url in container_access_urls(web_url)}))
+    return RuntimeError(f'Запрос на сторонний origin отклонён: {state["blocked_origins"][0]} (разрешено: {allowed_text})')
+
+
 def probe_login_page(page, web_url: str, timeout_ms: int = 20000) -> dict:
     """Открывает web_url на переданной странице и возвращает факты; ошибки открытия/origin не скрываются."""
     allowed = {_origin(url) for url in container_access_urls(web_url)}
+    state = {'blocked': 0, 'blocked_origins': [], 'blocked_main': False}
+    if hasattr(page, 'route'):
+        page.route('**/*', probe_route_guard(allowed, state))
     try:
         navigate(page, web_url)
     except Exception as error:
+        if state['blocked_main']:
+            raise _blocked_origin_error(state, web_url) from error
         raise _login_probe_open_error(error) from error
 
     actual = page.url or ''
     parts = urlsplit(actual)
     if parts.scheme not in ('http', 'https') or not parts.netloc:
+        if state['blocked_main']:
+            raise _blocked_origin_error(state, web_url)
         raise _login_probe_open_error(f'страница не открыта ({actual or "about:blank"})')
     actual_origin = _origin(actual)
     if actual_origin not in allowed:
@@ -646,7 +676,9 @@ def probe_login_page(page, web_url: str, timeout_ms: int = 20000) -> dict:
         raise _login_probe_open_error(f'не дождались формы входа или рабочего стола: {error}') from error
 
     page.wait_for_timeout(1000)
-    return collect_login_facts(page)
+    facts = collect_login_facts(page)
+    facts['blocked_requests'] = state['blocked']
+    return facts
 
 
 def probe_login_form(web_url: str, timeout_ms: int = 20000) -> dict:
