@@ -93,3 +93,69 @@ def test_login_button_without_effect_raises(page):
         runner.handle_login(page)
 
     assert LOGIN_FAILED in str(error.value)
+
+
+def test_empty_password_submits_exactly_once(page):
+    page.set_content(
+        """
+        <div id="authWindow">
+          <script>window.__clicks = 0;</script>
+          <input name="userName" type="text" value="">
+          <input type="password" value="">
+          <button onclick="window.__clicks = (window.__clicks || 0) + 1;
+                           document.body.innerHTML = '<div>Продажи</div>';">Войти</button>
+        </div>
+        """
+    )
+    runner = _runner()  # password='' — пустой пароль легитимен
+
+    runner.handle_login(page)
+
+    assert page.evaluate('window.__clicks') == 1, 'вход должен выполняться ровно одной попыткой'
+    assert 'Продажи' in page.inner_text('body')
+
+
+def test_platform_error_text_is_reported(page):
+    page.set_content(
+        """
+        <div id="authWindow">
+          <script>window.__clicks = 0;</script>
+          <input name="userName" type="text" value="">
+          <input type="password" value="">
+          <div id="err" style="display:none">Неверный пароль</div>
+          <button onclick="window.__clicks = (window.__clicks || 0) + 1;
+                           document.getElementById('err').style.display = 'block';">Войти</button>
+        </div>
+        """
+    )
+    runner = _runner()
+
+    with pytest.raises(RuntimeError) as error:
+        runner.handle_login(page)
+
+    message = str(error.value)
+    assert LOGIN_FAILED in message
+    assert 'Неверный пароль' in message, f'текст платформы должен попасть в ошибку: {message}'
+    assert 'пароль пустой — как настроено в проекте' in message
+
+
+def test_platform_error_does_not_trigger_retry(page):
+    page.set_content(
+        """
+        <div id="authWindow">
+          <script>window.__clicks = 0;</script>
+          <input name="userName" type="text" value="">
+          <input type="password" value="">
+          <div id="err" style="display:none">Превышено количество попыток</div>
+          <button onclick="window.__clicks = (window.__clicks || 0) + 1;
+                           document.getElementById('err').style.display = 'block';">Войти</button>
+        </div>
+        """
+    )
+    runner = _runner()
+
+    with pytest.raises(RuntimeError) as error:
+        runner.handle_login(page)
+
+    assert 'Превышено количество попыток' in str(error.value)
+    assert page.evaluate('window.__clicks') == 1, 'повторных кликов быть не должно'

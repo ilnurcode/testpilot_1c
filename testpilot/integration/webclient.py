@@ -245,8 +245,28 @@ class WebClientRunner:
                 continue
         return False
 
+    # Сообщения платформы о неудачном входе/блокировке: показываем их в ошибке шага.
+    LOGIN_ERROR_MARKERS = (
+        'Неверный пароль',
+        'Блокировка',
+        'Превышено количество попыток',
+        'Пользователь не найден',
+        'Неверное имя',
+    )
+
+    def _platform_login_error(self, page) -> str | None:
+        """Текст ошибки входа из сообщения платформы, если он появился на странице."""
+        try:
+            body = page.locator('body').inner_text(timeout=3000) or ''
+        except Exception:
+            return None
+        for marker in self.LOGIN_ERROR_MARKERS:
+            if marker in body:
+                return marker
+        return None
+
     def handle_login(self, page) -> None:
-        """Авторизация в веб-клиенте 1С 8.3/8.5; при неудаче — понятная ошибка, а не тихий проход."""
+        """Авторизация в веб-клиенте 1С 8.3/8.5; ровно одна попытка, при неудаче — понятная ошибка."""
         user_input = None
         last_error: Exception | None = None
         for selector in self.LOGIN_FIELD_SELECTORS:
@@ -265,6 +285,8 @@ class WebClientRunner:
                 raise RuntimeError(f'{self.LOGIN_FAILED}{reason}')
             return  # формы входа нет — уже рабочий стол
 
+        # Пустой пароль легитимен (так настроен демо-стенд): заполняем только непустой, submit не блокируем.
+        password_note = '' if self.profile.password else ' (пароль пустой — как настроено в проекте)'
         try:
             if self.profile.username:
                 user_input.fill(self.profile.username)
@@ -278,25 +300,29 @@ class WebClientRunner:
                 ok_btn = page.locator('button[id*="ok"], button:has-text("OK")').first
             if not ok_btn.is_visible(timeout=1000):
                 raise RuntimeError('кнопка «Войти» не найдена на форме логина')
-            ok_btn.click()
+            ok_btn.click()  # ровно одна попытка: повторных кликов и ретраев нет
         except Exception as error:
-            raise RuntimeError(f'{self.LOGIN_FAILED}: {error}') from error
+            raise RuntimeError(f'{self.LOGIN_FAILED}{password_note}: {error}') from error
 
         try:
             page.wait_for_function(
-                """() => {
+                """markers => {
                     const txt = document.body.innerText || '';
-                    return txt.includes('Продажи') || txt.includes('Главное') || txt.includes('Закупки')
-                        || txt.includes('Начальная страница') || txt.includes('Не найдена лицензия')
-                        || txt.includes('вход в приложение невозможен') || txt.includes('Выполнить запуск');
+                    const workspace = ['Продажи', 'Главное', 'Закупки', 'Начальная страница',
+                        'Не найдена лицензия', 'вход в приложение невозможен', 'Выполнить запуск'];
+                    return workspace.some(text => txt.includes(text)) || markers.some(marker => txt.includes(marker));
                 }""",
+                arg=list(self.LOGIN_ERROR_MARKERS),
                 timeout=45000,
             )
         except Exception:
             pass
 
+        platform_error = self._platform_login_error(page)
+        if platform_error:
+            raise RuntimeError(f'{self.LOGIN_FAILED}{password_note}: {platform_error}')
         if self._login_form_visible(page):
-            raise RuntimeError(self.LOGIN_FAILED)
+            raise RuntimeError(f'{self.LOGIN_FAILED}{password_note}')
         page.wait_for_timeout(1500)
 
     def wait_for_1c(self, page) -> None:
