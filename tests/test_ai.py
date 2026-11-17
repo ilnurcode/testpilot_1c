@@ -855,3 +855,57 @@ def test_run_report_has_no_odata_hint_for_passed_results(clients, monkeypatch):
     body = c.get(f"/api/v1/ai/suites/{run['suite_id']}/report").text
     assert [r['status'] for r in run['results']] == ['passed', 'failed']
     assert 'Возможная причина: EntitySet не опубликован' not in body
+
+
+def test_llm_settings_write_only_to_working_directory_env(clients, monkeypatch, tmp_path):
+    """PUT настроек пишет .env текущего каталога и не трогает файл репозитория."""
+    import pathlib
+
+    _, c = clients
+    repo_env = pathlib.Path('.env').resolve()
+    before = repo_env.read_bytes() if repo_env.exists() else None
+    (tmp_path / '.env').write_text('TP_LLM_MODEL=old-model\n', encoding='utf-8')
+    monkeypatch.chdir(tmp_path)
+
+    response = c.put('/api/v1/ai/settings/llm', json={
+        'base_url': 'https://llm.example.test/v1',
+        'model': 'unit-model',
+        'api_key': 'unit-key',
+    })
+
+    assert response.status_code == 200, response.text
+    written = tmp_path / '.env'
+    assert written.is_file()
+    assert 'TP_LLM_MODEL=unit-model' in written.read_text(encoding='utf-8')
+    assert (repo_env.read_bytes() if repo_env.exists() else None) == before, 'реальный .env изменён'
+
+
+def test_llm_settings_cannot_write_repository_env(clients, monkeypatch, tmp_path):
+    """Даже из каталога репозитория запись уходит только в подменённый целевой путь."""
+    import pathlib
+
+    from testpilot.ai import api as ai_api
+
+    _, c = clients
+    repo_env = pathlib.Path('.env').resolve()
+    before = repo_env.read_bytes() if repo_env.exists() else None
+    target = tmp_path / 'redirected.env'
+    target.write_text('TP_LLM_MODEL=old-model\n', encoding='utf-8')
+    real_path = pathlib.Path
+
+    def redirected(value='.'):
+        candidate = real_path(value)
+        return target if candidate.name == '.env' else candidate
+
+    monkeypatch.setattr(ai_api, 'Path', redirected)
+
+    response = c.put('/api/v1/ai/settings/llm', json={
+        'base_url': 'https://llm.example.test/v1',
+        'model': 'unit-model',
+        'api_key': 'unit-key',
+    })
+
+    assert response.status_code == 200, response.text
+    assert target.is_file()
+    assert 'TP_LLM_MODEL=unit-model' in target.read_text(encoding='utf-8')
+    assert (repo_env.read_bytes() if repo_env.exists() else None) == before, 'реальный .env изменён'

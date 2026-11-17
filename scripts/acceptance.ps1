@@ -3,12 +3,15 @@
     Исполняемая приёмка TestPilot 1C: PASS/FAIL/SKIP по шагам, сводка и exit code.
 .DESCRIPTION
     Тот же набор шагов, что в scripts/acceptance.sh. PowerShell 5.1+, без внешних модулей.
-    Запуск: powershell -ExecutionPolicy Bypass -File scripts\acceptance.ps1 [-CfePath <file>] [-NoBuild]
+    Запуск: powershell -ExecutionPolicy Bypass -File scripts\acceptance.ps1 [-CfePath <file>] [-NoBuild] [-IncludeLLM] [-IncludeLive1C]
+    По умолчанию проверяются только локальные вещи: без -IncludeLLM нет обращений к провайдеру, без -IncludeLive1C нет прогона на 1С.
     Переменные окружения: EXPECT_DEMO_ISSUES (по умолчанию 12), CFE_PATH, TP_EXPERT_PASSWORD, TP_EXPERT_USER.
 #>
 param(
     [string]$CfePath = $env:CFE_PATH,
-    [switch]$NoBuild
+    [switch]$NoBuild,
+    [switch]$IncludeLLM,
+    [switch]$IncludeLive1C
 )
 
 $ErrorActionPreference = 'Stop'
@@ -174,7 +177,9 @@ function Test-CleanProposal($proposal) {
     }
     return $true
 }
-if (-not $llmKey) {
+if (-not $IncludeLLM) {
+    Skip 'генерация плана и прогон отключены: добавьте -IncludeLLM (внешний провайдер) и -IncludeLive1C (прогон на 1С)'
+} elseif (-not $llmKey) {
     Skip 'генерация плана: TP_LLM_API_KEY не задан'
 } elseif (-not $package) {
     Fail 'генерация плана: нет package_id из анализа ZIP'
@@ -203,6 +208,9 @@ if (-not $llmKey) {
                 $approved = Post-Json "$Intel/api/v1/ai/suites/$($suite.suite_id)/approve" @{ reason = 'acceptance'; selected_proposals = @([int]$index) }
                 if ($approved.status -eq 'approved') { Pass 'approve: approved' } else { Fail "approve: $($approved.status)" }
             } catch { Fail "approve: $($_.Exception.Message)" }
+            if (-not $IncludeLive1C) {
+                Skip 'прогон на 1С отключён: добавьте -IncludeLive1C'
+            } else {
             try {
                 $run = Post-Json "$Intel/api/v1/ai/suites/$($suite.suite_id)/run-1c" @{}
                 $passedCount = [int]$run.counts.passed
@@ -212,6 +220,7 @@ if (-not $llmKey) {
             } catch { Fail "прогон: $($_.Exception.Message)" }
             $reportCode = Test-Url "$Intel/api/v1/ai/suites/$($suite.suite_id)/report"
             if ($reportCode -eq 200) { Pass 'отчёт о прогоне md: 200' } else { Fail "отчёт о прогоне md: $reportCode" }
+            }
         }
     }
 }

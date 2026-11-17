@@ -12,10 +12,14 @@ INTEL=http://127.0.0.1:8002
 EXPECT_ISSUES="${EXPECT_DEMO_ISSUES:-12}"
 CFE_FILE="${CFE_PATH:-}"
 BUILD=1
+INCLUDE_LLM=0
+INCLUDE_LIVE_1C=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --cfe) CFE_FILE="${2:-}"; shift 2 ;;
     --no-build) BUILD=0; shift ;;
+    --llm) INCLUDE_LLM=1; shift ;;
+    --live-1c) INCLUDE_LIVE_1C=1; shift ;;
     *) echo "Неизвестный аргумент: $1"; exit 2 ;;
   esac
 done
@@ -132,7 +136,9 @@ if [ "$CSV_CODE" = "200" ] && [ "$CSV_SIZE" -gt 0 ]; then pass "отчёт csv: 
 
 echo "=== 5. ИИ: план и прогон ==="
 LLM_KEY="$(docker compose exec -T intelligence sh -c 'printf "%s" "${TP_LLM_API_KEY:-}"' 2>/dev/null | tr -d '\r')"
-if [ -z "$LLM_KEY" ]; then
+if [ "$INCLUDE_LLM" = "0" ]; then
+  skip "генерация плана и прогон отключены: добавьте --llm (внешний провайдер) и --live-1c (прогон на 1С)"
+elif [ -z "$LLM_KEY" ]; then
   skip "генерация плана: TP_LLM_API_KEY не задан"
 elif [ -z "${PACKAGE:-}" ] || [ "$PACKAGE" = "None" ]; then
   fail "генерация плана: нет package_id из анализа ZIP"
@@ -172,13 +178,22 @@ PY
     APPROVED="$(api "$INTEL" POST "/api/v1/ai/suites/$SUITE_ID/approve" "{\"reason\":\"acceptance\",\"selected_proposals\":[$INDEX]}")"
     APPROVED_STATUS="$(printf '%s' "$APPROVED" | jget "d.get('status')" 2>/dev/null)"
     if [ "$APPROVED_STATUS" = "approved" ]; then pass "approve: approved"; else fail "approve: ${APPROVED_STATUS:-нет ответа}"; fi
+    if [ "$INCLUDE_LIVE_1C" = "0" ]; then
+      skip "прогон на 1С отключён: добавьте --live-1c"
+      PASSED_N=""
+      EVIDENCE=""
+      REPORT_CODE=""
+    else
     RUN="$(api "$INTEL" POST "/api/v1/ai/suites/$SUITE_ID/run-1c")"
     PASSED_N="$(printf '%s' "$RUN" | jget "(d.get('counts') or {}).get('passed', 0)" 2>/dev/null)"
     EVIDENCE="$(printf '%s' "$RUN" | jget "next((r.get('evidence_id') for r in d.get('results') or [] if r.get('evidence_id')), '')" 2>/dev/null)"
-    if [ "${PASSED_N:-0}" -ge 1 ] 2>/dev/null; then pass "прогон: passed=$PASSED_N"; else fail "прогон: passed=${PASSED_N:-0} ($(printf '%s' "$RUN" | head -c 160))"; fi
-    if [ -n "${EVIDENCE:-}" ]; then pass "evidence: $EVIDENCE"; else fail "evidence отсутствует"; fi
-    REPORT_CODE="$(code_of "$INTEL/api/v1/ai/suites/$SUITE_ID/report")"
-    if [ "$REPORT_CODE" = "200" ]; then pass "отчёт о прогоне md: 200"; else fail "отчёт о прогоне md: $REPORT_CODE"; fi
+    if [ -n "${PASSED_N:-}" ]; then
+      if [ "${PASSED_N:-0}" -ge 1 ] 2>/dev/null; then pass "прогон: passed=$PASSED_N"; else fail "прогон: passed=${PASSED_N:-0} ($(printf '%s' "$RUN" | head -c 160))"; fi
+      if [ -n "${EVIDENCE:-}" ]; then pass "evidence: $EVIDENCE"; else fail "evidence отсутствует"; fi
+      REPORT_CODE="$(code_of "$INTEL/api/v1/ai/suites/$SUITE_ID/report")"
+      if [ "$REPORT_CODE" = "200" ]; then pass "отчёт о прогоне md: 200"; else fail "отчёт о прогоне md: $REPORT_CODE"; fi
+    fi
+    fi
   fi
 fi
 
