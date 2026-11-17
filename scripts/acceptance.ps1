@@ -1,6 +1,8 @@
 <#
 .SYNOPSIS
     Исполняемая приёмка TestPilot 1C: PASS/FAIL/SKIP по шагам, сводка и exit code.
+    ВНИМАНИЕ: не выполнять `docker compose down -v` на стенде с данными — это уничтожает БД и evidence.
+    Для чистого старта используйте отдельный compose-проект (`-p testpilot-ci`) или CI-раннер.
 .DESCRIPTION
     Тот же набор шагов, что в scripts/acceptance.sh. PowerShell 5.1+, без внешних модулей.
     Запуск: powershell -ExecutionPolicy Bypass -File scripts\acceptance.ps1 [-CfePath <file>] [-NoBuild] [-IncludeLLM] [-IncludeLive1C] [-Keep]
@@ -65,6 +67,7 @@ function Test-Url([string]$url) {
 
 try {
 Write-Host '=== 1. Стек ==='
+Write-Host "ПРЕДУПРЕЖДЕНИЕ: не выполнять 'docker compose down -v' на стенде с данными — это уничтожает БД и evidence. Для чистого старта: отдельный проект (-p testpilot-ci) или CI-раннер."
 if ($NoBuild) {
     Skip 'docker compose up (указан -NoBuild)'
 } else {

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Исполняемая приёмка TestPilot 1C:	PASS/FAIL/SKIP по шагам, итоговая сводка и exit code.
+# ВНИМАНИЕ: не выполнять `docker compose down -v` на стенде с данными — это уничтожает БД и evidence.
+# Для чистого старта используйте отдельный compose-проект (`-p testpilot-ci`) или CI-раннер.
 # Использование: scripts/acceptance.sh [--cfe PATH] [--no-build]
 # Переменные окружения: EXPECT_DEMO_ISSUES (по умолчанию 12), CFE_PATH, TP_EXPERT_PASSWORD, TP_EXPERT_USER.
 set -u
@@ -88,6 +90,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "=== 1. Стек ==="
+echo "ПРЕДУПРЕЖДЕНИЕ: не выполнять 'docker compose down -v' на стенде с данными — это уничтожает БД и evidence. Для чистого старта: отдельный проект (-p testpilot-ci) или CI-раннер."
 if [ "$BUILD" = "1" ]; then
   if docker compose up -d --build --wait >/tmp/tp_acceptance_up.log 2>&1; then
     pass "docker compose up -d --build --wait"

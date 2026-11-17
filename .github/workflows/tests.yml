@@ -71,6 +71,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      # Изоляция: CI работает в собственном compose-проекте и не может задеть локальный `testpilot`.
+      COMPOSE_PROJECT_NAME: testpilot-ci
       # Локальные стендовые пароли (не секреты): compose и приёмка читают те же значения.
       TP_ANALYST_PASSWORD: TestPilotAnalystLocal123!
       TP_EXPERT_PASSWORD: TestPilotLocal123!
@@ -80,14 +82,14 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: "Стек: сборка и ожидание healthy"
-        run: docker compose up -d --build --wait
+        run: docker compose -p testpilot-ci up -d --build --wait
 
       - name: "Полная приёмка (без ИИ и живой 1С)"
         run: bash scripts/acceptance.sh --no-build
 
       - name: Логи контейнеров при падении
         if: failure()
-        run: docker compose logs --no-color > logs.txt
+        run: docker compose -p testpilot-ci logs --no-color > logs.txt
 
       - name: Выгрузить логи
         if: failure()
@@ -102,4 +104,4 @@ jobs:
 
       - name: Остановить стек
         if: always()
-        run: docker compose down -v
+        run: docker compose -p testpilot-ci down -v

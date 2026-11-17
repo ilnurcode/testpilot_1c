@@ -2,13 +2,17 @@
 
 Короткая сводка состояния. Подробности — в [api.md](api.md), [rules.md](rules.md), [security.md](security.md), [acceptance.md](acceptance.md).
 
+## Состояние БД после инцидента
+
+2026-11-17 при локальной проверке CI-джобы была выполнена `docker compose down -v`, которая удалила рабочую БД (`testpilot_pgdata`: 33 проекта, 39 загрузок, 45 suite, 42 записи `code_audit`, 107 evidence) и `testpilot_codex_auth`. Подробности и результаты поиска бэкапов — [incident-2026-11-17.md](incident-2026-11-17.md). До восстановления данных приёмка на этой машине покажет 0 проектов; для проверки используйте чистый проект `-p testpilot-ci`. Репозиторий и тестовые ассеты не пострадали.
+
 ## Состояние
 
 - Коммит кода: `3b79162` (последний перед этим документом), ветка `main`; точный HEAD — `git log -1 --oneline`.
 - Тесты: число печатает `docker compose exec -T intelligence python -m pytest tests/ -q` и `scripts/acceptance.sh`; в документе не фиксируется.
 - Миграции: `0008 (head)` (`docker compose exec -T intelligence alembic current`).
 - Compose: `db`, `impact`, `intelligence`, `web` — Up (healthy); `migrate` — Exited (0).
-- Dev-БД: 33 проекта, 39 загрузок, 52 версии, 42 анализа, 45 suite, 42 записи `code_audit`. Происхождение части проектов (приёмки, презентационный стенд `cfeb99ee`) по имени/дате не установлено — перед удалением сверять поштучно.
+- Dev-БД: после инцидента 2026-11-17 пуста — 0 проектов и 0 записей `code_audit`; прежние данные (33 проекта, 39 загрузок, 45 suite, 107 evidence) утрачены, см. [incident-2026-11-17.md](incident-2026-11-17.md).
 - CI: `.github/workflows/tests.yml` — push/pull_request в `main`, PostgreSQL 17, pyflakes-страж на `undefined name`, pytest.
 
 ## Что проверено живьём (снимок на момент подготовки)
@@ -39,7 +43,7 @@
 - Evidence хранится в PostgreSQL (`ti_ai_evidence`, BYTEA) внутри тома `testpilot_pgdata`; `docker compose down -v` уничтожает БД и скриншоты.
 - Пароль подключения 1С лежит в `impact_projects.auth_password` открытым текстом.
 - Коммит `a244b67` в истории нерабочий — не точка отката.
-- Push не выполнялся: на момент подготовки `main` впереди `origin/main` на 66 коммитов (после коммита документа — на 67); считать: `git rev-list --count origin/main..HEAD`.
+- Push не выполнялся; сколько коммитов впереди — `git rev-list --count origin/main..HEAD`.
 
 ## Как продолжить
 
