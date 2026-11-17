@@ -4,7 +4,7 @@
 
 ## Состояние
 
-- Коммит: `133b27c` (`fix: настройки LLM не пишут .env по умолчанию`), ветка `main`.
+- Коммит: `b4f55cb` (`docs: документ передачи состояния`), ветка `main`.
 - Тесты: **291 passed, 1 skipped** (`docker compose exec -T intelligence python -m pytest tests/ -q`, 73 с).
 - Миграции: `0007 (head)` (`docker compose exec -T intelligence alembic current`).
 - Compose: `db`, `impact`, `intelligence`, `web` — Up (healthy); `migrate` — Exited (0).
@@ -37,7 +37,7 @@
 - Нет TLS, rate-limit и ролей на чтение: любой аутентифицированный видит все проекты, отчёты и evidence.
 - Пароль подключения к 1С лежит в `impact_projects.auth_password` открытым текстом.
 - Коммит `a244b67` в истории нерабочий — не точка отката.
-- Push не выполнялся: `main` впереди `origin/main` на **45 коммитов**.
+- Push не выполнялся: `main` впереди `origin/main` на **46 коммитов**.
 
 ## Как продолжить
 
