@@ -435,6 +435,9 @@ class WebClientRunner:
                 value = (user_input.input_value(timeout=500) or '').strip()
             except Exception:
                 value = ''
+            # casefold-сравнение разрешает отправку, если платформа изменила только регистр введённого значения;
+            # на системах с регистрозависимыми именами это может привести к отправке другого (регистром) логина —
+            # поэтому точное сравнение проверяется первым, и при полном несовпадении отправки нет.
             if value == expected or (expected and value.casefold() == expected.casefold()):
                 return
             if time.monotonic() >= deadline:
