@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ЧЕРНОВИК: не проверялся на реальном дампе. Проверять только на отдельном стеке
-# (`-p testpilot-restore`), не на рабочем.
+# ЧЕРНОВИК: не проверялся на реальном дампе; только отдельный стек (`-p testpilot-restore`), не рабочий;
+# pg_restore с --exit-on-error.
 #
 # Восстановление БД TestPilot из дампа. Пишет только в БД указанного compose-проекта;
 # тома не удаляются, `down -v` не вызывается.
@@ -11,7 +11,7 @@
 #   3) если в дампе есть alembic_version — docker compose -p testpilot-restore up -d --wait
 #      если нет — сначала сверить таблицы и выполнить alembic stamp head вручную;
 #      `up -d --wait` в этом случае упадёт (migrate попытается создать существующие таблицы).
-# Формат по расширению: .sql -> psql -v ON_ERROR_STOP=1, .dump/.backup -> pg_restore --clean --if-exists --no-owner.
+# Формат по расширению: .sql -> psql -v ON_ERROR_STOP=1, .dump/.backup -> pg_restore --clean --if-exists --no-owner --exit-on-error.
 # Использование: bash scripts/restore.sh --dump PATH --yes [--project NAME]
 set -euo pipefail
 
@@ -64,7 +64,7 @@ fi
 if [ "$METHOD" = "psql" ]; then
   if grep -qE 'COPY (public\.)?alembic_version|INSERT INTO (public\.)?alembic_version' "$DUMP"; then HAS_ALEMBIC="да"; else HAS_ALEMBIC="нет"; fi
 else
-  if dc exec -T db pg_restore --list < "$DUMP" 2>/dev/null | grep -q alembic_version; then HAS_ALEMBIC="да"; else HAS_ALEMBIC="нет"; fi
+  if dc exec -T db pg_restore --exit-on-error --list < "$DUMP" 2>/dev/null | grep -q alembic_version; then HAS_ALEMBIC="да"; else HAS_ALEMBIC="нет"; fi
 fi
 
 echo "План восстановления:"
@@ -87,7 +87,7 @@ set +e
 if [ "$METHOD" = "psql" ]; then
   dc exec -T db psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" < "$DUMP"
 else
-  dc exec -T db pg_restore --clean --if-exists --no-owner -U "$DB_USER" -d "$DB_NAME" < "$DUMP"
+  dc exec -T db pg_restore --clean --if-exists --no-owner --exit-on-error -U "$DB_USER" -d "$DB_NAME" < "$DUMP"
 fi
 RESTORE_RC=$?
 set -e

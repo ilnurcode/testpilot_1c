@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-    ЧЕРНОВИК: не проверялся на реальном дампе. Проверять только на отдельном стеке
-    (`-p testpilot-restore`), не на рабочем.
+    ЧЕРНОВИК: не проверялся на реальном дампе; только отдельный стек (`-p testpilot-restore`), не рабочий;
+    pg_restore с --exit-on-error.
 .DESCRIPTION
     Восстановление БД TestPilot из дампа в указанный compose-проект; тома не удаляются, `down -v` не вызывается.
     ТОЛЬКО В ПУСТУЮ СХЕМУ: плейн-дамп содержит CREATE TABLE, а `up -d --wait` запускает migrate и создаёт таблицы.
@@ -10,7 +10,7 @@
       2) powershell -File scripts\restore.ps1 -Dump PATH -Yes -Project testpilot-restore
       3) есть alembic_version в дампе -> docker compose -p testpilot-restore up -d --wait
          нет alembic_version -> сверить таблицы и выполнить alembic stamp head вручную; `up -d --wait` до этого упадёт.
-    Формат: .sql -> psql -v ON_ERROR_STOP=1; .dump/.backup -> pg_restore --clean --if-exists --no-owner.
+    Формат: .sql -> psql -v ON_ERROR_STOP=1; .dump/.backup -> pg_restore --clean --if-exists --no-owner --exit-on-error.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$Dump,
@@ -47,7 +47,7 @@ $hasAlembic = if ($method -eq 'psql') {
     [bool](Select-String -LiteralPath $Dump -Pattern 'COPY (public\.)?alembic_version|INSERT INTO (public\.)?alembic_version' -Quiet)
 } else {
     # Редирект делает cmd: PowerShell не поддерживает '<' для stdin.
-    $listing = (& cmd /c "docker compose -p $Project exec -T db pg_restore --list < `"$Dump`"" 2>$null | Out-String)
+    $listing = (& cmd /c "docker compose -p $Project exec -T db pg_restore --exit-on-error --list < `"$Dump`"" 2>$null | Out-String)
     [bool]($listing -match 'alembic_version')
 }
 $hasAlembicText = if ($hasAlembic) { 'да' } else { 'нет' }
@@ -68,7 +68,7 @@ if (-not $Yes) { Write-Host 'Отказ: повторите с -Yes, чтобы 
 if ($method -eq 'psql') {
     & cmd /c "docker compose -p $Project exec -T db psql -v ON_ERROR_STOP=1 -U $dbUser -d $dbName < `"$Dump`""
 } else {
-    & cmd /c "docker compose -p $Project exec -T db pg_restore --clean --if-exists --no-owner -U $dbUser -d $dbName < `"$Dump`""
+    & cmd /c "docker compose -p $Project exec -T db pg_restore --clean --if-exists --no-owner --exit-on-error -U $dbUser -d $dbName < `"$Dump`""
 }
 if ($LASTEXITCODE -ne 0) { Write-Host "FAIL  восстановление завершилось с кодом $LASTEXITCODE"; exit 1 }
 
