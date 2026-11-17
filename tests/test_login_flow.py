@@ -424,3 +424,47 @@ def test_ready_form_submits_exactly_once(page):
     assert runner.last_login_diagnostics['clicked'] is True
     assert runner.last_login_diagnostics['form_visible_after'] is False
     assert runner.last_login_presubmit_shot[:8] == b'\x89PNG\r\n\x1a\n', 'снимок формы до отправки сделан'
+
+
+LATE_BUTTON_FORM = """
+<div id="root"></div>
+<script>
+  window.__clicks = 0;
+  setTimeout(() => {
+    document.getElementById('root').innerHTML =
+      '<div id="authWindow">' +
+      '<input id="authWindow_basic_login" name="login" type="text">' +
+      '<input id="authWindow_basic_password" name="password" type="password">' +
+      '<button id="authWindow_basic_okButton" disabled onclick="window.__clicks++;' +
+      "document.getElementById('authWindow').style.display='none';" +
+      "document.body.insertAdjacentHTML('beforeend','<div>Продажи</div>');" +
+      '">Войти</button></div>';
+    setTimeout(() => {
+      const btn = document.getElementById('authWindow_basic_okButton');
+      if (btn) btn.disabled = false;
+    }, BUTTON_DELAY);
+  }, FORM_DELAY);
+</script>
+"""
+
+
+def test_late_button_activation_is_awaited(page):
+    page.set_content(LATE_BUTTON_FORM.replace('FORM_DELAY', '0').replace('BUTTON_DELAY', '500'))
+    runner = _runner()
+
+    runner.handle_login(page)
+
+    assert page.evaluate('window.__clicks') == 1
+    assert runner.last_login_diagnostics['clicked'] is True
+    assert 'Продажи' in page.inner_text('body')
+
+
+def test_late_form_and_late_button_are_awaited(page):
+    page.set_content(LATE_BUTTON_FORM.replace('FORM_DELAY', '800').replace('BUTTON_DELAY', '500'))
+    runner = _runner()
+
+    runner.handle_login(page)
+
+    assert page.evaluate('window.__clicks') == 1
+    assert runner.last_login_diagnostics['clicked'] is True
+    assert 'Продажи' in page.inner_text('body')

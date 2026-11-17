@@ -404,6 +404,20 @@ class WebClientRunner:
                 raise RuntimeError('форма не готова к отправке: поле логина не удержало значение')
             frame.wait_for_timeout(100)
 
+    def _await_login_button_ready(self, frame, ok_btn) -> None:
+        """Опрос is_enabled() каждые 100 мс до 3 с: is_enabled сам не ждёт активации кнопки."""
+        deadline = time.monotonic() + 3.0
+        while True:
+            try:
+                enabled = ok_btn.is_enabled()
+            except Exception:
+                enabled = False
+            if enabled:
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError('форма не готова к отправке: кнопка недоступна')
+            frame.wait_for_timeout(100)
+
     def handle_login(self, page) -> None:
         """Авторизация в веб-клиенте 1С 8.3/8.5; ровно одна попытка, при неудаче — понятная ошибка."""
         # Диагностика для результата прогона: без значений полей, только факты действий.
@@ -450,8 +464,7 @@ class WebClientRunner:
                 ok_btn = frame.locator(', '.join(self.LOGIN_BUTTON_SELECTORS)).first
             if not ok_btn.is_visible(timeout=1000):
                 raise RuntimeError('кнопка «Войти» не найдена на форме логина')
-            if not ok_btn.is_enabled(timeout=1000):
-                raise RuntimeError('форма не готова к отправке: кнопка недоступна')
+            self._await_login_button_ready(frame, ok_btn)
             # Снимок готовой формы до submit: fallback-evidence, если пост-кликовый снимок пуст.
             try:
                 self.last_login_presubmit_shot = _safe_screenshot(page.context, page) or b''
