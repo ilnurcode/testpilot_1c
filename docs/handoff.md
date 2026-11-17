@@ -1,6 +1,6 @@
 # Передача проекта
 
-Короткая сводка состояния. Подробности — в [api.md](api.md), [rules.md](rules.md), [security.md](security.md), [acceptance.md](acceptance.md).
+Короткая сводка состояния. Подробности — в [api.md](api.md), [rules.md](rules.md), [security.md](security.md), [acceptance.md](acceptance.md). Человекочитаемый список изменений по темам — [CHANGELOG.md](../CHANGELOG.md).
 
 ## Состояние БД после инцидента
 

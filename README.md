@@ -143,7 +143,7 @@ API: `GET /api/v1/ai/codex/status`, `POST /api/v1/ai/codex/login`, `POST /api/v1
 
 Постура безопасности, дефолтные секреты и чек-лист перед выносом наружу — [docs/security.md](docs/security.md).
 
-Состояние проекта для передачи (коммит, тесты, что проверено живьём, блокеры) — [docs/handoff.md](docs/handoff.md).
+Состояние проекта для передачи (коммит, тесты, что проверено живьём, блокеры) — [docs/handoff.md](docs/handoff.md). Список изменений по темам — [CHANGELOG.md](CHANGELOG.md).
 
 История прогонов проекта — `GET /api/v1/ai/suites?project_id=…`, отчёт о прогоне — `GET /api/v1/ai/suites/{id}/report?format=md|csv`, повтор сохранённого плана — `POST /api/v1/ai/suites/{id}/rerun`, удаление проекта — `DELETE /api/v1/projects/{id}?confirm=<id>`. Тесты запускаются на push и pull_request в GitHub Actions (`.github/workflows/tests.yml`).
 
