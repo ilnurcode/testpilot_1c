@@ -4,16 +4,17 @@
     (`-p testpilot-restore`), не на рабочем.
 .DESCRIPTION
     Восстановление БД TestPilot из дампа в указанный compose-проект; тома не удаляются, `down -v` не вызывается.
-    Формат по расширению: .sql -> psql -v ON_ERROR_STOP=1, .dump/.backup -> pg_restore --clean --if-exists --no-owner.
-    Плейн-дамп содержит CREATE TABLE: заливка в мигрированную БД ломается об существующие таблицы,
-    поэтому непустая схема требует осознанного -Force или чистого проекта.
-    -Yes подтверждает, -Force разрешает непустую схему, -Project задаёт compose-проект (по умолчанию testpilot).
-    Пример: powershell -File scripts\restore.ps1 -Dump .runtime\backups\testpilot-20261117-040000.sql -Yes -Project testpilot-restore
+    ТОЛЬКО В ПУСТУЮ СХЕМУ: плейн-дамп содержит CREATE TABLE, а `up -d --wait` запускает migrate и создаёт таблицы.
+    Правильный порядок:
+      1) docker compose -p testpilot-restore up -d db          # только база, без migrate
+      2) powershell -File scripts\restore.ps1 -Dump PATH -Yes -Project testpilot-restore
+      3) есть alembic_version в дампе -> docker compose -p testpilot-restore up -d --wait
+         нет alembic_version -> сверить таблицы и выполнить alembic stamp head вручную; `up -d --wait` до этого упадёт.
+    Формат: .sql -> psql -v ON_ERROR_STOP=1; .dump/.backup -> pg_restore --clean --if-exists --no-owner.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$Dump,
     [switch]$Yes,
-    [switch]$Force,
     [string]$Project = $(if ($env:COMPOSE_PROJECT_NAME) { $env:COMPOSE_PROJECT_NAME } else { 'testpilot' })
 )
 $ErrorActionPreference = 'Stop'
@@ -35,31 +36,34 @@ $dbName = if ($env:POSTGRES_DB) { $env:POSTGRES_DB } else { (docker compose -p $
 if (-not $dbUser) { $dbUser = 'testpilot' }
 if (-not $dbName) { $dbName = 'testpilot' }
 
-$state = (docker compose -p $Project exec -T db psql -v ON_ERROR_STOP=1 -U $dbUser -d $dbName -t -A -c @"
-SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema='public') || ' ' ||
-       CASE WHEN to_regclass('public.impact_projects') IS NULL THEN 0
-            ELSE (SELECT count(*) FROM impact_projects) END
-"@ 2>$null | Out-String).Trim()
-if ($state -notmatch '^(\d+)\s+(\d+)$') {
-    Write-Host "Отказ: не удалось прочитать БД проекта $Project (стек не запущен или нет миграций)."
-    Write-Host "       Для чистого восстановления: docker compose -p testpilot-restore up -d --wait, затем -Project testpilot-restore"
+$tables = (docker compose -p $Project exec -T db psql -v ON_ERROR_STOP=1 -U $dbUser -d $dbName -t -A -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>$null | Out-String).Trim()
+if ($tables -notmatch '^\d+$') {
+    Write-Host "Отказ: не удалось прочитать БД проекта $Project (контейнер db не запущен)."
+    Write-Host "       Запустите только базу: docker compose -p $Project up -d db, затем повторите restore."
     exit 2
 }
-$tables = [int]$Matches[1]
-$projects = [int]$Matches[2]
+
+$hasAlembic = if ($method -eq 'psql') {
+    [bool](Select-String -LiteralPath $Dump -Pattern 'COPY (public\.)?alembic_version|INSERT INTO (public\.)?alembic_version' -Quiet)
+} else {
+    # Редирект делает cmd: PowerShell не поддерживает '<' для stdin.
+    $listing = (& cmd /c "docker compose -p $Project exec -T db pg_restore --list < `"$Dump`"" 2>$null | Out-String)
+    [bool]($listing -match 'alembic_version')
+}
+$hasAlembicText = if ($hasAlembic) { 'да' } else { 'нет' }
 
 Write-Host 'План восстановления:'
 Write-Host "  дамп: $Dump ($size байт, способ: $method)"
 Write-Host "  проект compose: $Project; база: $dbUser@db/$dbName"
-Write-Host "  текущая схема: $tables таблиц в public; проектов: $projects"
+Write-Host "  схема public: $tables таблиц (нужна пустая)"
+Write-Host "  alembic_version в дампе: $hasAlembicText"
 Write-Host '  будут изменены только данные БД; тома, контейнеры и файлы не удаляются'
 
-if (-not $Yes) { Write-Host 'Отказ: повторите с -Yes, чтобы выполнить восстановление.'; exit 1 }
-if ($tables -gt 0 -and -not $Force) {
-    Write-Host "Отказ: схема уже содержит $tables таблиц: восстановление плейн-дампа перезапишет/сломает её;"
-    Write-Host '       используйте -Force осознанно или чистый стек -p testpilot-restore.'
+if ([int]$tables -gt 0) {
+    Write-Host "Отказ: схема содержит $tables таблиц: восстановление возможно только в пустую БД. Запустите только базу: ``docker compose -p testpilot-restore up -d db``, затем повторите restore; приложение поднимайте после восстановления."
     exit 1
 }
+if (-not $Yes) { Write-Host 'Отказ: повторите с -Yes, чтобы выполнить восстановление.'; exit 1 }
 
 if ($method -eq 'psql') {
     & cmd /c "docker compose -p $Project exec -T db psql -v ON_ERROR_STOP=1 -U $dbUser -d $dbName < `"$Dump`""
@@ -68,8 +72,6 @@ if ($method -eq 'psql') {
 }
 if ($LASTEXITCODE -ne 0) { Write-Host "FAIL  восстановление завершилось с кодом $LASTEXITCODE"; exit 1 }
 
-$revision = (docker compose -p $Project exec -T intelligence alembic current 2>$null | Out-String).Trim()
-Write-Host "Ревизия после восстановления: $revision"
 Write-Host 'Счётчики после восстановления:'
 foreach ($query in @(
     "SELECT 'impact_projects='||count(*) FROM impact_projects",
@@ -79,4 +81,10 @@ foreach ($query in @(
 )) {
     (docker compose -p $Project exec -T db psql -v ON_ERROR_STOP=1 -U $dbUser -d $dbName -t -A -c $query | Out-String).Trim()
 }
-Write-Host "Готово. Перезапустите сервисы: docker compose -p $Project up -d --wait"
+if ($hasAlembic) {
+    Write-Host "Готово. Поднимайте приложение: docker compose -p $Project up -d --wait"
+} else {
+    Write-Host 'ВНИМАНИЕ: в дампе нет alembic_version. Сверьте таблицы и выполните alembic stamp head вручную:'
+    Write-Host "  docker compose -p $Project run --rm migrate alembic stamp head  (или exec в поднятом сервисе)"
+    Write-Host "  'up -d --wait' до этого упадёт: migrate попытается создать уже существующие таблицы."
+}
