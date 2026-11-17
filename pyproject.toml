@@ -10,6 +10,7 @@ dependencies = ["fastapi>=0.121,<1", "uvicorn>=0.34,<1", "pydantic>=2.10,<3", "s
 include = ["testpilot*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# -q не добавлять: приёмка парсит „N passed“; -qq подавляет сводку
 addopts = "--strict-markers"
 markers = ["ui: smoke-проверки интерфейса в браузере (нужен TP_UI_BASE_URL и Chromium)"]
 [tool.setuptools.package-data]

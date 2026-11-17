@@ -3,6 +3,7 @@
 После `docker compose up -d --build --wait`.
 
 Приёмка вызывает compose только через предохранители `scripts/compose.sh`/`compose.ps1`: они отказывают (код 3) на `down -v`, `volume rm` и `volume prune` рабочего проекта; разрешены только `-p testpilot-ci`/`-p testpilot-restore`.
+В `pyproject.toml` в `addopts` нет `-q`: приёмка парсит строку «N passed», а `-qq` (addopts + вызов) её подавляет — `-q` передаёт вызывающая сторона.
 
 **Автоматический прогон:** `scripts/acceptance.ps1` (PowerShell 5.1+) или `scripts/acceptance.sh` (bash) — одна команда, PASS/FAIL/SKIP по шагам и код возврата 1 при любом FAIL. По умолчанию выполняются только локальные проверки: стек, `/health`, миграции, демо-ZIP, журнал аудита с отчётами, `pytest`. Внешние шаги включаются явно: `-IncludeLLM`/`--llm` — генерация плана у внешнего провайдера, `-IncludeLive1C`/`--live-1c` — прогон на базе 1С; без них эти шаги дают SKIP и сетевых вызовов не делают. Фактическое число тестов печатает `scripts/acceptance.sh` и `pytest tests/ -q`; в документации числа не дублируются.
 
