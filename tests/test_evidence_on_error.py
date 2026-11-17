@@ -171,3 +171,52 @@ def test_step_screenshot_wins_over_pre_submit(monkeypatch):
     assert len(evidence) == 1
     assert evidence[0] == (0, post), 'снимок шага после ошибки должен перебивать pre-submit'
     assert len(evidence[0][1]) == 2000
+
+
+def test_evidence_provenance_and_sizes(monkeypatch):
+    post = b'\x89PNG\r\n\x1a\n' + b'post' * 100
+    pre = b'\x89PNG\r\n\x1a\n' + b'pre' * 50
+    report = ScenarioReport(title='Веб-клиент 1С', status='error', error='Ошибка на шаге 1',
+                            screenshots=[post], pre_submit_screenshot=pre)
+    _patch_runner(monkeypatch, report, {'stage': 'after_click', 'user_filled': True,
+                                        'password_filled': False, 'clicked': True,
+                                        'form_visible_after': True})
+
+    results, _ = executor.execute_1c(_suite(), _Profile())
+    result = results[0]
+
+    assert result['evidence_provenance'] == 'step'
+    assert result['post_click_screenshot_bytes'] == len(post)
+    assert result['pre_submit_screenshot_bytes'] == len(pre)
+
+
+def test_evidence_provenance_pre_submit(monkeypatch):
+    pre = b'\x89PNG\r\n\x1a\n' + b'pre' * 50
+    report = ScenarioReport(title='Веб-клиент 1С', status='error', error='Вход не выполнен',
+                            screenshots=[b''], pre_submit_screenshot=pre)
+    _patch_runner(monkeypatch, report, {'stage': 'after_click', 'user_filled': True,
+                                        'password_filled': False, 'clicked': True,
+                                        'form_visible_after': True})
+
+    results, _ = executor.execute_1c(_suite(), _Profile())
+    result = results[0]
+
+    assert result['evidence_provenance'] == 'pre_submit'
+    assert result['post_click_screenshot_bytes'] == 0
+    assert result['pre_submit_screenshot_bytes'] == len(pre)
+
+
+def test_evidence_provenance_none(monkeypatch):
+    report = ScenarioReport(title='Веб-клиент 1С', status='error', error='Вход не выполнен',
+                            screenshots=[b''], pre_submit_screenshot=b'')
+    _patch_runner(monkeypatch, report, {'stage': 'after_click', 'user_filled': False,
+                                        'password_filled': False, 'clicked': False,
+                                        'form_visible_after': True})
+
+    results, _ = executor.execute_1c(_suite(), _Profile())
+    result = results[0]
+
+    assert result['evidence_provenance'] == 'none'
+    assert result['post_click_screenshot_bytes'] == 0
+    assert result['pre_submit_screenshot_bytes'] == 0
+    assert result['screenshot_unavailable'] is True

@@ -110,6 +110,15 @@ def _proposal_line(number: int, proposal: dict[str, Any], results: list[dict[str
             f"- case {_case_number(result)}: {markdown_cell(status)} · {markdown_cell(message)} · "
             f"{duration or '—'} мс · evidence {evidence or '—'}"
         )
+        provenance = result.get('evidence_provenance')
+        if provenance:
+            post = result.get('post_click_screenshot_bytes') or 0
+            pre = result.get('pre_submit_screenshot_bytes') or 0
+            if provenance == 'none':
+                reason = result.get('screenshot_unavailable_reason') or 'неизвестная причина'
+                lines.append(f"- Evidence: нет снимка: {reason} (пост-клик {post} Б, до отправки {pre} Б)")
+            else:
+                lines.append(f"- Evidence: {provenance}, пост-клик {post} Б, до отправки {pre} Б")
         hint = _odata_404_hint(result, proposal)
         if hint:
             lines.append(f'  - пояснение: {hint}')

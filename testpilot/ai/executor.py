@@ -157,6 +157,9 @@ def execute_1c(suite, profile):
                     pre_valid = pre if usable(pre) else b''
                     chosen = step_valid[-1] if step_valid else pre_valid
                     tiny = any(len(shot) < 100 for shot in shots + [pre])
+                    result['evidence_provenance'] = 'step' if step_valid else ('pre_submit' if pre_valid else 'none')
+                    result['post_click_screenshot_bytes'] = len(step_valid[-1]) if step_valid else 0
+                    result['pre_submit_screenshot_bytes'] = len(pre) if pre else 0
                     if chosen:
                         evidence.append((len(results), chosen))
                         attached = True
