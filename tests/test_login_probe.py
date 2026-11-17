@@ -279,9 +279,10 @@ def test_probe_errors_map_to_503(monkeypatch):
 
 
 class FakeRequest:
-    def __init__(self, url, resource_type='document'):
+    def __init__(self, url, resource_type='document', method='GET'):
         self.url = url
         self.resource_type = resource_type
+        self.method = method
 
 
 class FakeRoute:
@@ -307,8 +308,8 @@ class RoutingPage(FakeProbePage):
     def route(self, selector, handler):
         self.route_handler = handler
 
-    def fire(self, url, resource_type='document'):
-        route = FakeRoute(FakeRequest(url, resource_type))
+    def fire(self, url, resource_type='document', method='GET'):
+        route = FakeRoute(FakeRequest(url, resource_type, method))
         self.route_handler(route)
         return route
 
@@ -317,7 +318,7 @@ def test_route_guard_blocks_foreign_and_allows_own_origin():
     from testpilot.integration.webclient import _origin, probe_route_guard
 
     allowed = {_origin('http://project.test/DemoTrd')}
-    state = {'blocked': 0, 'blocked_origins': [], 'blocked_main': False}
+    state = {'blocked': 0, 'blocked_non_get': 0, 'blocked_origins': [], 'blocked_main': False}
     guard = probe_route_guard(allowed, state)
 
     own = FakeRoute(FakeRequest('http://project.test/DemoTrd/app.js', 'script'))
@@ -374,3 +375,61 @@ def test_blocked_subresource_does_not_fail_navigation(monkeypatch):
 
     assert result['blocked_requests'] == 1
     assert result['login_form_visible'] is False
+
+
+def test_same_origin_post_is_blocked():
+    from testpilot.integration.webclient import _origin, probe_route_guard
+
+    allowed = {_origin('http://project.test/DemoTrd')}
+    state = {'blocked': 0, 'blocked_non_get': 0, 'blocked_origins': [], 'blocked_main': False}
+    guard = probe_route_guard(allowed, state)
+
+    post = FakeRoute(FakeRequest('http://project.test/DemoTrd/api/save', 'xhr', 'POST'))
+    guard(post)
+
+    assert post.aborted is True and post.continued is False
+    assert state['blocked_non_get'] == 1
+    assert state['blocked'] == 0
+
+
+def test_same_origin_get_is_allowed():
+    from testpilot.integration.webclient import _origin, probe_route_guard
+
+    allowed = {_origin('http://project.test/DemoTrd')}
+    state = {'blocked': 0, 'blocked_non_get': 0, 'blocked_origins': [], 'blocked_main': False}
+    guard = probe_route_guard(allowed, state)
+
+    get = FakeRoute(FakeRequest('http://project.test/DemoTrd/static/app.js', 'script', 'GET'))
+    head = FakeRoute(FakeRequest('http://project.test/DemoTrd/', 'document', 'HEAD'))
+    guard(get)
+    guard(head)
+
+    assert get.continued is True and get.aborted is False
+    assert head.continued is True and head.aborted is False
+    assert state['blocked_non_get'] == 0
+
+
+def test_foreign_get_is_blocked():
+    from testpilot.integration.webclient import _origin, probe_route_guard
+
+    allowed = {_origin('http://project.test/DemoTrd')}
+    state = {'blocked': 0, 'blocked_non_get': 0, 'blocked_origins': [], 'blocked_main': False}
+    guard = probe_route_guard(allowed, state)
+
+    foreign = FakeRoute(FakeRequest('http://evil.example.test/pixel.gif', 'image', 'GET'))
+    guard(foreign)
+
+    assert foreign.aborted is True and foreign.continued is False
+    assert state['blocked'] == 1
+
+
+def test_successful_probe_reports_zero_non_get(monkeypatch):
+    from testpilot.integration import webclient
+
+    monkeypatch.setattr(webclient, 'navigate', lambda page, url, **kwargs: url)
+    page = RoutingPage(url='http://project.test/DemoTrd/app')
+
+    result = webclient.probe_login_page(page, 'http://project.test/DemoTrd')
+
+    assert result['blocked_non_get'] == 0
+    assert result['blocked_requests'] == 0

@@ -625,11 +625,16 @@ def _login_probe_open_error(reason) -> RuntimeError:
 
 
 def probe_route_guard(allowed, state):
-    """Прерывный фильтр: запрос вне allowlist отклоняется до отправки, разрешённые пропускаются."""
+    """Прерывный фильтр: POST/PUT/... отклоняется всегда, GET/HEAD - только в пределах allowlist."""
     def guard(route):
         request = route.request
+        method = (getattr(request, 'method', 'GET') or 'GET').upper()
         url = getattr(request, 'url', '') or ''
         origin = _origin(url)
+        if method not in ('GET', 'HEAD'):
+            state['blocked_non_get'] += 1
+            route.abort()
+            return
         if origin in allowed:
             route.continue_()
             return
@@ -650,7 +655,7 @@ def _blocked_origin_error(state, web_url: str) -> RuntimeError:
 def probe_login_page(page, web_url: str, timeout_ms: int = 20000) -> dict:
     """Открывает web_url на переданной странице и возвращает факты; ошибки открытия/origin не скрываются."""
     allowed = {_origin(url) for url in container_access_urls(web_url)}
-    state = {'blocked': 0, 'blocked_origins': [], 'blocked_main': False}
+    state = {'blocked': 0, 'blocked_non_get': 0, 'blocked_origins': [], 'blocked_main': False}
     if hasattr(page, 'route'):
         page.route('**/*', probe_route_guard(allowed, state))
     try:
@@ -678,6 +683,7 @@ def probe_login_page(page, web_url: str, timeout_ms: int = 20000) -> dict:
     page.wait_for_timeout(1000)
     facts = collect_login_facts(page)
     facts['blocked_requests'] = state['blocked']
+    facts['blocked_non_get'] = state['blocked_non_get']
     return facts
 
 
