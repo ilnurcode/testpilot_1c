@@ -11,6 +11,7 @@ from testpilot.ai import provider,codex
 from testpilot.ai.executor import execute,browser_path
 from testpilot.ai.plan_guard import annotate_proposals, mutation_conflicts, mutating_proposal_count, strict_conflicts
 from testpilot.web.run_report import render_run_report
+from testpilot.ai.login_guard import ensure_login_allowed
 
 router=APIRouter(prefix='/api/v1/ai',tags=['Нейросеть и проверки'])
 
@@ -387,6 +388,7 @@ def run_1c(sid:str,allow_mutations:bool=False,strict_read_only:bool=False,actor=
     row=require(s.scalar(select(AISuiteRow).where(AISuiteRow.id==sid).with_for_update()))
     if row.status=='completed':return _suite_response(row.payload)
     if row.status!='approved':raise HTTPException(409,'Сначала подтвердите сценарии и тестовые данные')
+    ensure_login_allowed(s,row.payload,row.project_id)
     _require_run_mode(row.payload,allow_mutations,strict_read_only)
     return _suite_response(_execute_1c_row(row,actor,s,allow_mutations,strict_read_only))
 
@@ -406,6 +408,7 @@ def rerun_suite(sid:str,allow_mutations:bool=False,strict_read_only:bool=False,a
     approval=(source.payload or {}).get('approval') or {}
     if not approval.get('selected_proposals'):
         raise HTTPException(409,'В плане нет утверждённых сценариев: сначала подтвердите план')
+    ensure_login_allowed(s,source.payload,source.project_id)
     _require_run_mode(source.payload,allow_mutations,strict_read_only)
     new_id=uid()
     payload={**source.payload,'suite_id':new_id,'created_at':now(),'status':'approved','results':[]}
