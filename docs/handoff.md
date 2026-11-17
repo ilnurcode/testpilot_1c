@@ -15,7 +15,7 @@
 - Миграции: `0008 (head)` (`docker compose exec -T intelligence alembic current`).
 - Compose: стек поднят из образов текущего HEAD (`db`, `impact`, `intelligence`, `web` — Up (healthy), `migrate` — Exited (0)).
 - Dev-БД: `7f87c09d` «Демо 2026-11-17 · аудит» — 1 загрузка `demo_vulnerable_extension.zip`, аудит 12 замечаний (1/7/1/3, 8 файлов), analyze 4 объекта, план `08ea3e37` в статусе `draft`, md/csv отчёты по загрузке; подключение не заполнено.
-- Dev-БД: `d6f2fe6f` «Демо 2026-11-17 · аудит и проверки» — те же аудит/анализ плюс `web_url`/`odata_url` на `localhost:8088/DemoTrd` и пользователь `Администратор` (пароль пустой); прогон `2474f655`: 0 passed / 1 failed (вход в 1С не выполнен), evidence `7a4bd9f7`.
+- Dev-БД: `d6f2fe6f` «Демо 2026-11-17 · аудит и проверки» — те же аудит/анализ плюс `web_url`/`odata_url` на `localhost:8088/DemoTrd` и пользователь `Администратор` (пароль пустой); прогон `2474f655`: 0 passed / 1 failed (вход в 1С не выполнен), evidence `7a4bd9f7`; успешный прогон `7df3e0be`: 1 passed, evidence `7cc60e71`.
 - Журнал `code_audit` пуст (приёмка удаляет свои сканы).
 - CI: `.github/workflows/tests.yml` — push/pull_request в `main`, PostgreSQL 17, pyflakes-страж на `undefined name`, pytest.
 
@@ -37,7 +37,7 @@
 - Вход и навигация на локальной имитации с подтверждёнными id: `passed`, форма исчезает, `assert_section` находит «Продажи»; при неработающей кнопке — `RuntimeError` < 15 с (`tests/test_login_end_to_end_local.py`).
 - Режимы прогона с реальными счётчиками: без `allow_mutations` → 422 и 0 POST; с `allow_mutations=true` → 1 POST `/saved`; `strict_read_only` + click → 422 и 0 POST; `strict_read_only` + `assert_text` → 0 POST (`tests/test_run_modes_local.py`).
 - Зонд через API на локальной странице: 200, факты формы, `credentials_sent=false`, сервер видел только `GET /` (`probe-login`, boot=false и boot=true).
-- **Вход с учётными данными на реальном DemoTrd не выполнялся** — единственный непроверенный участок; порядок одного ручного прогона — [live-run.md](live-run.md).
+- **Живой прогон на DemoTrd (2026-11-17) выполнен**: suite `7df3e0be-0b35-461a-9ae5-0e00fa64c0c3`, `status=completed`, `counts={passed:1, failed:0, error:0, skipped:0}`, `login={stage:after_click, user_filled:true, password_filled:false, clicked:true, form_visible_after:false}`, evidence `7cc60e71-8e54-48ff-b723-850f06e11682` (141 767 байт — рабочий стол 1С под «Администратором»), 98.26 с, `allow_mutations=false`, `strict_read_only=false`. Это единственный успешный живой прогон, и он read-only: вход + навигация в «Продажи», без изменения данных. Ранбук — [live-run.md](live-run.md).
 
 ## Заблокировано и требует вашего действия
 

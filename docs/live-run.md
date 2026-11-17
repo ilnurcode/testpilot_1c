@@ -36,6 +36,17 @@
 password_filled, clicked, form_visible_after}` (значения полей не логируются) и `screenshot_unavailable`,
 если снимок не удался. Скриншот: `GET /api/v1/ai/evidence/{evidence_id}` (Basic Auth, PNG).
 
+## Фактический успешный прогон
+
+2026-11-17, suite `7df3e0be-0b35-461a-9ae5-0e00fa64c0c3` (проект `d6f2fe6f`, план `provider=local`,
+подтверждено только playwright-предложение): `status=completed`, `counts={passed:1, failed:0, error:0,
+skipped:0}`, длительность 98.26 с, `allow_mutations=false`, `strict_read_only=false`.
+`login={stage:after_click, user_filled:true, password_filled:false, clicked:true, form_visible_after:false}`;
+evidence `7cc60e71-8e54-48ff-b723-850f06e11682` (141 767 байт): рабочий стол «Управление торговлей,
+редакция 11» под пользователем «Администратор», форма входа не отображается. Вход занял ~98 с в сумме —
+ожидание формы (около 15 с публикации) плюс стабилизация рабочей области, поэтому таймауты выше
+проверяются по факту, а не по секундам одного запроса.
+
 ## 5. Исходы
 
 - `passed=1` — вход и навигация выполнены, раздел найден.

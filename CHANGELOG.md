@@ -19,6 +19,7 @@
 - Строгая проверка числовых и URL-настроек на старте; настройки LLM по умолчанию не пишут `.env`.
 - Read-only зонд формы входа `POST /api/v1/ai/connection/probe-login`: режим GET-only и opt-in `boot` (same-origin non-GET разрешены, чужой origin блокируется до отправки), поиск формы по всем фреймам, `credentials_sent=false` и счётчики `non_get_requests`/`blocked_requests`/`blocked_non_get`; opt-in шаг приёмки `--probe-login`/`-ProbeLogin`.
 - Вход в 1С по подтверждённым зондом id (`#authWindow_basic_login`, `#authWindow_basic_password`, `#authWindow_basic_okButton`) с поиском формы по фреймам и ожиданием её появления `TP_1C_LOGIN_WAIT_SECONDS` (5…120, по умолчанию 25).
+- Первый успешный живой прогон на DemoTrd (2026-11-17): вход под «Администратором» и навигация в «Продажи» — 1 passed, evidence-скриншот рабочего стола, 98.26 с, read-only (`allow_mutations=false`).
 - Диагностика неудачного входа в 1С: одна попытка без ретраев, распознавание сообщений платформы («Неверный пароль», «Блокировка», «Превышено количество попыток», «Пользователь не найден»), компактный дамп формы в ошибке (только tag/type/id/name, без значений и текстов), настраиваемый `TP_1C_LOGIN_GRACE_SECONDS` (2…60, по умолчанию 10).
 
 ## Исправления
