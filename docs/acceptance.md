@@ -1,6 +1,8 @@
 # Чек-лист приёмки (10 минут)
 
-После `docker compose up -d --build --wait`. Подробности: [README](../README.md), контракты API: [api.md](api.md), ограничения: [limitations.md](limitations.md).
+После `docker compose up -d --build --wait`.
+
+**Автоматический прогон:** `scripts/acceptance.ps1` (PowerShell 5.1+) или `scripts/acceptance.sh` (bash) — одна команда, PASS/FAIL/SKIP по шагам и код возврата 1 при любом FAIL. Параметры: `-CfePath <file>`/`--cfe <file>` (или `CFE_PATH`; без файла шаг .cfe пропускается), `-NoBuild`/`--no-build` (не поднимать стек), `EXPECT_DEMO_ISSUES` (по умолчанию 12), `TP_EXPERT_PASSWORD` (иначе берётся из `.env` или из окружения контейнера). Шаг ИИ требует рабочего `TP_LLM_API_KEY`, иначе он помечается SKIP. Подробности: [README](../README.md), контракты API: [api.md](api.md), ограничения: [limitations.md](limitations.md).
 Креды по умолчанию: `expert` / `$TP_EXPERT_PASSWORD` (`TestPilotLocal123!` в compose).
 
 ## Стек

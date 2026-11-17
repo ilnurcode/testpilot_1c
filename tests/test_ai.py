@@ -180,8 +180,10 @@ def test_1c_web_run_rejects_authorization_without_web_credentials(clients,monkey
     assert response.json()['error']['message']=='Для сценариев веб-клиента задайте пользователя и пароль 1С в настройках подключения проекта; Authorization используется только для OData'
 
 
-def test_llm_settings_api(clients):
+def test_llm_settings_api(clients, monkeypatch, tmp_path):
     _, c = clients
+    # Настройки персистятся в .env рабочего каталога: уводим запись в tmp, чтобы не портить реальный .env.
+    monkeypatch.chdir(tmp_path)
     # 1. Чтение настроек
     st = c.get('/api/v1/ai/settings/llm').json()
     assert 'base_url' in st and 'model' in st and 'has_key' in st
