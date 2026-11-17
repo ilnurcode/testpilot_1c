@@ -531,3 +531,95 @@ def test_click_mode_is_default(page):
 
     assert page.evaluate('window.__clicks') == 1
     assert runner.last_login_diagnostics['submitted_via'] == 'click'
+
+
+PROCESSING_FORM = """
+<div id="authWindow">
+  <input id="authWindow_basic_login" name="login" type="text">
+  <input id="authWindow_basic_password" name="password" type="password">
+  <button id="authWindow_basic_okButton" onclick="
+    document.getElementById('authWindow_basic_login').disabled = true;
+    document.getElementById('authWindow_basic_password').disabled = true;
+    this.disabled = true;
+    this.setAttribute('aria-busy', 'true');
+    if (FINISH_MS > 0) {
+      setTimeout(() => {
+        document.getElementById('authWindow').style.display = 'none';
+        document.getElementById('desk').hidden = false;
+      }, FINISH_MS);
+    }
+    if (ERROR_MS > 0) {
+      setTimeout(() => {
+        document.body.insertAdjacentHTML('beforeend', '<div id=platformError>Неверный пароль</div>');
+      }, ERROR_MS);
+    }
+  ">Войти</button>
+</div>
+<main id="desk" hidden><div id="funcPanel">Продажи</div></main>
+"""
+
+
+IDLE_FORM = """
+<div id="authWindow">
+  <input id="authWindow_basic_login" name="login" type="text">
+  <input id="authWindow_basic_password" name="password" type="password">
+  <button id="authWindow_basic_okButton" onclick="">Войти</button>
+</div>
+<main id="desk" hidden><div id="funcPanel">Продажи</div></main>
+"""
+
+
+def _processing_page(page, finish_ms=0, error_ms=0, idle=False):
+    if idle:
+        page.set_content(IDLE_FORM)
+        return
+    page.set_content(PROCESSING_FORM.replace('FINISH_MS', str(finish_ms)).replace('ERROR_MS', str(error_ms)))
+
+
+def test_processing_then_workspace_succeeds_with_long_grace(page):
+    _processing_page(page, finish_ms=12000)
+    runner = _runner()
+    runner.LOGIN_GRACE_SECONDS = 30
+
+    runner.handle_login(page)
+
+    assert 'Продажи' in page.inner_text('body')
+    assert runner.last_login_diagnostics['after_click_state'] == 'workspace'
+
+
+def test_processing_longer_than_grace_fails_as_processing(page):
+    _processing_page(page, finish_ms=12000)
+    runner = _runner()
+    runner.LOGIN_GRACE_SECONDS = 5
+
+    with pytest.raises(RuntimeError) as error:
+        runner.handle_login(page)
+
+    assert 'состояние после клика: processing' in str(error.value)
+    assert runner.last_login_diagnostics['after_click_state'] == 'processing'
+
+
+def test_idle_form_after_click_reports_form_idle(page):
+    _processing_page(page, idle=True)
+    runner = _runner()
+    runner.LOGIN_GRACE_SECONDS = 2
+
+    with pytest.raises(RuntimeError):
+        runner.handle_login(page)
+
+    assert runner.last_login_diagnostics['after_click_state'] == 'form_idle'
+
+
+def test_platform_error_during_processing_fails_fast(page):
+    _processing_page(page, error_ms=800)
+    runner = _runner()
+    runner.LOGIN_GRACE_SECONDS = 30
+
+    started = time.monotonic()
+    with pytest.raises(RuntimeError) as error:
+        runner.handle_login(page)
+    elapsed = time.monotonic() - started
+
+    assert 'Неверный пароль' in str(error.value)
+    assert elapsed < 6, f'ошибка платформы должна прерывать ожидание сразу, прошло {elapsed:.1f} с'
+    assert runner.last_login_diagnostics['after_click_state'] == 'platform_error'

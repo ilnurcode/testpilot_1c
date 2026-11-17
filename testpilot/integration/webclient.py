@@ -249,7 +249,7 @@ class WebClientRunner:
                          'вход в приложение невозможен', 'Выполнить запуск')
     # Сколько ждём ухода формы логина после одной попытки, прежде чем считать вход неудачным.
     # Настраивается TP_1C_LOGIN_GRACE_SECONDS (2..60): на медленном стенде дефолт 10 с может быть мал.
-    LOGIN_GRACE_SECONDS = int_env('TP_1C_LOGIN_GRACE_SECONDS', 10, 2, 60)
+    LOGIN_GRACE_SECONDS = int_env('TP_1C_LOGIN_GRACE_SECONDS', 30, 2, 60)
     # Сколько ждём появления формы входа (или рабочего стола) после навигации: публикация DemoTrd
     # отдаёт форму примерно через 15 с. Настраивается TP_1C_LOGIN_WAIT_SECONDS (5..120).
     LOGIN_WAIT_SECONDS = int_env('TP_1C_LOGIN_WAIT_SECONDS', 25, 5, 120)
@@ -276,6 +276,20 @@ class WebClientRunner:
         'Пользователь не найден',
         'Неверное имя',
     )
+
+    LOGIN_PROCESSING_SCRIPT = """() => {
+        const busy = document.querySelector('[aria-busy="true"], .waitingOverlay, .blockUI');
+        if (busy) return true;
+        const fields = [...document.querySelectorAll('#authWindow input, #authWindow button, button[id*="ok"]')];
+        return fields.some(element => element.disabled);
+    }"""
+
+    def _login_processing(self, frame) -> bool:
+        """Признаки обработки входа: поля/кнопка disabled или aria-busy/спиннер."""
+        try:
+            return bool(frame.evaluate(self.LOGIN_PROCESSING_SCRIPT))
+        except Exception:
+            return False
 
     def _platform_login_error(self, page) -> str | None:
         """Текст ошибки входа из сообщения платформы, если он появился на странице."""
@@ -432,6 +446,7 @@ class WebClientRunner:
             'clicked': False,
             'submitted_via': None,
             'form_visible_after': None,
+            'after_click_state': None,
         }
         state, frame = self._await_login_state(page)
         self.last_login_diagnostics['stage'] = state
@@ -496,23 +511,31 @@ class WebClientRunner:
             raise self._login_failure(frame, reason=str(error), note=password_note) from error
 
         # Ждём исхода одной попытки: ошибка платформы, уход формы логина или рабочая область.
+        # Состояние «в процессе» (disabled-поля, aria-busy, спиннер) — это ещё не ошибка: ждём до grace.
         started = time.monotonic()
-        while time.monotonic() - started < 45.0:
+        while time.monotonic() - started < self.LOGIN_GRACE_SECONDS:
             if self._platform_login_error(frame):
                 break
             if not self._login_form_visible(frame):
                 break
-            if time.monotonic() - started >= self.LOGIN_GRACE_SECONDS:
-                break  # форма не ушла за отведённое время — считаем вход неудачным
             frame.wait_for_timeout(200)
 
         form_visible_after = self._login_form_visible(frame)
-        self.last_login_diagnostics.update(stage='after_click', form_visible_after=form_visible_after)
         platform_error = self._platform_login_error(frame)
+        if platform_error:
+            after_click_state = 'platform_error'
+        elif not form_visible_after:
+            after_click_state = 'workspace'
+        elif self._login_processing(frame):
+            after_click_state = 'processing'
+        else:
+            after_click_state = 'form_idle'
+        self.last_login_diagnostics.update(stage='after_click', form_visible_after=form_visible_after,
+                                           after_click_state=after_click_state)
         if platform_error:
             raise self._login_failure(frame, reason=platform_error, note=password_note)
         if form_visible_after:
-            raise self._login_failure(frame, note=password_note)  # форма осталась — без ожидания 45 с
+            raise self._login_failure(frame, reason=f'состояние после клика: {after_click_state}', note=password_note)
 
         try:
             page.wait_for_function(

@@ -8,7 +8,7 @@ NUMERIC_VARS = [
     # (переменная, дефолт, минимум, максимум)
     ('TP_AUDIT_MAX_ISSUES', 5000, 100, 20000),
     ('TP_CODEX_TIMEOUT_SECONDS', 180, 1, 900),
-    ('TP_1C_LOGIN_GRACE_SECONDS', 10, 2, 60),
+    ('TP_1C_LOGIN_GRACE_SECONDS', 30, 2, 60),
 ]
 
 
@@ -81,13 +81,13 @@ def test_login_grace_is_configurable_and_wired(monkeypatch):
     from testpilot.integration.webclient import WebClientRunner
 
     monkeypatch.delenv('TP_1C_LOGIN_GRACE_SECONDS', raising=False)
-    assert config.int_env('TP_1C_LOGIN_GRACE_SECONDS', 10, 2, 60) == 10
-    assert config.int_env('TP_1C_LOGIN_GRACE_SECONDS', 10, 2, 60, raw='2') == 2
-    assert WebClientRunner.LOGIN_GRACE_SECONDS == config.int_env('TP_1C_LOGIN_GRACE_SECONDS', 10, 2, 60)
+    assert config.int_env('TP_1C_LOGIN_GRACE_SECONDS', 30, 2, 60) == 30
+    assert config.int_env('TP_1C_LOGIN_GRACE_SECONDS', 30, 2, 60, raw='2') == 2
+    assert WebClientRunner.LOGIN_GRACE_SECONDS == config.int_env('TP_1C_LOGIN_GRACE_SECONDS', 30, 2, 60)
 
     for bad in ('1', '61', 'abc', '0'):
         with pytest.raises(ValueError) as error:
-            config.int_env('TP_1C_LOGIN_GRACE_SECONDS', 10, 2, 60, raw=bad)
+            config.int_env('TP_1C_LOGIN_GRACE_SECONDS', 30, 2, 60, raw=bad)
         message = str(error.value)
         assert 'TP_1C_LOGIN_GRACE_SECONDS' in message
         assert 'от 2 до 60' in message
