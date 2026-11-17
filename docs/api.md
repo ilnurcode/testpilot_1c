@@ -104,6 +104,7 @@
 | GET | scans?limit=1..100 | Последние сохранённые аудиты (по умолчанию 20), сортировка `created_at DESC, id DESC` |
 | GET | scans/{scan_id} | Карточка записи в той же форме, что ответ `POST /scan`; 404 без записи |
 | GET | scans/{scan_id}/issues?offset=0&limit=100 | Постраничная выдача замечаний: `limit` 1..1000, `offset` ≥ 0 (иначе 400), 404 без записи |
+| DELETE | scans/{scan_id}?confirm={scan_id} | Адресное удаление одной записи журнала: без/неверный `confirm` — 409, неизвестный id — 404, успех — `{scan_id, deleted: true}`; роль expert |
 | GET | scans/{scan_id}/report?format=md/csv | Отчёт по записи; 400 на другой формат, 404 без записи |
 | POST | scan-upload | Аудит файла или архива, загруженного в проект |
 | GET | uploads/{upload_id}/report?format=md/csv | Отчёт по сохранённому аудиту загрузки |

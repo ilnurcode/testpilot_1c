@@ -58,6 +58,7 @@ api() { # api <base> <method> <path> [json-body]
 code_of() { curl -s -o /dev/null -w '%{http_code}' -u "$AUTH" "$1"; }
 
 PROJECT=""
+SCAN_ID=""
 journal_count() {
   docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -t -A -c "select count(*) from code_audit"' 2>/dev/null | tr -d '\r' || true
 }
@@ -70,6 +71,15 @@ cleanup() {
       local code
       code="$(curl -s -o /dev/null -w '%{http_code}' -u "$AUTH" -X DELETE "$IMPACT/api/v1/projects/$PROJECT?confirm=$PROJECT")"
       if [ "$code" = "200" ]; then echo "deleted project ${PROJECT:0:8}"; else echo "FAIL  удаление проекта ${PROJECT:0:8}: HTTP $code"; fi
+    fi
+  fi
+  if [ -n "${SCAN_ID:-}" ]; then
+    if [ "$KEEP" = "1" ]; then
+      echo "kept scan ${SCAN_ID:0:8} (--keep)"
+    else
+      local scan_code
+      scan_code="$(curl -s -o /dev/null -w '%{http_code}' -u "$AUTH" -X DELETE "$WEB/api/v1/audit/scans/$SCAN_ID?confirm=$SCAN_ID")"
+      if [ "$scan_code" = "200" ]; then echo "deleted scan ${SCAN_ID:0:8}"; else echo "FAIL  удаление скана ${SCAN_ID:0:8}: HTTP $scan_code"; fi
     fi
   fi
   echo "журнальных записей аудита кода: $(journal_count)"

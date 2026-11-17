@@ -250,6 +250,18 @@ else { Fail "pytest: код $pytestCode, $summary" }
     }
     $dbUser = (docker compose exec -T db printenv POSTGRES_USER 2>$null | Out-String).Trim()
     $dbName = (docker compose exec -T db printenv POSTGRES_DB 2>$null | Out-String).Trim()
+    if ($scan -and $scan.scan_id) {
+        if ($Keep) {
+            Write-Host "kept scan $($scan.scan_id.Substring(0,8)) (-Keep)"
+        } else {
+            try {
+                $scanDeleted = Invoke-RestMethod -Uri "$Web/api/v1/audit/scans/$($scan.scan_id)`?confirm=$($scan.scan_id)" -Method Delete -Headers $Headers -TimeoutSec 120
+                Write-Host "deleted scan $($scan.scan_id.Substring(0,8))"
+            } catch {
+                Write-Host "FAIL  удаление скана $($scan.scan_id.Substring(0,8)): $($_.Exception.Message)"
+            }
+        }
+    }
     $journal = (docker compose exec -T db psql -U $dbUser -d $dbName -t -A -c 'select count(*) from code_audit' 2>$null | Out-String).Trim()
     if (-not $journal) { $journal = 'неизвестно' }
     Write-Host "журнальных записей аудита кода: $journal"

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy import select
 
-from testpilot.common import user
+from testpilot.common import expert, user
 from testpilot.db import session, UploadRow, CodeAuditRow
 from testpilot import audit_limit
 from testpilot.scanner import ScannerEngine, Severity, ScanSummary
@@ -284,6 +284,24 @@ def list_code_audit_issues(
         "issues_truncated": bool(row.issues_truncated),
         "issues_kept": kept,
     }
+
+@router.delete("/scans/{scan_id}")
+def delete_code_audit(
+    scan_id: str,
+    confirm: str | None = None,
+    actor=Depends(expert),
+    s=Depends(session, scope="function"),
+) -> dict[str, Any]:
+    """Адресное удаление одной записи журнала аудита; массового удаления нет."""
+    if confirm != scan_id:
+        raise HTTPException(409, f"подтвердите удаление: передайте confirm={scan_id}")
+    row = s.get(CodeAuditRow, scan_id)
+    if row is None:
+        raise HTTPException(404, "Сохранённый аудит не найден")
+    s.delete(row)
+    s.flush()
+    return {"scan_id": scan_id, "deleted": True}
+
 
 @router.get("/scans/{scan_id}/report")
 def get_code_audit_report(
