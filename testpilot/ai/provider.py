@@ -139,9 +139,9 @@ def generate_local_1c_tests(package, catalog, names):
         'cases': [
             {
                 'steps': [
-                    {'action': 'assert_text', 'target': 'Продажи'},
                     {'action': 'click', 'target': 'Продажи'},
-                    {'action': 'wait', 'value': 1500}
+                    {'action': 'wait', 'value': 1500},
+                    {'action': 'assert_section', 'target': 'Продажи'}
                 ],
                 'expected': 'Веб-клиент 1С открыт, раздел Продажи доступен'
             }
