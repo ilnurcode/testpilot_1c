@@ -80,7 +80,8 @@ try {
     if ($health.status -eq 'ok') { Pass 'GET /health status=ok' } else { Fail "GET /health status=$($health.status)" }
 } catch { Fail "GET /health: $($_.Exception.Message)" }
 $revision = (docker compose exec -T intelligence alembic current 2>$null | Out-String).Trim() -split "`n" | Select-Object -Last 1
-if ($revision -match '0007 \(head\)') { Pass "alembic current: $revision" } else { Fail "alembic current: $revision" }
+# Не сверяем с конкретной ревизией: любая голова допустима, важно, что схема на актуальной миграции.
+if ($revision -match '\(head\)') { Pass "alembic current: $revision" } else { Fail "alembic current: $revision" }
 
 Write-Host '=== 2. Аудит демо-ZIP ==='
 $project = $null

@@ -92,8 +92,9 @@ HEALTH="$(api "$WEB" GET /health)"
 STATUS="$(printf '%s' "$HEALTH" | jget "d.get('status')" 2>/dev/null)"
 if [ "$STATUS" = "ok" ]; then pass "GET /health status=ok"; else fail "GET /health status=${STATUS:-нет ответа}"; fi
 REVISION="$(docker compose exec -T intelligence alembic current 2>/dev/null | tr -d '\r' | tail -1)"
+# Не сверяем с конкретной ревизией: любая голова допустима, важно, что схема на актуальной миграции.
 case "$REVISION" in
-  *"0007 (head)"*) pass "alembic current: $REVISION" ;;
+  *"(head)"*) pass "alembic current: $REVISION" ;;
   *) fail "alembic current: ${REVISION:-нет ответа}" ;;
 esac
 
