@@ -3,15 +3,17 @@
     Исполняемая приёмка TestPilot 1C: PASS/FAIL/SKIP по шагам, сводка и exit code.
 .DESCRIPTION
     Тот же набор шагов, что в scripts/acceptance.sh. PowerShell 5.1+, без внешних модулей.
-    Запуск: powershell -ExecutionPolicy Bypass -File scripts\acceptance.ps1 [-CfePath <file>] [-NoBuild] [-IncludeLLM] [-IncludeLive1C]
+    Запуск: powershell -ExecutionPolicy Bypass -File scripts\acceptance.ps1 [-CfePath <file>] [-NoBuild] [-IncludeLLM] [-IncludeLive1C] [-Keep]
     По умолчанию проверяются только локальные вещи: без -IncludeLLM нет обращений к провайдеру, без -IncludeLive1C нет прогона на 1С.
+    Созданный этим запуском проект удаляется в конце (даже при провале); -Keep оставляет его.
     Переменные окружения: EXPECT_DEMO_ISSUES (по умолчанию 12), CFE_PATH, TP_EXPERT_PASSWORD, TP_EXPERT_USER.
 #>
 param(
     [string]$CfePath = $env:CFE_PATH,
     [switch]$NoBuild,
     [switch]$IncludeLLM,
-    [switch]$IncludeLive1C
+    [switch]$IncludeLive1C,
+    [switch]$Keep
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,6 +63,7 @@ function Test-Url([string]$url) {
     catch { if ($_.Exception.Response) { return [int]$_.Exception.Response.StatusCode.value__ } else { return 0 } }
 }
 
+try {
 Write-Host '=== 1. Стек ==='
 if ($NoBuild) {
     Skip 'docker compose up (указан -NoBuild)'
@@ -69,7 +72,6 @@ if ($NoBuild) {
     if ($LASTEXITCODE -eq 0) { Pass 'docker compose up -d --build --wait' }
     else {
         Fail "docker compose up -d --build --wait (код $LASTEXITCODE)"
-        Write-Host "ИТОГО: passed=$script:Passed failed=$script:Failed skipped=$script:Skipped"
         exit 1
     }
 }
@@ -232,8 +234,27 @@ $summary = ($pytestOut -split "`n" | Where-Object { $_ -match '\d+ passed' } | S
 if ($pytestCode -eq 0 -and $summary) { Pass "pytest: $($summary.Trim())" }
 else { Fail "pytest: код $pytestCode, $summary" }
 
-Write-Host '=== ИТОГО ==='
-Write-Host "passed=$script:Passed failed=$script:Failed skipped=$script:Skipped"
+} finally {
+    if ($project) {
+        if ($Keep) {
+            Write-Host "kept project $($project.Substring(0,8)) (-Keep)"
+        } else {
+            try {
+                $deleted = Invoke-RestMethod -Uri "$Impact/api/v1/projects/$project`?confirm=$project" -Method Delete -Headers $Headers -TimeoutSec 120
+                Write-Host "deleted project $($project.Substring(0,8))"
+            } catch {
+                Write-Host "FAIL  удаление проекта $($project.Substring(0,8)): $($_.Exception.Message)"
+            }
+        }
+    }
+    $dbUser = (docker compose exec -T db printenv POSTGRES_USER 2>$null | Out-String).Trim()
+    $dbName = (docker compose exec -T db printenv POSTGRES_DB 2>$null | Out-String).Trim()
+    $journal = (docker compose exec -T db psql -U $dbUser -d $dbName -t -A -c 'select count(*) from code_audit' 2>$null | Out-String).Trim()
+    if (-not $journal) { $journal = 'неизвестно' }
+    Write-Host "журнальных записей аудита кода: $journal"
+    Write-Host '=== ИТОГО ==='
+    Write-Host "passed=$script:Passed failed=$script:Failed skipped=$script:Skipped"
+}
 if ($script:Failed -gt 0) { Write-Host 'РЕЗУЛЬТАТ: FAIL'; exit 1 }
 Write-Host 'РЕЗУЛЬТАТ: PASS'
 exit 0

@@ -488,3 +488,38 @@ def test_projects_total_counts_filtered_set_not_page(clients):
 
     assert page['total'] == 3
     assert len(page['items']) == 1
+
+
+def test_projects_only_with_issues_uses_latest_run_only(clients, monkeypatch):
+    """Failed в истории не считается: предикат смотрит только последний suite (rn=1)."""
+    from testpilot.ai import executor as executor_module
+
+    impact, c = clients
+    project = _project(impact, 'Был сбой, последний чистый')
+    pkg = _package('latest-only')
+    assert c.post('/api/v1/impact-packages', json=pkg).status_code == 200
+    suite = c.post('/api/v1/ai/suites', json={'package_id': pkg['package_id'], 'project_id': project['id'], 'provider': 'local'}).json()
+    assert c.post(f"/api/v1/ai/suites/{suite['suite_id']}/approve",
+                  json={'reason': 'Граница фильтра', 'selected_proposals': [0]}).status_code == 200
+
+    def result(status):
+        return ([{'proposal_index': 0, 'case_index': 0, 'engine': 'playwright', 'title': 'Шаг',
+                  'status': status, 'message': status, 'duration_seconds': 0.1, 'started_at': 'unit'}], [])
+
+    monkeypatch.setattr(executor_module, 'execute_1c', lambda s, profile: result('failed'))
+    first = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c")
+    assert first.status_code == 200 and first.json()['counts']['failed'] == 1
+
+    monkeypatch.setattr(executor_module, 'execute_1c', lambda s, profile: result('passed'))
+    rerun = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/rerun")
+    assert rerun.status_code == 200 and rerun.json()['counts']['passed'] == 1
+
+    mine = next(row for row in _items(impact, limit=200)['items'] if row['id'] == project['id'])
+    assert mine['last_run']['suite_id'] == rerun.json()['suite_id']
+    assert mine['last_run']['counts'] == {'passed': 1, 'failed': 0, 'error': 0, 'skipped': 0}
+
+    flagged = {row['id'] for row in _items(impact, only_with_issues='true')['items']}
+    assert project['id'] not in flagged, 'проект попал в фильтр по старому failed-прогону'
+
+    history = c.get('/api/v1/ai/suites', params={'project_id': project['id']}).json()
+    assert any(row['counts']['failed'] == 1 for row in history), 'failed-прогон должен остаться в истории'

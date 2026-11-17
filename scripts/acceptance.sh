@@ -14,12 +14,14 @@ CFE_FILE="${CFE_PATH:-}"
 BUILD=1
 INCLUDE_LLM=0
 INCLUDE_LIVE_1C=0
+KEEP=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --cfe) CFE_FILE="${2:-}"; shift 2 ;;
     --no-build) BUILD=0; shift ;;
     --llm) INCLUDE_LLM=1; shift ;;
     --live-1c) INCLUDE_LIVE_1C=1; shift ;;
+    --keep) KEEP=1; shift ;;
     *) echo "Неизвестный аргумент: $1"; exit 2 ;;
   esac
 done
@@ -54,6 +56,26 @@ api() { # api <base> <method> <path> [json-body]
   fi
 }
 code_of() { curl -s -o /dev/null -w '%{http_code}' -u "$AUTH" "$1"; }
+
+PROJECT=""
+journal_count() {
+  docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -t -A -c "select count(*) from code_audit"' 2>/dev/null | tr -d '\r' || true
+}
+cleanup() {
+  local rc=$?
+  if [ -n "${PROJECT:-}" ]; then
+    if [ "$KEEP" = "1" ]; then
+      echo "kept project ${PROJECT:0:8} (--keep)"
+    else
+      local code
+      code="$(curl -s -o /dev/null -w '%{http_code}' -u "$AUTH" -X DELETE "$IMPACT/api/v1/projects/$PROJECT?confirm=$PROJECT")"
+      if [ "$code" = "200" ]; then echo "deleted project ${PROJECT:0:8}"; else echo "FAIL  удаление проекта ${PROJECT:0:8}: HTTP $code"; fi
+    fi
+  fi
+  echo "журнальных записей аудита кода: $(journal_count)"
+  exit "$rc"
+}
+trap cleanup EXIT
 
 echo "=== 1. Стек ==="
 if [ "$BUILD" = "1" ]; then
