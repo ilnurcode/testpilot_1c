@@ -190,12 +190,32 @@ else
     PROVIDER=llm
   fi
   SUITE=""
-  if [ "$PROVIDER" = "llm" ] && [ -z "$LLM_KEY" ]; then
+  PLAN_PROJECT="$PROJECT"
+  LIVE_ERROR=""
+  if [ "$INCLUDE_LIVE_1C" = "1" ]; then
+    LIVE_PROJECT="${TP_ACCEPTANCE_PROJECT_ID:-}"
+    if [ -z "$LIVE_PROJECT" ]; then
+      fail "--live-1c требует TP_ACCEPTANCE_PROJECT_ID: id проекта с настроенным подключением (web_url/odata_url/пользователь)"
+      LIVE_ERROR=1
+    else
+      LIVE_JSON="$(api "$IMPACT" GET "/api/v1/projects/$LIVE_PROJECT")"
+      LIVE_WEB="$(printf '%s' "$LIVE_JSON" | jget "(d.get('connection_settings') or {}).get('web_url') or d.get('web_url') or ''" 2>/dev/null)"
+      if [ -z "${LIVE_WEB:-}" ]; then
+        fail "у проекта $LIVE_PROJECT не настроен web_url; заполните PUT /connection и повторите"
+        LIVE_ERROR=1
+      else
+        PLAN_PROJECT="$LIVE_PROJECT"
+      fi
+    fi
+  fi
+  if [ -n "$LIVE_ERROR" ]; then
+    :
+  elif [ "$PROVIDER" = "llm" ] && [ -z "$LLM_KEY" ]; then
     fail "генерация плана llm: TP_LLM_API_KEY не задан"
   elif [ -z "${PACKAGE:-}" ] || [ "$PACKAGE" = "None" ]; then
     fail "генерация плана: нет package_id из анализа ZIP"
   elif [ "$PROVIDER" = "llm" ]; then
-    SUITE="$(api "$INTEL" POST /api/v1/ai/suites "{\"package_id\":\"$PACKAGE\",\"project_id\":\"$PROJECT\",\"provider\":\"llm\",\"consent\":true,\"object_names\":{},\"model_context\":[]}")"
+    SUITE="$(api "$INTEL" POST /api/v1/ai/suites "{\"package_id\":\"$PACKAGE\",\"project_id\":\"$PLAN_PROJECT\",\"provider\":\"llm\",\"consent\":true,\"object_names\":{},\"model_context\":[]}")"
     if printf '%s' "$SUITE" | grep -q 'upstream_status'; then
       fail "генерация плана llm: $(printf '%s' "$SUITE" | head -c 200)"
       SUITE=""
@@ -204,7 +224,7 @@ else
       SUITE=""
     fi
   else
-    SUITE="$(api "$INTEL" POST /api/v1/ai/suites "{\"package_id\":\"$PACKAGE\",\"project_id\":\"$PROJECT\",\"provider\":\"local\"}")"
+    SUITE="$(api "$INTEL" POST /api/v1/ai/suites "{\"package_id\":\"$PACKAGE\",\"project_id\":\"$PLAN_PROJECT\",\"provider\":\"local\"}")"
     if printf '%s' "$SUITE" | grep -q '"error"'; then
       fail "генерация плана local: $(printf '%s' "$SUITE" | head -c 200)"
       SUITE=""

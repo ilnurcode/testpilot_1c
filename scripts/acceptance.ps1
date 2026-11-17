@@ -201,19 +201,44 @@ if (-not $IncludeLLM -and -not $IncludeLive1C) {
 } else {
     $provider = if ($IncludeLLM) { 'llm' } else { 'local' }
     $suite = $null
-    if ($provider -eq 'llm' -and -not $llmKey) {
+    $planProject = $project
+    $liveError = $false
+    if ($IncludeLive1C) {
+        $liveProject = $env:TP_ACCEPTANCE_PROJECT_ID
+        if (-not $liveProject) {
+            Fail '--live-1c требует TP_ACCEPTANCE_PROJECT_ID: id проекта с настроенным подключением (web_url/odata_url/пользователь)'
+            $liveError = $true
+        } else {
+            try {
+                $liveJson = Get-Json "$Impact/api/v1/projects/$liveProject"
+                $liveWeb = [string]$liveJson.connection_settings.web_url
+                if (-not $liveWeb) {
+                    Fail "у проекта $liveProject не настроен web_url; заполните PUT /connection и повторите"
+                    $liveError = $true
+                } else {
+                    $planProject = $liveProject
+                }
+            } catch {
+                Fail "проект ${liveProject}: $($_.Exception.Message)"
+                $liveError = $true
+            }
+        }
+    }
+    if ($liveError) {
+        # причина напечатана выше; план и прогон не создаются
+    } elseif ($provider -eq 'llm' -and -not $llmKey) {
         Fail 'генерация плана llm: TP_LLM_API_KEY не задан'
     } elseif (-not $package) {
         Fail 'генерация плана: нет package_id из анализа ZIP'
     } elseif ($provider -eq 'llm') {
         try {
-            $suite = Post-Json "$Intel/api/v1/ai/suites" @{ package_id = $package; project_id = $project; provider = 'llm'; consent = $true; object_names = @{}; model_context = @() }
+            $suite = Post-Json "$Intel/api/v1/ai/suites" @{ package_id = $package; project_id = $planProject; provider = 'llm'; consent = $true; object_names = @{}; model_context = @() }
         } catch {
             Fail "генерация плана llm: $($_.Exception.Message)"
         }
     } else {
         try {
-            $suite = Post-Json "$Intel/api/v1/ai/suites" @{ package_id = $package; project_id = $project; provider = 'local' }
+            $suite = Post-Json "$Intel/api/v1/ai/suites" @{ package_id = $package; project_id = $planProject; provider = 'local' }
         } catch {
             Fail "генерация плана local: $($_.Exception.Message)"
         }
