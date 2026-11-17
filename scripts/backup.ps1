@@ -7,13 +7,16 @@
     Переменные: POSTGRES_USER/POSTGRES_DB (иначе берутся из контейнера db), BACKUP_DIR.
 #>
 $ErrorActionPreference = 'Stop'
+# Compose-вызовы идут через предохранитель scripts/compose.ps1; исключение — pg_dump с редиректом через cmd
+# (там нет down -v и удаления томов).
+function DC { & (Join-Path $PSScriptRoot 'compose.ps1') @args }
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 $backupDir = if ($env:BACKUP_DIR) { $env:BACKUP_DIR } else { '.runtime\backups' }
 New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
 
-$dbUser = if ($env:POSTGRES_USER) { $env:POSTGRES_USER } else { (docker compose exec -T db printenv POSTGRES_USER 2>$null | Out-String).Trim() }
-$dbName = if ($env:POSTGRES_DB) { $env:POSTGRES_DB } else { (docker compose exec -T db printenv POSTGRES_DB 2>$null | Out-String).Trim() }
+$dbUser = if ($env:POSTGRES_USER) { $env:POSTGRES_USER } else { (DC exec -T db printenv POSTGRES_USER 2>$null | Out-String).Trim() }
+$dbName = if ($env:POSTGRES_DB) { $env:POSTGRES_DB } else { (DC exec -T db printenv POSTGRES_DB 2>$null | Out-String).Trim() }
 if (-not $dbUser) { $dbUser = 'testpilot' }
 if (-not $dbName) { $dbName = 'testpilot' }
 

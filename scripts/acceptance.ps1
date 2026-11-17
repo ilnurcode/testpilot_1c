@@ -19,6 +19,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Все compose-вызовы идут через предохранитель scripts/compose.ps1 (запрет down -v на рабочем проекте).
+function DC { & (Join-Path $PSScriptRoot 'compose.ps1') @args }
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
@@ -44,7 +46,7 @@ function Read-DotEnv([string]$key) {
 $User = if ($env:TP_EXPERT_USER) { $env:TP_EXPERT_USER } else { 'expert' }
 $Password = if ($env:TP_EXPERT_PASSWORD) { $env:TP_EXPERT_PASSWORD } else { Read-DotEnv 'TP_EXPERT_PASSWORD' }
 if (-not $Password) {
-    $Password = (docker compose exec -T intelligence printenv TP_EXPERT_PASSWORD 2>$null | Out-String).Trim()
+    $Password = (DC exec -T intelligence printenv TP_EXPERT_PASSWORD 2>$null | Out-String).Trim()
 }
 if (-not $Password) {
     Write-Host 'FAIL  не найден TP_EXPERT_PASSWORD ни в .env, ни в окружении контейнера'
@@ -69,12 +71,12 @@ try {
 Write-Host '=== 1. Стек ==='
 Write-Host "ПРЕДУПРЕЖДЕНИЕ: не выполнять 'docker compose down -v' на стенде с данными — это уничтожает БД и evidence. Для чистого старта: отдельный проект (-p testpilot-ci) или CI-раннер."
 if ($NoBuild) {
-    Skip 'docker compose up (указан -NoBuild)'
+    Skip 'DC up (указан -NoBuild)'
 } else {
-    $up = docker compose up -d --build --wait 2>&1 | Out-String
-    if ($LASTEXITCODE -eq 0) { Pass 'docker compose up -d --build --wait' }
+    $up = DC up -d --build --wait 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0) { Pass 'DC up -d --build --wait' }
     else {
-        Fail "docker compose up -d --build --wait (код $LASTEXITCODE)"
+        Fail "DC up -d --build --wait (код $LASTEXITCODE)"
         exit 1
     }
 }
@@ -82,7 +84,7 @@ try {
     $health = Get-Json "$Web/health"
     if ($health.status -eq 'ok') { Pass 'GET /health status=ok' } else { Fail "GET /health status=$($health.status)" }
 } catch { Fail "GET /health: $($_.Exception.Message)" }
-$revision = (docker compose exec -T intelligence alembic current 2>$null | Out-String).Trim() -split "`n" | Select-Object -Last 1
+$revision = (DC exec -T intelligence alembic current 2>$null | Out-String).Trim() -split "`n" | Select-Object -Last 1
 # Не сверяем с конкретной ревизией: любая голова допустима, важно, что схема на актуальной миграции.
 if ($revision -match '\(head\)') { Pass "alembic current: $revision" } else { Fail "alembic current: $revision" }
 
@@ -169,7 +171,7 @@ if ($scan) {
 }
 
 Write-Host '=== 5. ИИ: план и прогон ==='
-$llmKey = (docker compose exec -T intelligence sh -c 'printf "%s" "${TP_LLM_API_KEY:-}"' 2>$null | Out-String).Trim()
+$llmKey = (DC exec -T intelligence sh -c 'printf "%s" "${TP_LLM_API_KEY:-}"' 2>$null | Out-String).Trim()
 $markers = @('записать', 'провести', 'создать', 'удалить', 'отменить проведение', 'пометить на удаление', 'скопировать', 'изменить')
 function Test-CleanProposal($proposal) {
     if ($proposal.engine -ne 'playwright') { return $false }
@@ -238,7 +240,7 @@ if (-not $env:TP_UI_BASE_URL) { $env:TP_UI_BASE_URL = 'http://web:8000' }
 if (-not $env:TP_EXPERT_PASSWORD) { $env:TP_EXPERT_PASSWORD = 'TestPilotLocal123!' }
 # В приёмке интерфейс обязателен: недоступный UI — FAIL, а не SKIP.
 $env:TP_UI_REQUIRED = '1'
-$uiOut = docker compose exec -T -e "TP_UI_BASE_URL=$env:TP_UI_BASE_URL" -e "TP_EXPERT_PASSWORD=$env:TP_EXPERT_PASSWORD" -e "TP_UI_REQUIRED=1" intelligence python -m pytest tests/test_ui_smoke.py -q 2>&1 | Out-String
+$uiOut = DC exec -T -e "TP_UI_BASE_URL=$env:TP_UI_BASE_URL" -e "TP_EXPERT_PASSWORD=$env:TP_EXPERT_PASSWORD" -e "TP_UI_REQUIRED=1" intelligence python -m pytest tests/test_ui_smoke.py -q 2>&1 | Out-String
 $uiCode = $LASTEXITCODE
 $uiPassed = ($uiOut -split "`n" | Where-Object { $_ -match '\d+ passed' } | Select-Object -Last 1)
 $uiSkipped = ($uiOut -split "`n" | Where-Object { $_ -match '\d+ skipped' } | Select-Object -Last 1)
@@ -251,7 +253,7 @@ if ($uiCode -eq 0 -and $uiPassed) {
 } else {
     Fail "UI smoke: $(($uiOut -split "`n" | Where-Object { $_ -match 'раздел #|AssertionError' } | Select-Object -First 3) -join ' ')"
 }
-$pytestOut = docker compose exec -T -e "TP_UI_BASE_URL=$env:TP_UI_BASE_URL" -e "TP_EXPERT_PASSWORD=$env:TP_EXPERT_PASSWORD" -e "TP_UI_REQUIRED=1" intelligence python -m pytest tests/ -q 2>&1 | Out-String
+$pytestOut = DC exec -T -e "TP_UI_BASE_URL=$env:TP_UI_BASE_URL" -e "TP_EXPERT_PASSWORD=$env:TP_EXPERT_PASSWORD" -e "TP_UI_REQUIRED=1" intelligence python -m pytest tests/ -q 2>&1 | Out-String
 $pytestCode = $LASTEXITCODE
 $summary = ($pytestOut -split "`n" | Where-Object { $_ -match '\d+ passed' } | Select-Object -Last 1)
 if ($pytestCode -eq 0 -and $summary) { Pass "pytest: $($summary.Trim())" }
@@ -270,8 +272,8 @@ else { Fail "pytest: код $pytestCode, $summary" }
             }
         }
     }
-    $dbUser = (docker compose exec -T db printenv POSTGRES_USER 2>$null | Out-String).Trim()
-    $dbName = (docker compose exec -T db printenv POSTGRES_DB 2>$null | Out-String).Trim()
+    $dbUser = (DC exec -T db printenv POSTGRES_USER 2>$null | Out-String).Trim()
+    $dbName = (DC exec -T db printenv POSTGRES_DB 2>$null | Out-String).Trim()
     if ($scan -and $scan.scan_id) {
         if ($Keep) {
             Write-Host "kept scan $($scan.scan_id.Substring(0,8)) (-Keep)"
@@ -284,7 +286,7 @@ else { Fail "pytest: код $pytestCode, $summary" }
             }
         }
     }
-    $journal = (docker compose exec -T db psql -U $dbUser -d $dbName -t -A -c 'select count(*) from code_audit' 2>$null | Out-String).Trim()
+    $journal = (DC exec -T db psql -U $dbUser -d $dbName -t -A -c 'select count(*) from code_audit' 2>$null | Out-String).Trim()
     if (-not $journal) { $journal = 'неизвестно' }
     Write-Host "журнальных записей аудита кода: $journal"
     Write-Host '=== ИТОГО ==='

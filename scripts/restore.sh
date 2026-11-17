@@ -47,7 +47,7 @@ case "$DUMP" in
   *) echo "Отказ: неизвестное расширение (ожидается .sql, .dump или .backup): $DUMP" >&2; exit 2 ;;
 esac
 
-dc() { docker compose -p "$PROJECT" "$@"; }
+dc() { "$ROOT/scripts/compose.sh" -p "$PROJECT" "$@"; }
 DB_USER="${POSTGRES_USER:-$(dc exec -T db printenv POSTGRES_USER 2>/dev/null | tr -d '\r')}"
 DB_NAME="${POSTGRES_DB:-$(dc exec -T db printenv POSTGRES_DB 2>/dev/null | tr -d '\r')}"
 DB_USER="${DB_USER:-testpilot}"

@@ -37,7 +37,7 @@ USER_NAME="${TP_EXPERT_USER:-expert}"
 read_env() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r'; }
 PASSWORD="${TP_EXPERT_PASSWORD:-$(read_env TP_EXPERT_PASSWORD)}"
 if [ -z "$PASSWORD" ]; then
-  PASSWORD="$(docker compose exec -T intelligence printenv TP_EXPERT_PASSWORD 2>/dev/null | tr -d '\r')"
+  PASSWORD="$("$ROOT/scripts/compose.sh" exec -T intelligence printenv TP_EXPERT_PASSWORD 2>/dev/null | tr -d '\r')"
 fi
 if [ -z "$PASSWORD" ]; then
   echo "FAIL  не найден TP_EXPERT_PASSWORD ни в .env, ни в окружении контейнера"
@@ -46,7 +46,7 @@ fi
 AUTH="$USER_NAME:$PASSWORD"
 
 jget() { # jget <python-выражение над d>; JSON читается со stdin
-  docker compose exec -T intelligence python -c "import json,sys
+  "$ROOT/scripts/compose.sh" exec -T intelligence python -c "import json,sys
 d=json.load(sys.stdin)
 print(eval(sys.argv[1]))" "$1"
 }
@@ -62,7 +62,7 @@ code_of() { curl -s -o /dev/null -w '%{http_code}' -u "$AUTH" "$1"; }
 PROJECT=""
 SCAN_ID=""
 journal_count() {
-  docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -t -A -c "select count(*) from code_audit"' 2>/dev/null | tr -d '\r' || true
+  "$ROOT/scripts/compose.sh" exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -t -A -c "select count(*) from code_audit"' 2>/dev/null | tr -d '\r' || true
 }
 cleanup() {
   local rc=$?
@@ -92,19 +92,19 @@ trap cleanup EXIT
 echo "=== 1. Стек ==="
 echo "ПРЕДУПРЕЖДЕНИЕ: не выполнять 'docker compose down -v' на стенде с данными — это уничтожает БД и evidence. Для чистого старта: отдельный проект (-p testpilot-ci) или CI-раннер."
 if [ "$BUILD" = "1" ]; then
-  if docker compose up -d --build --wait >/tmp/tp_acceptance_up.log 2>&1; then
-    pass "docker compose up -d --build --wait"
+  if "$ROOT/scripts/compose.sh" up -d --build --wait >/tmp/tp_acceptance_up.log 2>&1; then
+    pass ""$ROOT/scripts/compose.sh" up -d --build --wait"
   else
-    fail "docker compose up -d --build --wait (см. /tmp/tp_acceptance_up.log)"
+    fail ""$ROOT/scripts/compose.sh" up -d --build --wait (см. /tmp/tp_acceptance_up.log)"
     echo "ИТОГО: passed=$PASSED failed=$FAILED skipped=$SKIPPED"; exit 1
   fi
 else
-  skip "docker compose up (--no-build)"
+  skip ""$ROOT/scripts/compose.sh" up (--no-build)"
 fi
 HEALTH="$(api "$WEB" GET /health)"
 STATUS="$(printf '%s' "$HEALTH" | jget "d.get('status')" 2>/dev/null)"
 if [ "$STATUS" = "ok" ]; then pass "GET /health status=ok"; else fail "GET /health status=${STATUS:-нет ответа}"; fi
-REVISION="$(docker compose exec -T intelligence alembic current 2>/dev/null | tr -d '\r' | tail -1)"
+REVISION="$("$ROOT/scripts/compose.sh" exec -T intelligence alembic current 2>/dev/null | tr -d '\r' | tail -1)"
 # Не сверяем с конкретной ревизией: любая голова допустима, важно, что схема на актуальной миграции.
 case "$REVISION" in
   *"(head)"*) pass "alembic current: $REVISION" ;;
@@ -158,7 +158,7 @@ CODE='Процедура Тест()
 	Объект = Новый COMОбъект("Excel.Application");
 КонецПроцедуры
 '
-SCAN_BODY="$(docker compose exec -T -e TP_CODE="$CODE" intelligence python -c 'import json,os;print(json.dumps({"code":os.environ["TP_CODE"]}))')"
+SCAN_BODY="$("$ROOT/scripts/compose.sh" exec -T -e TP_CODE="$CODE" intelligence python -c 'import json,os;print(json.dumps({"code":os.environ["TP_CODE"]}))')"
 SCAN="$(api "$WEB" POST /api/v1/audit/scan "$SCAN_BODY")"
 SCAN_ID="$(printf '%s' "$SCAN" | jget "d.get('scan_id')" 2>/dev/null)"
 RULES="$(printf '%s' "$SCAN" | jget "sorted(i['rule_id'] for i in d.get('issues') or [])" 2>/dev/null)"
@@ -171,7 +171,7 @@ if [ "$MD_CODE" = "200" ] && [ "$MD_SIZE" -gt 0 ]; then pass "отчёт md: 200
 if [ "$CSV_CODE" = "200" ] && [ "$CSV_SIZE" -gt 0 ]; then pass "отчёт csv: 200, $CSV_SIZE байт"; else fail "отчёт csv: код $CSV_CODE, $CSV_SIZE байт"; fi
 
 echo "=== 5. ИИ: план и прогон ==="
-LLM_KEY="$(docker compose exec -T intelligence sh -c 'printf "%s" "${TP_LLM_API_KEY:-}"' 2>/dev/null | tr -d '\r')"
+LLM_KEY="$("$ROOT/scripts/compose.sh" exec -T intelligence sh -c 'printf "%s" "${TP_LLM_API_KEY:-}"' 2>/dev/null | tr -d '\r')"
 if [ "$INCLUDE_LLM" = "0" ]; then
   skip "генерация плана и прогон отключены: добавьте --llm (внешний провайдер) и --live-1c (прогон на 1С)"
 elif [ -z "$LLM_KEY" ]; then
@@ -240,7 +240,7 @@ export TP_UI_BASE_URL="${TP_UI_BASE_URL:-http://web:8000}"
 export TP_EXPERT_PASSWORD="${TP_EXPERT_PASSWORD:-TestPilotLocal123!}"
 # В приёмке интерфейс обязателен: недоступный UI — FAIL, а не SKIP.
 export TP_UI_REQUIRED=1
-UI_OUT="$(docker compose exec -T -e TP_UI_BASE_URL="$TP_UI_BASE_URL" -e TP_EXPERT_PASSWORD="$TP_EXPERT_PASSWORD" -e TP_UI_REQUIRED=1 intelligence python -m pytest tests/test_ui_smoke.py -q 2>&1)"
+UI_OUT="$("$ROOT/scripts/compose.sh" exec -T -e TP_UI_BASE_URL="$TP_UI_BASE_URL" -e TP_EXPERT_PASSWORD="$TP_EXPERT_PASSWORD" -e TP_UI_REQUIRED=1 intelligence python -m pytest tests/test_ui_smoke.py -q 2>&1)"
 UI_RC=$?
 UI_SKIPPED="$(printf '%s' "$UI_OUT" | grep -E '[0-9]+ skipped' | tail -1)"
 UI_SUMMARY="$(printf '%s' "$UI_OUT" | grep -E '[0-9]+ passed' | tail -1)"
@@ -254,7 +254,7 @@ else
   FAILED=$((FAILED+1))
   echo "FAIL  UI smoke: $(printf '%s' "$UI_OUT" | grep -E 'раздел #|AssertionError' | head -3 | tr '\n' ' ')"
 fi
-PYTEST_OUT="$(docker compose exec -T -e TP_UI_BASE_URL="$TP_UI_BASE_URL" -e TP_EXPERT_PASSWORD="$TP_EXPERT_PASSWORD" -e TP_UI_REQUIRED=1 intelligence python -m pytest tests/ -q 2>&1)"
+PYTEST_OUT="$("$ROOT/scripts/compose.sh" exec -T -e TP_UI_BASE_URL="$TP_UI_BASE_URL" -e TP_EXPERT_PASSWORD="$TP_EXPERT_PASSWORD" -e TP_UI_REQUIRED=1 intelligence python -m pytest tests/ -q 2>&1)"
 PYTEST_RC=$?
 PYTEST_SUMMARY="$(printf '%s' "$PYTEST_OUT" | grep -E '[0-9]+ passed' | tail -1)"
 if [ "$PYTEST_RC" = "0" ] && [ -n "$PYTEST_SUMMARY" ]; then pass "pytest: $PYTEST_SUMMARY"; else fail "pytest: код $PYTEST_RC, ${PYTEST_SUMMARY:-нет сводки}"; fi

@@ -18,6 +18,9 @@ param(
     [string]$Project = $(if ($env:COMPOSE_PROJECT_NAME) { $env:COMPOSE_PROJECT_NAME } else { 'testpilot' })
 )
 $ErrorActionPreference = 'Stop'
+# Compose-вызовы идут через предохранитель scripts/compose.ps1; исключение — заливка с редиректом через cmd
+# (down -v и удаления томов там нет).
+function DC { & (Join-Path $PSScriptRoot 'compose.ps1') @args }
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
 if (-not (Test-Path -LiteralPath $Dump -PathType Leaf)) { Write-Host "Отказ: файл дампа не найден: $Dump"; exit 2 }
@@ -31,12 +34,12 @@ $method = switch -Regex ($Dump) {
 }
 if (-not $method) { Write-Host "Отказ: неизвестное расширение (ожидается .sql, .dump или .backup): $Dump"; exit 2 }
 
-$dbUser = if ($env:POSTGRES_USER) { $env:POSTGRES_USER } else { (docker compose -p $Project exec -T db printenv POSTGRES_USER 2>$null | Out-String).Trim() }
-$dbName = if ($env:POSTGRES_DB) { $env:POSTGRES_DB } else { (docker compose -p $Project exec -T db printenv POSTGRES_DB 2>$null | Out-String).Trim() }
+$dbUser = if ($env:POSTGRES_USER) { $env:POSTGRES_USER } else { (DC -p $Project exec -T db printenv POSTGRES_USER 2>$null | Out-String).Trim() }
+$dbName = if ($env:POSTGRES_DB) { $env:POSTGRES_DB } else { (DC -p $Project exec -T db printenv POSTGRES_DB 2>$null | Out-String).Trim() }
 if (-not $dbUser) { $dbUser = 'testpilot' }
 if (-not $dbName) { $dbName = 'testpilot' }
 
-$tables = (docker compose -p $Project exec -T db psql -v ON_ERROR_STOP=1 -U $dbUser -d $dbName -t -A -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>$null | Out-String).Trim()
+$tables = (DC -p $Project exec -T db psql -v ON_ERROR_STOP=1 -U $dbUser -d $dbName -t -A -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>$null | Out-String).Trim()
 if ($tables -notmatch '^\d+$') {
     Write-Host "Отказ: не удалось прочитать БД проекта $Project (контейнер db не запущен)."
     Write-Host "       Запустите только базу: docker compose -p $Project up -d db, затем повторите restore."
@@ -79,12 +82,12 @@ foreach ($query in @(
     "SELECT 'ti_ai_suites='||count(*) FROM ti_ai_suites",
     "SELECT 'code_audit='||count(*) FROM code_audit"
 )) {
-    (docker compose -p $Project exec -T db psql -v ON_ERROR_STOP=1 -U $dbUser -d $dbName -t -A -c $query | Out-String).Trim()
+    (DC -p $Project exec -T db psql -v ON_ERROR_STOP=1 -U $dbUser -d $dbName -t -A -c $query | Out-String).Trim()
 }
 if ($hasAlembic) {
     Write-Host "Готово. Поднимайте приложение: docker compose -p $Project up -d --wait"
 } else {
     Write-Host 'ВНИМАНИЕ: в дампе нет alembic_version. Сверьте таблицы и выполните alembic stamp head вручную:'
-    Write-Host "  docker compose -p $Project run --rm migrate alembic stamp head  (или exec в поднятом сервисе)"
+    Write-Host "  DC -p $Project run --rm migrate alembic stamp head  (или exec в поднятом сервисе)"
     Write-Host "  'up -d --wait' до этого упадёт: migrate попытается создать уже существующие таблицы."
 }

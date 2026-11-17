@@ -1,23 +1,20 @@
 #!/usr/bin/env bash
 # Обёртка над `docker compose`: пробрасывает аргументы, но запрещает уничтожать тома рабочего проекта.
-# Разрешено: `down -v` при CI=1 или с -p testpilot-ci / -p testpilot-restore; `down` без -v; обычные команды.
-# Запрещено (код 3): `down -v` на рабочем проекте, `volume rm`/`volume prune`, задевающие testpilot.
+# Проект: -p/--project, иначе COMPOSE_PROJECT_NAME, иначе testpilot.
+# Разрешено: `down -v` и volume-операции только для проектов testpilot-ci / testpilot-restore; `down` без -v; остальные команды.
+# Запрещено (код 3): `down -v` на рабочем проекте, `volume rm` с томами testpilot, `volume prune`.
+# CI не снимает запрет: он влияет только на текст подсказки.
 set -uo pipefail
 
-REFUSAL_DOWN='Отказано: `down -v` удаляет тома (БД и evidence). На рабочем стенде недопустимо. Используйте `-p testpilot-ci` или `-p testpilot-restore`, либо `docker compose down` без `-v`.'
-REFUSAL_VOLUME='Отказано: удаление томов проекта testpilot уничтожает БД и evidence. Используйте `-p testpilot-ci` или `-p testpilot-restore`, либо CI=1.'
 ALLOWED_PROJECTS='testpilot-ci testpilot-restore'
-
-args=("$@")
-is_ci=0
-case "${CI:-}" in 1|true|yes) is_ci=1 ;; esac
-
-project=""
+project="${COMPOSE_PROJECT_NAME:-}"
 has_down=0
 has_volumes=0
 volume_sub=""
 volume_targets=()
 i=0
+# shellcheck disable=SC2206
+args=("$@")
 while [ "$i" -lt "${#args[@]}" ]; do
   a="${args[$i]}"
   case "$a" in
@@ -35,29 +32,42 @@ while [ "$i" -lt "${#args[@]}" ]; do
   esac
   i=$((i+1))
 done
+[ -n "$project" ] || project='testpilot'
 
 project_allowed=0
 for allowed in $ALLOWED_PROJECTS; do
   [ "$project" = "$allowed" ] && project_allowed=1
 done
 
-if [ "$has_down" -eq 1 ] && [ "$has_volumes" -eq 1 ] && [ "$is_ci" -eq 0 ] && [ "$project_allowed" -eq 0 ]; then
-  echo "$REFUSAL_DOWN" >&2
+in_ci=0
+case "${CI:-}" in 1|true|yes) in_ci=1 ;; esac
+ci_hint=""
+[ "$in_ci" -eq 1 ] && ci_hint=' В CI используйте отдельный проект: `-p testpilot-ci`.'
+
+if [ "$has_down" -eq 1 ] && [ "$has_volumes" -eq 1 ] && [ "$project_allowed" -eq 0 ]; then
+  echo "Отказано: \`down -v\` удаляет тома (БД и evidence). На рабочем стенде недопустимо. Используйте \`-p testpilot-ci\` или \`-p testpilot-restore\`, либо \`docker compose down\` без \`-v\`.$ci_hint" >&2
   exit 3
 fi
 
-if [ -n "$volume_sub" ] && [ "$is_ci" -eq 0 ]; then
+if [ -n "$volume_sub" ]; then
   case "$volume_sub" in
     prune)
-      echo "$REFUSAL_VOLUME" >&2
-      exit 3
+      if [ "$project_allowed" -eq 0 ]; then
+        echo "Отказано: \`volume prune\` может удалить тома проекта $project (БД и evidence). Используйте \`-p testpilot-ci\`/\`-p testpilot-restore\`.$ci_hint" >&2
+        exit 3
+      fi
       ;;
     rm)
-      for target in "${volume_targets[@]}"; do
-        case "$target" in
-          testpilot*) echo "$REFUSAL_VOLUME" >&2; exit 3 ;;
-        esac
-      done
+      if [ "$project_allowed" -eq 0 ]; then
+        for target in "${volume_targets[@]}"; do
+          case "$target" in
+            testpilot*)
+              echo "Отказано: удаление томов проекта testpilot уничтожает БД и evidence. Используйте \`-p testpilot-ci\` или \`-p testpilot-restore\`.$ci_hint" >&2
+              exit 3
+              ;;
+          esac
+        done
+      fi
       ;;
   esac
 fi

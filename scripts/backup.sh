@@ -10,14 +10,14 @@ cd "$ROOT"
 BACKUP_DIR="${BACKUP_DIR:-.runtime/backups}"
 mkdir -p "$BACKUP_DIR"
 
-DB_USER="${POSTGRES_USER:-$(docker compose exec -T db printenv POSTGRES_USER 2>/dev/null | tr -d '\r')}"
-DB_NAME="${POSTGRES_DB:-$(docker compose exec -T db printenv POSTGRES_DB 2>/dev/null | tr -d '\r')}"
+DB_USER="${POSTGRES_USER:-$("$ROOT/scripts/compose.sh" exec -T db printenv POSTGRES_USER 2>/dev/null | tr -d '\r')}"
+DB_NAME="${POSTGRES_DB:-$("$ROOT/scripts/compose.sh" exec -T db printenv POSTGRES_DB 2>/dev/null | tr -d '\r')}"
 DB_USER="${DB_USER:-testpilot}"
 DB_NAME="${DB_NAME:-testpilot}"
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 FILE="$BACKUP_DIR/testpilot-$STAMP.sql"
-docker compose exec -T db pg_dump -U "$DB_USER" "$DB_NAME" > "$FILE"
+"$ROOT/scripts/compose.sh" exec -T db pg_dump -U "$DB_USER" "$DB_NAME" > "$FILE"
 
 SIZE="$(wc -c < "$FILE" | tr -d ' ')"
 if [ "${SIZE:-0}" -le 0 ]; then

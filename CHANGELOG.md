@@ -57,5 +57,5 @@
 
 `docker compose down -v` на рабочем стенде удалил тома `testpilot_pgdata` (33 проекта, 39 загрузок, 45 suite,
 42 записи `code_audit`, 107 evidence) и `testpilot_codex_auth`. Данные **не восстановлены**: дампов не найдено.
-Предотвращение: обёртка `scripts/compose.sh`, CI в отдельном проекте `testpilot-ci`, бэкап/restore-скрипты,
+Предотвращение: обёртки `scripts/compose.sh`/`compose.ps1` для скриптов репозитория, CI в проекте `testpilot-ci`, бэкап/restore-скрипты,
 плейбук разбора копии диска. Подробности — [docs/incident-2026-11-17.md](docs/incident-2026-11-17.md).

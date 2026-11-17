@@ -50,12 +50,15 @@ def fake_docker(tmp_path):
     return bin_dir, args_file
 
 
-def _run(args, fake_docker, ci=None):
+def _run(args, fake_docker, ci=None, compose_project=None):
     bin_dir, args_file = fake_docker
     env = {**os.environ, 'PATH': f'{_posix(bin_dir)}:/usr/bin:/bin'}
     env.pop('CI', None)
+    env.pop('COMPOSE_PROJECT_NAME', None)
     if ci is not None:
         env['CI'] = ci
+    if compose_project is not None:
+        env['COMPOSE_PROJECT_NAME'] = compose_project
     result = subprocess.run([_bash_exe(), _posix(SCRIPT), *args], capture_output=True, text=True, env=env, timeout=60)
     called = args_file.read_text(encoding='utf-8').splitlines() if args_file.exists() else []
     return result, called
@@ -106,8 +109,30 @@ def test_volume_prune_is_refused(fake_docker):
     assert called == []
 
 
-def test_down_with_volumes_allowed_in_ci(fake_docker):
+def test_ci_does_not_unlock_down_with_volumes(fake_docker):
     result, called = _run(['down', '-v'], fake_docker, ci='1')
+
+    assert result.returncode == 3
+    assert 'В CI используйте отдельный проект: `-p testpilot-ci`.' in result.stderr
+    assert called == []
+
+
+def test_work_project_by_name_is_refused(fake_docker):
+    result, called = _run(['-p', 'testpilot', 'down', '-v'], fake_docker)
+
+    assert result.returncode == 3
+    assert called == []
+
+
+def test_project_from_environment_is_refused(fake_docker):
+    result, called = _run(['down', '--volumes'], fake_docker, compose_project='testpilot')
+
+    assert result.returncode == 3
+    assert called == []
+
+
+def test_project_from_environment_whitelist_allows(fake_docker):
+    result, called = _run(['down', '-v'], fake_docker, compose_project='testpilot-ci')
 
     assert result.returncode == 0, result.stderr
     assert called == ['compose', 'down', '-v']
