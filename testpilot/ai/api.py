@@ -388,10 +388,35 @@ def _execute_1c_row(row,actor,s,allow_mutations=False,strict_read_only=False):
 def run_1c(sid:str,allow_mutations:bool=False,strict_read_only:bool=False,actor=Depends(expert),s=Depends(session,scope='function')):
     row=require(s.scalar(select(AISuiteRow).where(AISuiteRow.id==sid).with_for_update()))
     if row.status=='completed':return _suite_response(row.payload)
-    if row.status!='approved':raise HTTPException(409,'Сначала подтвердите сценарии и тестовые данные')
+    blocker=suite_preflight_blocker(s,row)
+    if blocker:
+        raise HTTPException(422,blocker)
     ensure_login_allowed(s,row.payload,row.project_id)
     _require_run_mode(row.payload,allow_mutations,strict_read_only)
     return _suite_response(_execute_1c_row(row,actor,s,allow_mutations,strict_read_only))
+
+
+def suite_preflight_blocker(s,row):
+    """Причина, по которой прогон не начнётся без браузера; None — блокеров нет.
+
+    Используется и в preflight (would_run/warnings), и в run-1c (422 с той же причиной).
+    """
+    payload=row.payload or {}
+    proposals=(payload.get('suggestion') or {}).get('proposals') or []
+    approved=[index for index in ((payload.get('approval') or {}).get('selected_proposals') or [])
+              if isinstance(index,int) and 0<=index<len(proposals)]
+    if not approved:
+        return 'нет утверждённых предложений: подтвердите план перед прогоном'
+    project=s.get(ProjectRow,row.project_id)
+    web_url=(project.web_url or '').strip() if project else ''
+    odata_url=(project.odata_url or '').strip() if project else ''
+    for index in approved:
+        engine=(proposals[index].get('engine') or '').strip()
+        if engine=='playwright' and not web_url:
+            return 'web_url не настроен: заполните подключение проекта'
+        if engine=='odata' and not odata_url:
+            return 'odata_url не настроен: заполните подключение проекта'
+    return None
 
 
 @router.get('/suites/{sid}/preflight')
@@ -432,18 +457,19 @@ def suite_preflight(sid:str,actor=Depends(user),s=Depends(session,scope='functio
         engines.append({'index':index,'engine':engine,'mutating':bool(proposal.get('mutating')),
                         'steps_count':steps_count(proposal),'blocked_reason':blocked})
 
-    if not approved_indices:
-        warnings.append('нет утверждённых предложений: подтвердите план перед прогоном')
+    blocker=suite_preflight_blocker(s,row)
+    if blocker:
+        warnings.append(blocker)
     if mutation_conflicts(payload) and not allow_mode:
         warnings.append('изменяющие шаги требуют allow_mutations=true: '+'; '.join(mutation_conflicts(payload)[:2]))
-    if strict_conflicts(payload):
-        warnings.append('строгий режим (strict_read_only) заблокирует клики: '+'; '.join(strict_conflicts(payload)[:2]))
+    if strict_mode and strict_conflicts(payload):
+        warnings.append('строгий режим включён: клики будут отклонены: '+'; '.join(strict_conflicts(payload)[:2]))
     try:
         login_guard.ensure_login_allowed(s,payload,row.project_id)
     except _HTTPException as error:
         warnings.append(str(error.detail))
 
-    would_run=bool(approved_indices) and not any(item['blocked_reason'] for item in engines)
+    would_run=blocker is None
     return {
         'suite_id':sid,
         'status':row.status,

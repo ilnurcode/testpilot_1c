@@ -388,7 +388,7 @@ def _approved_suite_for_rerun(clients, monkeypatch, *, fail=None):
     impact, c, project, p = _project_with_package(clients)
     assert impact.put(
         f"/api/v1/projects/{project['id']}/connection",
-        json={'odata_url': 'https://1c.example.test/odata/standard.odata'},
+        json={'odata_url': 'https://1c.example.test/odata/standard.odata', 'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': 'Администратор', 'auth_password': ''},
     ).status_code == 200
     created = _create_demo_suite(c, p, project['id'])
     assert c.post(
@@ -490,7 +490,7 @@ def _executed_suite(clients, monkeypatch):
     impact, c, project, p = _project_with_package(clients)
     assert impact.put(
         f"/api/v1/projects/{project['id']}/connection",
-        json={'odata_url': 'https://1c.example.test/odata/standard.odata'},
+        json={'odata_url': 'https://1c.example.test/odata/standard.odata', 'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': 'Администратор', 'auth_password': ''},
     ).status_code == 200
     created = _create_demo_suite(c, p, project['id'])
     assert c.post(
@@ -607,7 +607,7 @@ def _suite_with_two_cases(clients, monkeypatch):
     impact, c, project, p = _project_with_package(clients)
     assert impact.put(
         f"/api/v1/projects/{project['id']}/connection",
-        json={'odata_url': 'https://1c.example.test/odata/standard.odata'},
+        json={'odata_url': 'https://1c.example.test/odata/standard.odata', 'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': 'Администратор', 'auth_password': ''},
     ).status_code == 200
     created = _create_demo_suite(c, p, project['id'])
     assert c.post(
@@ -674,7 +674,7 @@ def _mutating_suite(clients, monkeypatch, steps, *, called=None):
     project = impact.post('/api/v1/projects', json={'name': 'Изменяющие шаги', 'description': ''}).json()
     assert impact.put(
         f"/api/v1/projects/{project['id']}/connection",
-        json={'odata_url': 'https://1c.example.test/odata/standard.odata'},
+        json={'odata_url': 'https://1c.example.test/odata/standard.odata', 'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': 'Администратор', 'auth_password': ''},
     ).status_code == 200
     suggestion = _suite_plan(p, 'playwright', [{'steps': steps}])
     monkeypatch.setattr(provider, 'generate', lambda *a, **kw: (suggestion, 'mock-model'))

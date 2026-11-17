@@ -306,6 +306,12 @@ def test_projects_list_reports_last_run_null_and_after_execution(clients, monkey
 
     impact, c = clients
     project = _project(impact, 'Проект без прогонов')
+    assert impact.put(f"/api/v1/projects/{project['id']}/connection", json={
+        'web_url': 'http://1c.example.test/DemoTrd',
+        'odata_url': 'https://1c.example.test/odata/standard.odata',
+        'auth_username': 'Администратор',
+        'auth_password': '',
+    }).status_code == 200
     rows = impact.get('/api/v1/projects', params={'limit': 200}).json()['items']
     mine = next(row for row in rows if row['id'] == project['id'])
     assert mine['last_run'] is None
@@ -340,6 +346,12 @@ def test_projects_list_shows_newest_run_as_last_run(clients, monkeypatch):
 
     impact, c = clients
     project = _project(impact, 'Проект с rerun')
+    assert impact.put(f"/api/v1/projects/{project['id']}/connection", json={
+        'web_url': 'http://1c.example.test/DemoTrd',
+        'odata_url': 'https://1c.example.test/odata/standard.odata',
+        'auth_username': 'Администратор',
+        'auth_password': '',
+    }).status_code == 200
     p = _package('rerun')
     assert c.post('/api/v1/impact-packages', json=p).status_code == 200
     suite = c.post('/api/v1/ai/suites', json={'package_id': p['package_id'], 'project_id': project['id'], 'provider': 'local'}).json()
@@ -405,6 +417,10 @@ def _project_with_run(impact, c, monkeypatch, name, statuses):
     from testpilot.ai import executor as executor_module
 
     project = _project(impact, name)
+    assert impact.put(f"/api/v1/projects/{project['id']}/connection", json={
+        'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': 'Администратор', 'auth_password': '',
+        'odata_url': 'https://1c.example.test/odata/standard.odata',
+    }).status_code == 200
     import uuid
 
     pkg = _package(f'filters-{uuid.uuid4().hex[:10]}')
@@ -497,6 +513,12 @@ def test_projects_only_with_issues_uses_latest_run_only(clients, monkeypatch):
 
     impact, c = clients
     project = _project(impact, 'Был сбой, последний чистый')
+    assert impact.put(f"/api/v1/projects/{project['id']}/connection", json={
+        'web_url': 'http://1c.example.test/DemoTrd',
+        'odata_url': 'https://1c.example.test/odata/standard.odata',
+        'auth_username': 'Администратор',
+        'auth_password': '',
+    }).status_code == 200
     pkg = _package('latest-only')
     assert c.post('/api/v1/impact-packages', json=pkg).status_code == 200
     suite = c.post('/api/v1/ai/suites', json={'package_id': pkg['package_id'], 'project_id': project['id'], 'provider': 'local'}).json()

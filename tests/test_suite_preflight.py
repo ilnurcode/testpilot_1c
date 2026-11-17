@@ -151,3 +151,71 @@ def test_preflight_ready_plan_reports_runtime_values(clients):
     assert body['runtime']['audit_max_issues'] >= 100
     assert body['runtime']['allow_mutations_mode'] is False
     assert body['runtime']['strict_read_only_mode'] is False
+
+
+def _strict_warnings(body):
+    return [w for w in body['warnings'] if 'строгий режим' in w]
+
+
+def test_preflight_strict_warning_only_when_mode_enabled(clients):
+    _, c = clients
+    project, package_id = _project(clients, web_url='http://1c.example.test/DemoTrd')
+    sid = _insert_suite(project['id'], package_id, _mutating_payload())
+
+    quiet = c.get(f'/api/v1/ai/suites/{sid}/preflight').json()
+    assert _strict_warnings(quiet) == []
+
+    with _session() as s:
+        row = s.get(db.AISuiteRow, sid)
+        row.payload = {**row.payload, 'strict_read_only': True}
+        s.commit()
+    strict = c.get(f'/api/v1/ai/suites/{sid}/preflight').json()
+    warnings = _strict_warnings(strict)
+    assert warnings and 'строгий режим включён: клики будут отклонены' in warnings[0]
+
+
+def test_run_without_approval_is_422_with_preflight_reason(clients):
+    _, c = clients
+    project, package_id = _project(clients, web_url='http://1c.example.test/DemoTrd')
+    sid = _local_suite(c, project['id'], package_id, approve=False)
+
+    response = c.post(f'/api/v1/ai/suites/{sid}/run-1c')
+
+    assert response.status_code == 422, response.text
+    assert response.json()['error']['message'] == 'нет утверждённых предложений: подтвердите план перед прогоном'
+
+
+def test_run_playwright_without_web_url_is_422_with_preflight_reason(clients):
+    _, c = clients
+    project, package_id = _project(clients)
+    sid = _local_suite(c, project['id'], package_id)
+
+    response = c.post(f'/api/v1/ai/suites/{sid}/run-1c')
+
+    assert response.status_code == 422, response.text
+    assert response.json()['error']['message'] == 'web_url не настроен: заполните подключение проекта'
+
+
+def test_run_ready_plan_still_executes(clients, monkeypatch):
+    from testpilot.ai import executor as executor_module
+
+    impact, c = clients
+    project, package_id = _project(clients, web_url='http://1c.example.test/DemoTrd')
+    assert impact.put(f"/api/v1/projects/{project['id']}/connection", json={
+        'web_url': 'http://1c.example.test/DemoTrd',
+        'odata_url': 'https://1c.example.test/odata/standard.odata',
+        'auth_username': 'Администратор',
+        'auth_password': '',
+    }).status_code == 200
+    sid = _local_suite(c, project['id'], package_id)
+    called = []
+    monkeypatch.setattr(executor_module, 'execute_1c', lambda suite, profile: (
+        called.append(suite['suite_id']) or ([{'proposal_index': 0, 'case_index': 0, 'engine': 'playwright',
+                                               'title': 'Вход', 'status': 'passed', 'message': 'Ок',
+                                               'duration_seconds': 0.1, 'started_at': 'unit'}], [])
+    ))
+
+    response = c.post(f'/api/v1/ai/suites/{sid}/run-1c')
+
+    assert response.status_code == 200, response.text
+    assert called == [sid]

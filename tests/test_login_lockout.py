@@ -20,6 +20,10 @@ def _package():
 def _project_and_suite(clients):
     impact, c = clients
     project = impact.post('/api/v1/projects', json={'name': 'Лимит входов', 'description': ''}).json()
+    assert impact.put(f"/api/v1/projects/{project['id']}/connection", json={
+        'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': 'Администратор', 'auth_password': '',
+        'odata_url': 'https://1c.example.test/odata/standard.odata',
+    }).status_code == 200
     pkg = _package()
     assert c.post('/api/v1/impact-packages', json=pkg).status_code == 200
     created = c.post('/api/v1/ai/suites', json={
