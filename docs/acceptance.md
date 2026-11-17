@@ -52,6 +52,16 @@ UI smoke: `tests/test_ui_smoke.py` (маркер `ui`) обходит `#overview
 
 В `.github/workflows/tests.yml` две джобы: `pytest` (юнит-тесты на PostgreSQL 17) и `acceptance`, которая после неё выполняет `docker compose up -d --build --wait` и `bash scripts/acceptance.sh --no-build` на собранном стеке. Шаг ИИ и живая 1С в CI остаются `SKIP` (нет `TP_LLM_API_KEY`, флаги не передаются), UI-smoke обязателен: скрипт выставляет `TP_UI_REQUIRED=1`, поэтому остановленный или недоступный `web` валит джобу. При падении логи контейнеров и `.runtime/*.log` выгружаются артефактом `acceptance-logs` (7 дней), стек всегда останавливается `docker compose down -v`.
 
+## Быстрая офлайн-проверка (без БД и Docker)
+
+```
+bash scripts/smoke-offline.sh        # или: powershell -File scripts\smoke-offline.ps1
+```
+
+Запускает 19 файлов тестов, которым хватает локального venv: стражи конфигурации, документации, скриптов,
+OpenAPI и шлюза, парсеры 1С-адаптеров. Ожидание: все тесты пройдены, UI-smoke — `skip` (нет `TP_UI_BASE_URL`).
+Docker, compose и БД не используются; без локального venv скрипт завершается кодом 2 с подсказкой.
+
 ## Известные ограничения
 
 - Демо-база публикует 0 EntitySet: чтение сущности даёт `HTTP 404`, в отчёте и UI появляется пояснение про публикацию; доступность сервиса проверяет кейс `$metadata`.
