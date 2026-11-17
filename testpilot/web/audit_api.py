@@ -145,8 +145,16 @@ def _code_audit_row(source_name: str, fingerprint: str, result: dict[str, Any]) 
 
 
 def _save_result(row, result):
+    """Сохраняет аудит загрузки и возвращает его карточку.
+
+    В БД остаётся полный срез деталей (он нужен отчёту), а в ответе детали не отдаются,
+    если замечаний больше MAX_ISSUES_KEPT: их выдаёт постранично `issues_url`.
+    """
     row.audit_result = result
-    return result
+    response = {**result, "issues_url": _upload_issues_url(row.id)}
+    if int(result.get("total_issues") or 0) > MAX_ISSUES_KEPT:
+        response.pop("issues", None)
+    return response
 
 
 @router.post("/scan")
@@ -349,12 +357,67 @@ def scan_upload_endpoint(data: dict[str, Any], actor=Depends(user), s=Depends(se
     return _save_result(row, _summarize(issues, 1, sources_checked=1))
 
 
+def _upload_issues_url(upload_id: str) -> str:
+    return f"/api/v1/audit/uploads/{upload_id}/issues"
+
+
+def _upload_audit_result(row: UploadRow) -> dict[str, Any]:
+    """Карточка сохранённого аудита загрузки в форме ответа POST /scan-upload.
+
+    Совместимость та же, что у журнала сканов: пока замечаний не больше MAX_ISSUES_KEPT,
+    `issues` отдаются как раньше; выше — детали только постранично через `issues_url`.
+    """
+    stored = dict(row.audit_result or {})
+    kept = stored.get("issues_kept")
+    if kept is None:
+        kept = len(stored.get("issues") or [])
+    total = int(stored.get("total_issues") or kept or 0)
+    result = {**stored,
+              "total_issues": total,
+              "issues_kept": int(kept),
+              "issues_truncated": bool(stored.get("issues_truncated")),
+              "issues_url": _upload_issues_url(row.id)}
+    if total > MAX_ISSUES_KEPT:
+        result.pop("issues", None)
+    return result
+
+
 @router.get("/uploads/{upload_id}")
 def get_upload_audit(upload_id: str, actor=Depends(user), s=Depends(session, scope="function")) -> dict[str, Any]:
     row = s.get(UploadRow, upload_id)
     if row is None or row.audit_result is None:
         raise HTTPException(404, "Сохранённый аудит не найден")
-    return row.audit_result
+    return _upload_audit_result(row)
+
+
+@router.get("/uploads/{upload_id}/issues")
+def list_upload_audit_issues(
+    upload_id: str,
+    offset: int = 0,
+    limit: int = 100,
+    actor=Depends(user),
+    s=Depends(session, scope="function"),
+) -> dict[str, Any]:
+    if limit < 1 or limit > 1000:
+        raise HTTPException(400, "limit должен быть от 1 до 1000")
+    if offset < 0:
+        raise HTTPException(400, "offset не может быть отрицательным")
+    row = s.get(UploadRow, upload_id)
+    if row is None or row.audit_result is None:
+        raise HTTPException(404, "Сохранённый аудит не найден")
+    stored = row.audit_result or {}
+    ordered = _ordered_issues(stored.get("issues") or [])
+    kept = stored.get("issues_kept")
+    if kept is None:
+        kept = len(ordered)
+    return {
+        "items": ordered[offset:offset + limit],
+        "total": int(stored.get("total_issues") or len(ordered)),
+        "offset": offset,
+        "limit": limit,
+        "issues_truncated": bool(stored.get("issues_truncated")),
+        "issues_kept": int(kept),
+    }
 
 
 @router.get("/rules")
