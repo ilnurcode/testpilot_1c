@@ -606,6 +606,49 @@ def collect_login_facts(page) -> dict:
     }
 
 
+PROBE_READY_SCRIPT = """() => {
+    const visible = element => !!(element.offsetWidth || element.offsetHeight);
+    const form = [...document.querySelectorAll('input[type="password"], [id^="authWindow"]')].some(visible);
+    const txt = document.body.innerText || '';
+    const workspace = ['Продажи', 'Главное', 'Закупки', 'Начальная страница'].some(text => txt.includes(text));
+    return form || workspace;
+}"""
+
+
+def _origin_text(value: str) -> str:
+    parts = urlsplit(value or '')
+    return f'{parts.scheme}://{parts.netloc}' if parts.scheme and parts.netloc else ''
+
+
+def _login_probe_open_error(reason) -> RuntimeError:
+    return RuntimeError(f'Не удалось открыть веб-клиент проекта: {reason}')
+
+
+def probe_login_page(page, web_url: str, timeout_ms: int = 20000) -> dict:
+    """Открывает web_url на переданной странице и возвращает факты; ошибки открытия/origin не скрываются."""
+    allowed = {_origin(url) for url in container_access_urls(web_url)}
+    try:
+        navigate(page, web_url)
+    except Exception as error:
+        raise _login_probe_open_error(error) from error
+
+    actual = page.url or ''
+    parts = urlsplit(actual)
+    if parts.scheme not in ('http', 'https') or not parts.netloc:
+        raise _login_probe_open_error(f'страница не открыта ({actual or "about:blank"})')
+    actual_origin = _origin(actual)
+    if actual_origin not in allowed:
+        raise RuntimeError(f'Страница ушла на другой origin: {_origin_text(actual)} (ожидался {_origin_text(web_url)})')
+
+    try:
+        page.wait_for_function(PROBE_READY_SCRIPT, timeout=timeout_ms)
+    except Exception as error:
+        raise _login_probe_open_error(f'не дождались формы входа или рабочего стола: {error}') from error
+
+    page.wait_for_timeout(1000)
+    return collect_login_facts(page)
+
+
 def probe_login_form(web_url: str, timeout_ms: int = 20000) -> dict:
     """Открывает web_url, ждёт форму входа или рабочий стол и возвращает только факты разметки."""
     from playwright.sync_api import sync_playwright
@@ -613,31 +656,13 @@ def probe_login_form(web_url: str, timeout_ms: int = 20000) -> dict:
     with sync_playwright() as p:
         path = browser_path(p)
         if not path:
-            raise RuntimeError('Chromium не найден для read-only зонда формы входа')
+            raise _login_probe_open_error('Chromium не найден')
         browser = p.chromium.launch(executable_path=path, headless=True, args=['--no-sandbox', '--disable-dev-shm-usage'])
         try:
             context = browser.new_context(viewport={'width': 1280, 'height': 800})
             page = context.new_page()
             page.set_default_timeout(timeout_ms)
-            try:
-                navigate(page, web_url)
-            except Exception:
-                pass
-            try:
-                page.wait_for_function(
-                    """() => {
-                        const visible = element => !!(element.offsetWidth || element.offsetHeight);
-                        const form = [...document.querySelectorAll('input[type="password"], [id^="authWindow"]')].some(visible);
-                        const txt = document.body.innerText || '';
-                        const workspace = ['Продажи', 'Главное', 'Закупки', 'Начальная страница'].some(text => txt.includes(text));
-                        return form || workspace;
-                    }""",
-                    timeout=timeout_ms,
-                )
-            except Exception:
-                pass
-            page.wait_for_timeout(1000)
-            return collect_login_facts(page)
+            return probe_login_page(page, web_url, timeout_ms)
         finally:
             try:
                 context.close()

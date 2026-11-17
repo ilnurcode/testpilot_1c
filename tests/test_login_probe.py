@@ -156,3 +156,123 @@ def test_url_from_body_is_ignored():
     assert web_url == 'http://project.example.test/DemoTrd?keep=1'
     assert origin == 'http://project.example.test'
     assert 'evil.example.test' not in web_url + origin
+
+
+class FakeProbePage:
+    """Мок страницы для зонда: url/wait/evaluate без браузера и сети."""
+
+    def __init__(self, url='http://project.test/DemoTrd/app', facts=None):
+        self._url = url
+        self.facts = facts or {'inputs': [], 'buttons': [], 'containers': [], 'loginFormVisible': False}
+        self.waited = 0
+
+    @property
+    def url(self):
+        return self._url
+
+    def title(self):
+        return '1С:Предприятие'
+
+    def evaluate(self, script):
+        return self.facts
+
+    def wait_for_function(self, script, timeout=None, arg=None):
+        return True
+
+    def wait_for_timeout(self, ms):
+        self.waited += 1
+
+    def set_default_timeout(self, ms):
+        return None
+
+
+def test_navigation_error_becomes_explicit_error(monkeypatch):
+    from testpilot.integration import webclient
+
+    def failing_navigate(page, url, **kwargs):
+        raise RuntimeError('net::ERR_CONNECTION_REFUSED')
+
+    monkeypatch.setattr(webclient, 'navigate', failing_navigate)
+
+    with pytest.raises(RuntimeError) as error:
+        webclient.probe_login_page(FakeProbePage(), 'http://project.test/DemoTrd')
+
+    message = str(error.value)
+    assert message == 'Не удалось открыть веб-клиент проекта: net::ERR_CONNECTION_REFUSED'
+    assert 'login_form_visible' not in message
+
+
+def test_foreign_origin_is_rejected(monkeypatch):
+    from testpilot.integration import webclient
+
+    monkeypatch.setattr(webclient, 'navigate', lambda page, url, **kwargs: page.url)
+    page = FakeProbePage(url='http://evil.example.test/app')
+
+    with pytest.raises(RuntimeError) as error:
+        webclient.probe_login_page(page, 'http://project.test/DemoTrd')
+
+    message = str(error.value)
+    assert message == 'Страница ушла на другой origin: http://evil.example.test (ожидался http://project.test)'
+
+
+def test_about_blank_is_rejected(monkeypatch):
+    from testpilot.integration import webclient
+
+    monkeypatch.setattr(webclient, 'navigate', lambda page, url, **kwargs: url)
+    page = FakeProbePage(url='about:blank')
+
+    with pytest.raises(RuntimeError) as error:
+        webclient.probe_login_page(page, 'http://project.test/DemoTrd')
+
+    assert str(error.value).startswith('Не удалось открыть веб-клиент проекта:')
+    assert 'about:blank' in str(error.value)
+
+
+def test_wait_timeout_becomes_explicit_error(monkeypatch):
+    from testpilot.integration import webclient
+
+    monkeypatch.setattr(webclient, 'navigate', lambda page, url, **kwargs: url)
+    page = FakeProbePage(url='http://project.test/DemoTrd/app')
+
+    def timeout(*args, **kwargs):
+        raise RuntimeError('Timeout 20000ms exceeded')
+
+    page.wait_for_function = timeout
+
+    with pytest.raises(RuntimeError) as error:
+        webclient.probe_login_page(page, 'http://project.test/DemoTrd')
+
+    assert str(error.value).startswith('Не удалось открыть веб-клиент проекта:')
+    assert 'Timeout 20000ms exceeded' in str(error.value)
+
+
+def test_successful_probe_returns_facts(monkeypatch):
+    from testpilot.integration import webclient
+
+    monkeypatch.setattr(webclient, 'navigate', lambda page, url, **kwargs: url)
+    facts = {'inputs': [{'tag': 'input', 'type': 'password', 'id': 'pwd', 'name': ''}],
+             'buttons': [{'tag': 'button', 'id': 'ok'}], 'containers': ['authWindow'], 'loginFormVisible': True}
+    page = FakeProbePage(url='http://project.test/DemoTrd/app', facts=facts)
+
+    result = webclient.probe_login_page(page, 'http://project.test/DemoTrd')
+
+    assert result['login_form_visible'] is True
+    assert result['fields'] == facts['inputs']
+    assert result['buttons'] == facts['buttons']
+    assert result['containers'] == ['authWindow']
+    assert result['url_origin'] == 'http://project.test'
+
+
+def test_probe_errors_map_to_503(monkeypatch):
+    from testpilot.ai.api import _probe_login_facts
+
+    def failing_probe(web_url):
+        raise RuntimeError('Не удалось открыть веб-клиент проекта: net::ERR_NAME_NOT_RESOLVED')
+
+    monkeypatch.setattr('testpilot.integration.webclient.probe_login_form', failing_probe)
+
+    with pytest.raises(HTTPException) as error:
+        _probe_login_facts('http://project.test/DemoTrd')
+
+    assert error.value.status_code == 503
+    assert error.value.detail == 'Не удалось открыть веб-клиент проекта: net::ERR_NAME_NOT_RESOLVED'

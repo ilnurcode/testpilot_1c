@@ -110,16 +110,21 @@ def _probe_login_context(data: dict, s):
     return project, web_url, origin
 
 
+def _probe_login_facts(web_url: str) -> dict:
+    """Запуск зонда с маппингом ошибок: сбой открытия/origin — 503 с исходным текстом причины."""
+    from testpilot.integration.webclient import probe_login_form
+
+    try:
+        return probe_login_form(web_url)
+    except Exception as error:
+        raise HTTPException(503, str(error)) from error
+
+
 @router.post('/connection/probe-login')
 async def probe_login(data: dict, actor=Depends(expert), s=Depends(session, scope='function')):
     """Read-only зонд разметки формы входа: адрес берётся только из web_url проекта, без ввода и кликов."""
     project, web_url, origin = _probe_login_context(data, s)
-    from testpilot.integration.webclient import probe_login_form
-
-    try:
-        facts = await asyncio.to_thread(probe_login_form, web_url)
-    except Exception as error:
-        raise HTTPException(503, f'Не удалось открыть веб-клиент проекта: {error}') from error
+    facts = await asyncio.to_thread(_probe_login_facts, web_url)
     return {'project_id': project.id, 'web_url_origin': origin, **facts}
 
 @router.get('/codex/status',response_model=CodexStatus)
