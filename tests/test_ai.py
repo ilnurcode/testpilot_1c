@@ -909,3 +909,65 @@ def test_llm_settings_cannot_write_repository_env(clients, monkeypatch, tmp_path
     assert target.is_file()
     assert 'TP_LLM_MODEL=unit-model' in target.read_text(encoding='utf-8')
     assert (repo_env.read_bytes() if repo_env.exists() else None) == before, 'реальный .env изменён'
+
+
+def test_generate_without_key_returns_503_before_network(monkeypatch):
+    from testpilot.ai import provider as provider_module
+
+    monkeypatch.delenv('TP_LLM_API_KEY', raising=False)
+    created = []
+
+    class FailingClient:
+        def __init__(self, *args, **kwargs):
+            created.append('client')
+            raise AssertionError('сетевой клиент не должен создаваться без ключа')
+
+    monkeypatch.setattr(provider_module.httpx, 'Client', FailingClient)
+
+    with pytest.raises(HTTPException) as failure:
+        provider_module.generate(package(), [], {})
+
+    assert failure.value.status_code == 503
+    assert failure.value.detail == (
+        'Ключ нейросети не задан. Укажите TP_LLM_API_KEY в .env и перезапустите стек либо выберите встроенный генератор.'
+    )
+    assert created == []
+
+
+def test_generate_with_rejected_key_keeps_provider_message(monkeypatch):
+    monkeypatch.setenv('TP_LLM_API_KEY', 'unit-key')
+    transport = httpx.MockTransport(lambda request: httpx.Response(401, json={'error': {'message': 'upstream secret'}}))
+
+    with pytest.raises(HTTPException) as failure:
+        provider.generate(package(), [], {}, transport=transport)
+
+    assert failure.value.status_code == 502
+    assert failure.value.detail['message'] == 'Провайдер отклонил ключ нейросети. Проверьте TP_LLM_API_KEY.'
+    assert failure.value.detail['upstream_status'] == 401
+    assert 'upstream secret' not in json.dumps(failure.value.detail)
+
+
+def test_llm_suite_without_key_returns_503(clients, monkeypatch):
+    monkeypatch.delenv('TP_LLM_API_KEY', raising=False)
+    impact, c, project, p = _project_with_package(clients)
+
+    response = c.post('/api/v1/ai/suites', json={
+        'package_id': p['package_id'], 'project_id': project['id'], 'provider': 'llm', 'consent': True,
+    })
+
+    assert response.status_code == 503, response.text
+    assert response.json()['error']['message'] == (
+        'Ключ нейросети не задан. Укажите TP_LLM_API_KEY в .env и перезапустите стек либо выберите встроенный генератор.'
+    )
+
+
+def test_local_provider_generates_plan_without_llm_key(clients, monkeypatch):
+    monkeypatch.delenv('TP_LLM_API_KEY', raising=False)
+    impact, c, project, p = _project_with_package(clients)
+
+    response = c.post('/api/v1/ai/suites', json={
+        'package_id': p['package_id'], 'project_id': project['id'], 'provider': 'local',
+    })
+
+    assert response.status_code == 200, response.text
+    assert response.json()['model'] == 'local-rules'

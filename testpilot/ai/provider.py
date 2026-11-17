@@ -57,7 +57,7 @@ def request_headers(base,key):
 
 def generate(package,catalog,names,model_context=None,transport=None):
     base,model,key=configuration()
-    if not key:raise HTTPException(503,'API-ключ нейросети не настроен. Задайте TP_LLM_API_KEY на сервере или выберите учебный режим.')
+    if not key:raise HTTPException(503,'Ключ нейросети не задан. Укажите TP_LLM_API_KEY в .env и перезапустите стек либо выберите встроенный генератор.')
     system,content=generation_messages(package,catalog,names,model_context)
     request_content=content
     try:

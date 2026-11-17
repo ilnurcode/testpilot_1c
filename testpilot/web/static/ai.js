@@ -79,15 +79,27 @@ function mountCodexConnection(initial,panel){
 async function prepareGeneration(report,pid){
  const status=await api('intelligence','ai/status');
  const detail=await api('impact','analyses/'+report.analysis_id);
- $('#aiPreparation')?.remove();$('#projectAnalysisReport').insertAdjacentHTML('beforeend',`<div class="analysis-box" id="aiPreparation"><h2>Подготовка проверок</h2><p class="caption">Сервис передаст область влияния и контекст разработки генератору. Предложения проверяются и сохраняются до запуска.</p><label>Источник сценариев<select id="generationProvider"><option value="local" selected>Встроенный генератор сценариев 1С (Playwright + OData)</option><option value="llm" ${status.configured?'':'disabled'}>Нейросеть через API ${status.configured?'· '+E(status.model):'· ключ не настроен'}</option><option value="codex" ${codexConnected(status.codex)?'':'disabled'}>Codex · ChatGPT · ${E(codexStatusLabel(status.codex))}</option></select></label><label class="inline"><input id="generationConsent" type="checkbox">Разрешаю передачу контекста проекта внешней нейросети при выборе API или Codex ChatGPT</label><p class="helper">Передаются изменения, граф, названия объектов и доступные фрагменты модели. Логины и пароли 1С в запрос не включаются. Непроверенные бинарные файлы не выдаются за разобранный код.</p><p class="warning">Codex использует одно подключение ChatGPT на весь локальный стенд. Контекст передаётся OpenAI и расходует лимиты подписки ChatGPT.</p><p class="info-note">Codex: ${E(codexStatusLabel(status.codex))}. ${codexConnected(status.codex)?'Вход ChatGPT выполнен; можно выбрать Codex.':'Для генерации войдите через ChatGPT на странице «Нейросеть и проверки».'}</p>${!status.configured?'<p class="info-note">API-ключ не настроен. Настройки API доступны на странице «Нейросеть и проверки»; ключ не сохраняется в браузере.</p>':''}<div class="actions" id="generationActions"></div></div>`);
- addButton('#generationActions','Сформировать сценарии',async()=>{
+ $('#aiPreparation')?.remove();$('#projectAnalysisReport').insertAdjacentHTML('beforeend',`<div class="analysis-box" id="aiPreparation"><h2>Подготовка проверок</h2><p class="caption">Сервис передаст область влияния и контекст разработки генератору. Предложения проверяются и сохраняются до запуска.</p><label>Источник сценариев<select id="generationProvider"><option value="local" selected>Встроенный генератор сценариев 1С (Playwright + OData)</option><option value="llm" ${status.configured?'':'disabled'}>Нейросеть через API ${status.configured?'· '+E(status.model):'· ключ не настроен'}</option><option value="codex" ${codexConnected(status.codex)?'':'disabled'}>Codex · ChatGPT · ${E(codexStatusLabel(status.codex))}</option></select></label><label class="inline"><input id="generationConsent" type="checkbox">Разрешаю передачу контекста проекта внешней нейросети при выборе API или Codex ChatGPT</label><p class="helper">Передаются изменения, граф, названия объектов и доступные фрагменты модели. Логины и пароли 1С в запрос не включаются. Непроверенные бинарные файлы не выдаются за разобранный код.</p><p class="warning">Codex использует одно подключение ChatGPT на весь локальный стенд. Контекст передаётся OpenAI и расходует лимиты подписки ChatGPT.</p><p class="info-note">Codex: ${E(codexStatusLabel(status.codex))}. ${codexConnected(status.codex)?'Вход ChatGPT выполнен; можно выбрать Codex.':'Для генерации войдите через ChatGPT на странице «Нейросеть и проверки».'}</p>${!status.configured?'<p class="info-note">API-ключ не настроен. Настройки API доступны на странице «Нейросеть и проверки»; ключ не сохраняется в браузере.</p>':''}<div id="generationFeedback"></div><div class="actions" id="generationActions"></div></div>`);
+ const generate=async()=>{
   const provider=$('#generationProvider').value,consent=$('#generationConsent').checked;
   if((provider==='llm'||provider==='codex')&&!consent)throw Error('Подтвердите передачу контекста внешнему провайдеру (API или Codex ChatGPT).');
   if(provider==='codex'&&!codexConnected(status.codex))throw Error('Выполните вход ChatGPT на странице «Нейросеть и проверки».');
+  $('#generationFeedback').innerHTML='';
   await api('impact',`analyses/${report.analysis_id}/deliver`,'POST');
-  const suite=await api('intelligence','ai/suites','POST',{package_id:detail.package.package_id,project_id:pid,provider,consent,object_names:detail.object_names,model_context:detail.model_context||[]});
-  activeSuite=suite.suite_id;await show(8);
- });
+  try{
+   const suite=await api('intelligence','ai/suites','POST',{package_id:detail.package.package_id,project_id:pid,provider,consent,object_names:detail.object_names,model_context:detail.model_context||[]});
+   activeSuite=suite.suite_id;await show(8);
+  }catch(err){
+   const text=String(err.message||'').replace(/^"|"$/g,'');
+   if(provider==='llm'&&text.includes('Ключ нейросети не задан')){
+    $('#generationFeedback').innerHTML=`<p class="warning">${E(text)}</p><button id="useLocalGenerator" class="secondary">Сформировать встроенным генератором</button>`;
+    $('#useLocalGenerator').onclick=()=>task(async()=>{$('#generationProvider').value='local';await generate()});
+    return;
+   }
+   throw err;
+  }
+ };
+ addButton('#generationActions','Сформировать сценарии',generate);
  addButton('#generationActions','Настроить ChatGPT / API',async()=>{await show(8);$('#codexConnection')?.scrollIntoView({behavior:'smooth',block:'start'})},true);
  $('#aiPreparation').scrollIntoView({behavior:'smooth',block:'start'});
 }
