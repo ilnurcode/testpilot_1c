@@ -219,3 +219,28 @@ def test_run_ready_plan_still_executes(clients, monkeypatch):
 
     assert response.status_code == 200, response.text
     assert called == [sid]
+
+
+def test_mutation_warning_does_not_block_preflight_or_run(clients):
+    impact, c = clients
+    project, package_id = _project(clients, web_url='http://1c.example.test/DemoTrd')
+    assert impact.put(f"/api/v1/projects/{project['id']}/connection", json={
+        'web_url': 'http://1c.example.test/DemoTrd',
+        'odata_url': 'https://1c.example.test/odata/standard.odata',
+        'auth_username': 'Администратор',
+        'auth_password': '',
+    }).status_code == 200
+    sid = _insert_suite(project['id'], package_id, _mutating_payload())
+
+    preflight = c.get(f'/api/v1/ai/suites/{sid}/preflight').json()
+    assert preflight['would_run'] is True, 'мутирующий шаг — предупреждение, не блокер'
+    assert any('allow_mutations=true' in warning for warning in preflight['warnings'])
+
+    response = c.post(f'/api/v1/ai/suites/{sid}/run-1c')
+
+    assert response.status_code == 422, response.text
+    message = response.json()['error']['message']
+    assert 'потенциально изменяет данные' in message
+    assert 'allow_mutations=true' in message
+    assert 'нет утверждённых предложений' not in message
+    assert 'web_url не настроен' not in message
