@@ -228,22 +228,24 @@ def test_about_blank_is_rejected(monkeypatch):
     assert 'about:blank' in str(error.value)
 
 
-def test_wait_timeout_becomes_explicit_error(monkeypatch):
+def test_no_form_anywhere_reports_frame_diagnostics(monkeypatch):
     from testpilot.integration import webclient
 
     monkeypatch.setattr(webclient, 'navigate', lambda page, url, **kwargs: url)
-    page = FakeProbePage(url='http://project.test/DemoTrd/app')
-
-    def timeout(*args, **kwargs):
-        raise RuntimeError('Timeout 20000ms exceeded')
-
-    page.wait_for_function = timeout
+    top = FakeFrame('http://project.test/DemoTrd/app', inputs=[{'tag': 'input', 'type': 'text', 'id': 'search', 'name': ''}])
+    inner = FakeFrame('http://project.test/DemoTrd/frame', name='content',
+                      inputs=[{'tag': 'input', 'type': 'hidden', 'id': 'token', 'name': 'csrf'}])
+    page = FramePage('http://project.test/DemoTrd/app', [top, inner])
 
     with pytest.raises(RuntimeError) as error:
-        webclient.probe_login_page(page, 'http://project.test/DemoTrd')
+        webclient.probe_login_page(page, 'http://project.test/DemoTrd', timeout_ms=0)
 
-    assert str(error.value).startswith('Не удалось открыть веб-клиент проекта:')
-    assert 'Timeout 20000ms exceeded' in str(error.value)
+    message = str(error.value)
+    assert message.startswith('Не удалось открыть веб-клиент проекта: форма входа не найдена')
+    assert 'фреймов: 2' in message
+    assert '#0 http://project.test/DemoTrd/app inputs=' in message
+    assert '#1 http://project.test/DemoTrd/frame inputs=' in message
+    assert "'id': 'search'" in message
 
 
 def test_successful_probe_returns_facts(monkeypatch):
@@ -503,3 +505,96 @@ def test_probe_does_not_retry_on_timeout(monkeypatch):
     assert attempts == [first]
     assert 'Timeout 20000ms exceeded' in str(error.value)
     assert 'испробованы' not in str(error.value)
+
+
+class FakeFrame:
+    """Фрейм-мок: evaluate отвечает на известные скрипты зонда, клики и fill запрещены."""
+
+    def __init__(self, url, name='', ready=False, facts=None, inputs=None):
+        self.url = url
+        self.name = name
+        self.ready = ready
+        self.facts = facts or {'inputs': [], 'buttons': [], 'containers': [], 'loginFormVisible': False}
+        self.inputs = inputs or []
+
+    def evaluate(self, script):
+        from testpilot.integration import webclient
+
+        if script == webclient.PROBE_READY_SCRIPT:
+            return self.ready
+        if script == webclient.LOGIN_PROBE_SCRIPT:
+            return self.facts
+        if script == webclient.FRAME_DIAGNOSTIC_SCRIPT:
+            return self.inputs
+        return None
+
+    def click(self, *args, **kwargs):
+        raise AssertionError('зонд не должен кликать')
+
+    def fill(self, *args, **kwargs):
+        raise AssertionError('зонд не должен заполнять поля')
+
+
+class FramePage:
+    def __init__(self, url, frames):
+        self._url = url
+        self._frames = frames
+        self.route_handler = None
+
+    @property
+    def url(self):
+        return self._url
+
+    @property
+    def frames(self):
+        return list(self._frames)
+
+    def title(self):
+        return '1С:Предприятие'
+
+    def route(self, selector, handler):
+        self.route_handler = handler
+
+    def wait_for_timeout(self, ms):
+        return None
+
+    def click(self, *args, **kwargs):
+        raise AssertionError('зонд не должен кликать')
+
+    def fill(self, *args, **kwargs):
+        raise AssertionError('зонд не должен заполнять поля')
+
+
+def test_form_inside_iframe_is_found(monkeypatch):
+    from testpilot.integration import webclient
+
+    monkeypatch.setattr(webclient, 'navigate', lambda page, url, **kwargs: url)
+    facts = {'inputs': [{'tag': 'input', 'type': 'text', 'id': 'authWindow_basic_login', 'name': 'user'}],
+             'buttons': [{'tag': 'button', 'id': 'ok'}],
+             'containers': ['authWindow'], 'loginFormVisible': True}
+    top = FakeFrame('http://project.test/DemoTrd/app')
+    inner = FakeFrame('http://project.test/DemoTrd/login?tenant=1', name='auth', ready=True, facts=facts)
+    page = FramePage('http://project.test/DemoTrd/app', [top, inner])
+
+    result = webclient.probe_login_page(page, 'http://project.test/DemoTrd', timeout_ms=0)
+
+    assert result['login_form_visible'] is True
+    assert result['fields'] == facts['inputs']
+    assert result['frame_url'] == 'http://project.test/DemoTrd/login'
+    assert result['frame_name'] == 'auth'
+
+
+def test_form_in_top_document_still_works(monkeypatch):
+    from testpilot.integration import webclient
+
+    monkeypatch.setattr(webclient, 'navigate', lambda page, url, **kwargs: url)
+    facts = {'inputs': [{'tag': 'input', 'type': 'password', 'id': 'pwd', 'name': ''}],
+             'buttons': [], 'containers': [], 'loginFormVisible': True}
+    top = FakeFrame('http://project.test/DemoTrd/app', ready=True, facts=facts)
+    page = FramePage('http://project.test/DemoTrd/app', [top])
+
+    result = webclient.probe_login_page(page, 'http://project.test/DemoTrd', timeout_ms=0)
+
+    assert result['login_form_visible'] is True
+    assert result['frame_url'] == 'http://project.test/DemoTrd/app'
+    assert result['frame_name'] == ''

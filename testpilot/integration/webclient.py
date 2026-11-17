@@ -584,11 +584,12 @@ LOGIN_PROBE_SCRIPT = """() => {
 }"""
 
 
-def collect_login_facts(page) -> dict:
+def collect_login_facts(page, frame=None) -> dict:
     """Собирает факты о форме входа, не трогая поля: без value/placeholder, кликов и fill."""
-    state = page.evaluate(LOGIN_PROBE_SCRIPT) or {}
+    source = frame if frame is not None else page
+    state = source.evaluate(LOGIN_PROBE_SCRIPT) or {}
     try:
-        parts = urlsplit(page.url)
+        parts = urlsplit(source.url)
         origin = f'{parts.scheme}://{parts.netloc}' if parts.scheme and parts.netloc else ''
     except Exception:
         origin = ''
@@ -603,6 +604,8 @@ def collect_login_facts(page) -> dict:
         'containers': state.get('containers') or [],
         'title': title,
         'url_origin': origin,
+        'frame_url': _url_without_query(getattr(source, 'url', '') or ''),
+        'frame_name': getattr(source, 'name', '') or '',
     }
 
 
@@ -618,6 +621,63 @@ PROBE_READY_SCRIPT = """() => {
 def _origin_text(value: str) -> str:
     parts = urlsplit(value or '')
     return f'{parts.scheme}://{parts.netloc}' if parts.scheme and parts.netloc else ''
+
+
+def _url_without_query(value: str) -> str:
+    parts = urlsplit(value or '')
+    if not parts.scheme or not parts.netloc:
+        return ''
+    return f'{parts.scheme}://{parts.netloc}{parts.path}'
+
+
+FRAME_DIAGNOSTIC_SCRIPT = """() => {
+    const safe = (value, limit) => (value || '').replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, limit);
+    return [...document.querySelectorAll('input')].slice(0, 3).map(element => ({
+        tag: 'input',
+        type: safe(element.getAttribute('type'), 20),
+        id: safe(element.id, 40),
+        name: safe(element.getAttribute('name'), 40),
+    }));
+}"""
+
+
+def _visible_frames(page) -> list:
+    """Все фреймы страницы; моки без frames считаются одним документом."""
+    try:
+        frames = list(page.frames)
+    except Exception:
+        frames = []
+    return frames or [page]
+
+
+def _wait_login_frame(page, timeout_ms: int):
+    """Опрос всех фреймов: форма может жить в iframe, а не в верхнем документе."""
+    deadline = time.monotonic() + timeout_ms / 1000
+    while True:
+        for frame in _visible_frames(page):
+            try:
+                ready = frame.evaluate(PROBE_READY_SCRIPT)
+            except Exception:
+                continue
+            if ready:
+                return frame
+        if time.monotonic() >= deadline:
+            return None
+        page.wait_for_timeout(500)
+
+
+def _frame_diagnostics(page) -> str:
+    frames = _visible_frames(page)
+    parts = []
+    for index, frame in enumerate(frames):
+        url = _url_without_query(getattr(frame, 'url', '') or '')
+        try:
+            inputs = frame.evaluate(FRAME_DIAGNOSTIC_SCRIPT)
+        except Exception as error:
+            inputs = f'ошибка чтения: {error}'
+        parts.append(f'#{index} {url} inputs={inputs}')
+    return f'форма входа не найдена; фреймов: {len(frames)}; ' + '; '.join(parts)
+
 
 
 def _login_probe_open_error(reason) -> RuntimeError:
@@ -700,13 +760,12 @@ def probe_login_page(page, web_url: str, timeout_ms: int = 20000) -> dict:
     if actual_origin not in allowed:
         raise RuntimeError(f'Страница ушла на другой origin: {_origin_text(actual)} (ожидался {_origin_text(web_url)})')
 
-    try:
-        page.wait_for_function(PROBE_READY_SCRIPT, timeout=timeout_ms)
-    except Exception as error:
-        raise _login_probe_open_error(f'не дождались формы входа или рабочего стола: {error}') from error
+    frame = _wait_login_frame(page, timeout_ms)
+    if frame is None:
+        raise _login_probe_open_error(_frame_diagnostics(page))
 
     page.wait_for_timeout(1000)
-    facts = collect_login_facts(page)
+    facts = collect_login_facts(page, frame)
     facts['web_url_used'] = _origin_text(actual)
     facts['blocked_requests'] = state['blocked']
     facts['blocked_non_get'] = state['blocked_non_get']
