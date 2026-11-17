@@ -232,7 +232,9 @@ else
   fi
   if [ -n "${SUITE:-}" ]; then
   SUITE_ID="$(printf '%s' "$SUITE" | jget "d.get('suite_id') or ''" 2>/dev/null)"
-  INDEX="$(printf '%s' "$SUITE" | jget "$(cat <<'PY'
+  # jget использует eval(), а eval не принимает def/присваивания: скрипт передаём как -c (exec-режим).
+  INDEX="$(printf '%s' "$SUITE" | "$ROOT/scripts/compose.sh" exec -T intelligence python -c "$(cat <<'PY'
+import json, sys
 markers = ('записать','провести','создать','удалить','отменить проведение','пометить на удаление','скопировать','изменить')
 def clean(p):
     if p.get('engine') != 'playwright': return False
@@ -243,6 +245,7 @@ def clean(p):
             if action == 'fill': return False
             if action == 'click' and any(m in target for m in markers): return False
     return True
+d = json.load(sys.stdin)
 candidates = [i for i, p in enumerate(d.get('suggestion', {}).get('proposals') or []) if clean(p)]
 print(candidates[0] if candidates else '')
 PY
