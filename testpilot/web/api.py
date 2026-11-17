@@ -26,8 +26,7 @@ def home(actor=Depends(user)):
 @app.get('/api/whoami')
 def whoami(actor=Depends(user)):return {'role':actor}
 
-@app.api_route('/gateway/{service}/{path:path}',methods=['GET','POST','PUT','DELETE'])
-async def gateway(service:str,path:str,request:Request,actor=Depends(user)):
+async def gateway_response(service:str,path:str,request:Request,actor:str)->Response:
     if service not in ('impact','intelligence') or not path.startswith('api/v1/') or '..' in path or '\\' in path:
         raise HTTPException(404,'Неизвестный API')
     base=os.environ.get('IMPACT_URL','http://127.0.0.1:8001') if service=='impact' else os.environ.get('INTELLIGENCE_URL','http://127.0.0.1:8002')
@@ -37,6 +36,24 @@ async def gateway(service:str,path:str,request:Request,actor=Depends(user)):
     except httpx.HTTPError:raise HTTPException(503,'Сервис временно недоступен')
     headers={k:v for k,v in r.headers.items() if k.lower() in ('content-type','content-disposition','x-content-type-options','x-checksum-sha256')}
     return Response(r.content,status_code=r.status_code,headers=headers)
+
+# Один маршрут на метод: FastAPI генерирует operationId на маршрут, поэтому общий api_route
+# с четырьмя методами давал одинаковый operationId и ломал генераторы клиентов.
+@app.get('/gateway/{service}/{path:path}',operation_id='gateway_get')
+async def gateway_get(service:str,path:str,request:Request,actor=Depends(user)):
+    return await gateway_response(service,path,request,actor)
+
+@app.post('/gateway/{service}/{path:path}',operation_id='gateway_post')
+async def gateway_post(service:str,path:str,request:Request,actor=Depends(user)):
+    return await gateway_response(service,path,request,actor)
+
+@app.put('/gateway/{service}/{path:path}',operation_id='gateway_put')
+async def gateway_put(service:str,path:str,request:Request,actor=Depends(user)):
+    return await gateway_response(service,path,request,actor)
+
+@app.delete('/gateway/{service}/{path:path}',operation_id='gateway_delete')
+async def gateway_delete(service:str,path:str,request:Request,actor=Depends(user)):
+    return await gateway_response(service,path,request,actor)
 
 @app.post('/api/demo')
 async def demo(request:Request,actor=Depends(expert)):
