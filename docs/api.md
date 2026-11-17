@@ -71,6 +71,7 @@
 | PUT | ai/settings/llm | `base_url`/`model`/`api_key` — только в памяти процесса; `persist=true` требует `TP_ALLOW_ENV_WRITE=1` и пишет в файл `TP_ENV_FILE` (по умолчанию `.env`) |
 | POST / GET | ai/codex/login, ai/codex/logout | Вход и выход Codex (expert) |
 | GET | ai/evidence/{id} | PNG-скриншот прогона (хранится в БД, таблица `ti_ai_evidence`, колонка BYTEA; отдаётся с `X-Content-Type-Options: nosniff`) |
+| POST | ai/connection/probe-login | Read-only зонд формы входа: адрес берётся только из сохранённого `web_url` проекта, без ввода, кликов и fill; 404 без проекта, 422 без `web_url` |
 
 `PUT /api/v1/ai/settings/llm` отвечает `persisted`, `env_file`, `env_write_allowed` и `note`: по умолчанию настройки меняются только в памяти процесса (`persisted: false`), `api_key` никогда не возвращается (только `has_key`). Запись в файл окружения включается `TP_ALLOW_ENV_WRITE=1`, путь берётся из `TP_ENV_FILE`; попытка `persist=true` без флага — 409 «Запись в .env отключена…».
 

@@ -1,3 +1,4 @@
+import asyncio
 import os
 from fastapi import APIRouter,Depends,HTTPException,Request
 from fastapi.responses import Response
@@ -89,6 +90,37 @@ def _codex_status_for(actor):
 @router.get('/status')
 def status(actor=Depends(user)):
     return {**provider.status(),'codex':_codex_status_for(actor),'demo_available':True,'browser_available':bool(browser_path()),'executor_1c_connected':False}
+
+
+def _probe_login_context(data: dict, s):
+    """Проверки зонда: проект существует и у него настроен web_url. Произвольный URL из тела не принимается."""
+    project_id = str(data.get('project_id') or '').strip()
+    if not project_id:
+        raise HTTPException(422, 'Укажите project_id')
+    project = s.get(ProjectRow, project_id)
+    if project is None:
+        raise HTTPException(404, 'Проект не найден')
+    web_url = (project.web_url or '').strip()
+    if not web_url:
+        raise HTTPException(422, 'У проекта не настроен web_url: заполните подключение и повторите зонд')
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(web_url)
+    origin = f'{parts.scheme}://{parts.netloc}' if parts.scheme and parts.netloc else ''
+    return project, web_url, origin
+
+
+@router.post('/connection/probe-login')
+async def probe_login(data: dict, actor=Depends(expert), s=Depends(session, scope='function')):
+    """Read-only зонд разметки формы входа: адрес берётся только из web_url проекта, без ввода и кликов."""
+    project, web_url, origin = _probe_login_context(data, s)
+    from testpilot.integration.webclient import probe_login_form
+
+    try:
+        facts = await asyncio.to_thread(probe_login_form, web_url)
+    except Exception as error:
+        raise HTTPException(503, f'Не удалось открыть веб-клиент проекта: {error}') from error
+    return {'project_id': project.id, 'web_url_origin': origin, **facts}
 
 @router.get('/codex/status',response_model=CodexStatus)
 def codex_status(actor=Depends(user)):

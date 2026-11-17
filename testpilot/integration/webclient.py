@@ -562,3 +562,85 @@ class WebClientRunner:
 
         report.total_duration_seconds = round(time.perf_counter() - start_time, 3)
         return report
+
+
+# Read-only зонд формы входа: только чтение разметки, без кликов, fill и ввода данных.
+LOGIN_PROBE_SCRIPT = """() => {
+    const visible = element => !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+    const safe = (value, limit) => (value || '').replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, limit);
+    const inputs = [...document.querySelectorAll('input')].filter(visible).slice(0, 8).map(element => ({
+        tag: 'input',
+        type: safe(element.getAttribute('type'), 20),
+        id: safe(element.id, 40),
+        name: safe(element.getAttribute('name'), 40),
+    }));
+    const buttons = [...document.querySelectorAll('button, [role="button"], input[type="submit"]')]
+        .filter(visible).slice(0, 5).map(element => ({tag: 'button', id: safe(element.id, 40)}));
+    const containers = [...document.querySelectorAll('[id^="authWindow"]')]
+        .map(element => safe(element.id, 40)).filter(Boolean);
+    const passwordVisible = [...document.querySelectorAll('input[type="password"]')].some(visible);
+    const authWindowVisible = [...document.querySelectorAll('[id^="authWindow"]')].some(visible);
+    return {inputs, buttons, containers, loginFormVisible: passwordVisible || authWindowVisible};
+}"""
+
+
+def collect_login_facts(page) -> dict:
+    """Собирает факты о форме входа, не трогая поля: без value/placeholder, кликов и fill."""
+    state = page.evaluate(LOGIN_PROBE_SCRIPT) or {}
+    try:
+        parts = urlsplit(page.url)
+        origin = f'{parts.scheme}://{parts.netloc}' if parts.scheme and parts.netloc else ''
+    except Exception:
+        origin = ''
+    try:
+        title = page.title() or ''
+    except Exception:
+        title = ''
+    return {
+        'login_form_visible': bool(state.get('loginFormVisible')),
+        'fields': state.get('inputs') or [],
+        'buttons': state.get('buttons') or [],
+        'containers': state.get('containers') or [],
+        'title': title,
+        'url_origin': origin,
+    }
+
+
+def probe_login_form(web_url: str, timeout_ms: int = 20000) -> dict:
+    """Открывает web_url, ждёт форму входа или рабочий стол и возвращает только факты разметки."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        path = browser_path(p)
+        if not path:
+            raise RuntimeError('Chromium не найден для read-only зонда формы входа')
+        browser = p.chromium.launch(executable_path=path, headless=True, args=['--no-sandbox', '--disable-dev-shm-usage'])
+        try:
+            context = browser.new_context(viewport={'width': 1280, 'height': 800})
+            page = context.new_page()
+            page.set_default_timeout(timeout_ms)
+            try:
+                navigate(page, web_url)
+            except Exception:
+                pass
+            try:
+                page.wait_for_function(
+                    """() => {
+                        const visible = element => !!(element.offsetWidth || element.offsetHeight);
+                        const form = [...document.querySelectorAll('input[type="password"], [id^="authWindow"]')].some(visible);
+                        const txt = document.body.innerText || '';
+                        const workspace = ['Продажи', 'Главное', 'Закупки', 'Начальная страница'].some(text => txt.includes(text));
+                        return form || workspace;
+                    }""",
+                    timeout=timeout_ms,
+                )
+            except Exception:
+                pass
+            page.wait_for_timeout(1000)
+            return collect_login_facts(page)
+        finally:
+            try:
+                context.close()
+            except Exception:
+                pass
+            browser.close()
