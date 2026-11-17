@@ -222,40 +222,82 @@ class WebClientRunner:
         return addresses
 
 
-    def handle_login(self, page) -> None:
-        """Обработка стандартного окна авторизации веб-клиента 1С (8.3 и 8.5)."""
-        try:
-            # Платформа 8.5 (#authWindow_basic_login) или 8.3 (#userName)
-            user_input = page.locator('#authWindow_basic_login, input[id*="userName"], input[name*="userName"], #userName').first
+    # Кандидаты в поле логина: только элементы самой формы входа, без угадывания любого text-поля страницы.
+    LOGIN_FIELD_SELECTORS = (
+        '#authWindow_basic_login',
+        '#authWindow input[type="text"]',
+        'input[id*="userName" i]',
+        'input[name*="userName" i]',
+        'input[name*="user" i]',
+        'input[id*="login" i]',
+    )
+    LOGIN_FORM_HINT = 'input[type="password"], #authWindow, #authWindowBasic'
+    LOGIN_FAILED = ('Вход в 1С не выполнен: форма логина осталась на экране '
+                    '(селектор не найден или кнопка «Войти» не сработала)')
+
+    def _login_form_visible(self, page) -> bool:
+        """Форма входа ещё на экране: видим поле пароля или окно авторизации."""
+        for selector in ('input[type="password"]', '#authWindow', '#authWindowBasic'):
             try:
-                user_input.wait_for(state='visible', timeout=12000)
-                has_login = True
+                if page.locator(selector).first.is_visible(timeout=300):
+                    return True
             except Exception:
-                has_login = False
-            if has_login:
-                if self.profile.username:
-                    user_input.fill(self.profile.username)
-                pwd_input = page.locator('#authWindow_basic_password, input[type="password"]').first
-                if pwd_input.is_visible(timeout=1000) and self.profile.password:
-                    pwd_input.fill(self.profile.password)
-                ok_btn = page.get_by_role("button", name="Войти").first
-                if not ok_btn.is_visible(timeout=500):
-                    ok_btn = page.locator('button[id*="ok"], button:has-text("OK")').first
-                if ok_btn.is_visible(timeout=1000):
-                    ok_btn.click()
-                try:
-                    page.wait_for_function(
-                        '''() => {
-                            const txt = document.body.innerText || '';
-                            return txt.includes('Продажи') || txt.includes('Главное') || txt.includes('Закупки') || txt.includes('Начальная страница') || txt.includes('Не найдена лицензия') || txt.includes('вход в приложение невозможен') || txt.includes('Выполнить запуск');
-                        }''',
-                        timeout=45000
-                    )
-                except Exception:
-                    pass
-                page.wait_for_timeout(1500)
+                continue
+        return False
+
+    def handle_login(self, page) -> None:
+        """Авторизация в веб-клиенте 1С 8.3/8.5; при неудаче — понятная ошибка, а не тихий проход."""
+        user_input = None
+        last_error: Exception | None = None
+        for selector in self.LOGIN_FIELD_SELECTORS:
+            candidate = page.locator(selector).first
+            try:
+                candidate.wait_for(state='visible', timeout=2000)
+            except Exception as error:  # селектор не подошёл — пробуем следующий
+                last_error = error
+                continue
+            user_input = candidate
+            break
+
+        if user_input is None:
+            if self._login_form_visible(page):
+                reason = f': {last_error}' if last_error else ''
+                raise RuntimeError(f'{self.LOGIN_FAILED}{reason}')
+            return  # формы входа нет — уже рабочий стол
+
+        try:
+            if self.profile.username:
+                user_input.fill(self.profile.username)
+                if not (user_input.input_value(timeout=2000) or '').strip():
+                    raise RuntimeError('поле логина осталось пустым после заполнения')
+            pwd_input = page.locator('#authWindow_basic_password, input[type="password"]').first
+            if pwd_input.is_visible(timeout=1000) and self.profile.password:
+                pwd_input.fill(self.profile.password)
+            ok_btn = page.get_by_role('button', name='Войти').first
+            if not ok_btn.is_visible(timeout=500):
+                ok_btn = page.locator('button[id*="ok"], button:has-text("OK")').first
+            if not ok_btn.is_visible(timeout=1000):
+                raise RuntimeError('кнопка «Войти» не найдена на форме логина')
+            ok_btn.click()
+        except Exception as error:
+            raise RuntimeError(f'{self.LOGIN_FAILED}: {error}') from error
+
+        try:
+            page.wait_for_function(
+                """() => {
+                    const txt = document.body.innerText || '';
+                    return txt.includes('Продажи') || txt.includes('Главное') || txt.includes('Закупки')
+                        || txt.includes('Начальная страница') || txt.includes('Не найдена лицензия')
+                        || txt.includes('вход в приложение невозможен') || txt.includes('Выполнить запуск');
+                }""",
+                timeout=45000,
+            )
         except Exception:
             pass
+
+        if self._login_form_visible(page):
+            raise RuntimeError(self.LOGIN_FAILED)
+        page.wait_for_timeout(1500)
 
     def wait_for_1c(self, page) -> None:
         """Ожидание готовности интерфейса 1С:Предприятия."""
