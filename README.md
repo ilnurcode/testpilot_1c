@@ -67,6 +67,8 @@ CFE/CF/EPF/ERF/DT и ZIP принимаются на хранение до 64 М
 
 Ограничения DemoTrd: `$metadata` содержит 0 EntitySet, поэтому отсутствующие OData-сущности возвращают честный HTTP 404. Бинарный `.cfe` без BSL получает `metadata_only`, а аудит — `no_bsl_modules` с `passed=false`. В контейнере адреса `localhost` и `127.0.0.1` сначала маршрутизируются как `host.docker.internal`, а при `ConnectError` (и только при нём) запрос повторяется по исходному адресу — публикация внутри того же контейнера остаётся доступной. Явно заданный хост не переписывается. Живая проверка чтения OData без демо-базы: `tests/fixtures/odata_stub.py`.
 
+CI (`.github/workflows/tests.yml`) состоит из двух джоб: `pytest` — юнит-тесты на PostgreSQL 17, и `acceptance` — полная приёмка на собранном стеке (`docker compose up -d --build --wait` + `bash scripts/acceptance.sh --no-build`) с выгрузкой логов при падении.
+
 Пул тестов: `docker compose exec -T intelligence python -m pytest tests/ -q`. Текущее число тестов печатает сам pytest и `scripts/acceptance.sh`; в документации оно не дублируется.
 
 ## Состав

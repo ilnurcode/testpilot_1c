@@ -62,3 +62,44 @@ jobs:
 
       - name: Тесты
         run: python -m pytest tests/ -q
+
+  acceptance:
+    name: приёмка на собранном стеке
+    # Последовательно с pytest: сборка образа с Chromium и полная приёмка дорогие,
+    # и нет смысла запускать стек, если юнит-тесты уже красные.
+    needs: pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Локальные стендовые пароли (не секреты): compose и приёмка читают те же значения.
+      TP_ANALYST_PASSWORD: TestPilotAnalystLocal123!
+      TP_EXPERT_PASSWORD: TestPilotLocal123!
+      TP_RUNNER_PASSWORD: TestPilotRunnerLocal123!
+      POSTGRES_PASSWORD: TestPilot_Db_Local_Only_2026
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Стек: сборка и ожидание healthy"
+        run: docker compose up -d --build --wait
+
+      - name: "Полная приёмка (без ИИ и живой 1С)"
+        run: bash scripts/acceptance.sh --no-build
+
+      - name: Логи контейнеров при падении
+        if: failure()
+        run: docker compose logs --no-color > logs.txt
+
+      - name: Выгрузить логи
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-logs
+          path: |
+            logs.txt
+            .runtime/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Остановить стек
+        if: always()
+        run: docker compose down -v
