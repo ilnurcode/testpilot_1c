@@ -1,12 +1,19 @@
 """Шлюз пробрасывает метод, путь, query и тело в апстрим; сеть подменяется заглушкой."""
 from __future__ import annotations
 
+import os
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 GATEWAY = '/gateway/{service}/{path:path}'
 BASIC = ('expert', 'test-password-only')
+
+
+def _base(env_name: str, host_default: str) -> str:
+    """Адрес апстрима берётся из окружения (в compose это impact/intelligence) с хостовым дефолтом."""
+    return os.environ.get(env_name, host_default).rstrip('/')
 
 
 class Upstream:
@@ -60,7 +67,7 @@ def test_post_forwards_method_path_and_body(web, monkeypatch):
     assert len(upstream.calls) == 1
     call = upstream.calls[0]
     assert call['method'] == 'POST'
-    assert call['url'] == 'http://127.0.0.1:8001/api/v1/projects'
+    assert call['url'] == f"{_base('IMPACT_URL', 'http://127.0.0.1:8001')}/api/v1/projects"
     assert call['params'] == {'limit': '5'}
     assert call['content'] == body
 
@@ -76,7 +83,7 @@ def test_put_forwards_method_and_body(web, monkeypatch):
     assert response.status_code == 200
     call = upstream.calls[0]
     assert call['method'] == 'PUT'
-    assert call['url'] == 'http://127.0.0.1:8002/api/v1/tests/abc'
+    assert call['url'] == f"{_base('INTELLIGENCE_URL', 'http://127.0.0.1:8002')}/api/v1/tests/abc"
     assert call['content'] == body
 
 
