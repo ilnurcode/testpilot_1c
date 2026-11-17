@@ -15,7 +15,8 @@ param(
     [switch]$NoBuild,
     [switch]$IncludeLLM,
     [switch]$IncludeLive1C,
-    [switch]$Keep
+    [switch]$Keep,
+    [switch]$ProbeLogin
 )
 
 $ErrorActionPreference = 'Stop'
@@ -229,6 +230,28 @@ if (-not $IncludeLLM) {
             $reportCode = Test-Url "$Intel/api/v1/ai/suites/$($suite.suite_id)/report"
             if ($reportCode -eq 200) { Pass 'отчёт о прогоне md: 200' } else { Fail "отчёт о прогоне md: $reportCode" }
             }
+        }
+    }
+}
+
+Write-Host '=== 5a. Зонд формы входа (read-only) ==='
+if (-not $ProbeLogin) {
+    Skip 'probe-login: флаг не передан'
+} else {
+    $probeProject = $env:TP_ACCEPTANCE_PROJECT_ID
+    if (-not $probeProject) {
+        Fail 'probe-login: укажите TP_ACCEPTANCE_PROJECT_ID — id проекта с настроенным web_url'
+    } else {
+        try {
+            $probe = Post-Json "$Intel/api/v1/ai/connection/probe-login" @{ project_id = $probeProject }
+            $fieldsCount = @($probe.fields).Count
+            $buttonsCount = @($probe.buttons).Count
+            Pass "probe-login: login_form_visible=$($probe.login_form_visible), fields=$fieldsCount, buttons=$buttonsCount"
+        } catch {
+            $body = ''
+            if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $body = $_.ErrorDetails.Message }
+            elseif ($_.Exception.Message) { $body = $_.Exception.Message }
+            Fail "probe-login: $($body -replace '\s+', ' ')"
         }
     }
 }

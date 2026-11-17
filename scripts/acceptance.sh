@@ -2,7 +2,8 @@
 # Исполняемая приёмка TestPilot 1C:	PASS/FAIL/SKIP по шагам, итоговая сводка и exit code.
 # ВНИМАНИЕ: не выполнять `docker compose down -v` на стенде с данными — это уничтожает БД и evidence.
 # Для чистого старта используйте отдельный compose-проект (`-p testpilot-ci`) или CI-раннер.
-# Использование: scripts/acceptance.sh [--cfe PATH] [--no-build]
+# Использование: scripts/acceptance.sh [--cfe PATH] [--no-build] [--probe-login]
+# --probe-login: read-only зонд формы входа 1С для проекта из TP_ACCEPTANCE_PROJECT_ID (без ввода и кликов).
 # Переменные окружения: EXPECT_DEMO_ISSUES (по умолчанию 12), CFE_PATH, TP_EXPERT_PASSWORD, TP_EXPERT_USER.
 set -u
 
@@ -17,6 +18,7 @@ BUILD=1
 INCLUDE_LLM=0
 INCLUDE_LIVE_1C=0
 KEEP=0
+PROBE_LOGIN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --cfe) CFE_FILE="${2:-}"; shift 2 ;;
@@ -24,6 +26,7 @@ while [ $# -gt 0 ]; do
     --llm) INCLUDE_LLM=1; shift ;;
     --live-1c) INCLUDE_LIVE_1C=1; shift ;;
     --keep) KEEP=1; shift ;;
+    --probe-login) PROBE_LOGIN=1; shift ;;
     *) echo "Неизвестный аргумент: $1"; exit 2 ;;
   esac
 done
@@ -229,6 +232,24 @@ PY
       REPORT_CODE="$(code_of "$INTEL/api/v1/ai/suites/$SUITE_ID/report")"
       if [ "$REPORT_CODE" = "200" ]; then pass "отчёт о прогоне md: 200"; else fail "отчёт о прогоне md: $REPORT_CODE"; fi
     fi
+    fi
+  fi
+fi
+
+echo "=== 5a. Зонд формы входа (read-only) ==="
+if [ "$PROBE_LOGIN" -eq 0 ]; then
+  skip "probe-login: флаг не передан"
+else
+  PROBE_PROJECT="${TP_ACCEPTANCE_PROJECT_ID:-}"
+  if [ -z "$PROBE_PROJECT" ]; then
+    fail "probe-login: укажите TP_ACCEPTANCE_PROJECT_ID — id проекта с настроенным web_url"
+  else
+    PROBE_RESP="$(api "$INTEL" POST /api/v1/ai/connection/probe-login "{\"project_id\":\"$PROBE_PROJECT\"}")"
+    PROBE_FORM="$(printf '%s' "$PROBE_RESP" | jget "isinstance(d.get('login_form_visible'), bool)" 2>/dev/null)"
+    if [ "$PROBE_FORM" = "True" ]; then
+      pass "probe-login: $(printf '%s' "$PROBE_RESP" | jget "f\"login_form_visible={d['login_form_visible']}, fields={len(d.get('fields') or [])}, buttons={len(d.get('buttons') or [])}\"" 2>/dev/null)"
+    else
+      fail "probe-login: $(printf '%s' "$PROBE_RESP" | jget "d.get('error',{}).get('message') or str(d)[:300]" 2>/dev/null)"
     fi
   fi
 fi
