@@ -108,7 +108,9 @@ class ScenarioReport:
     screenshots: list[bytes] = field(default_factory=list)
     url: str | None = None
     # Снимок формы входа до отправки: fallback, если пост-кликовый снимок пуст.
-    pre_submit_screenshot: bytes = b'' 
+    pre_submit_screenshot: bytes = b''
+    # Стадия каждого снимка из screenshots: pre_submit | post_click | step_failure | step_ok.
+    screenshot_stages: list[str] = field(default_factory=list)
 
 
 def _safe_screenshot(context, page) -> bytes:
@@ -583,6 +585,7 @@ class WebClientRunner:
                         duration_seconds=round(time.perf_counter() - step_start, 3), screenshot=shot
                     ))
                     report.screenshots.append(shot)
+                    report.screenshot_stages.append('step_failure')
                     report.status = 'failed'
                     report.error = 'Платформа 1С заблокировала вход в веб-клиент: ' + body_txt.replace('\n', ' ')[:240]
                     return report
@@ -599,6 +602,7 @@ class WebClientRunner:
                     screenshot=shot
                 ))
                 report.screenshots.append(shot)
+                report.screenshot_stages.append('step_ok')
 
                 # Выполнение переданных шагов
                 section_baseline = None
@@ -678,6 +682,7 @@ class WebClientRunner:
                             screenshot=shot
                         ))
                         report.screenshots.append(shot)
+                        report.screenshot_stages.append('step_ok')
 
                     except Exception as step_exc:
                         s_duration = round(time.perf_counter() - s_start, 3)
@@ -693,6 +698,7 @@ class WebClientRunner:
                             screenshot=shot
                         ))
                         report.screenshots.append(shot)
+                        report.screenshot_stages.append('step_failure')
                         report.status = 'failed'
                         report.error = f"Ошибка на шаге {idx} ({action} {target}): {step_exc}"
                         break
@@ -708,6 +714,9 @@ class WebClientRunner:
                         duration_seconds=round(time.perf_counter() - start_time, 3), screenshot=shot,
                     ))
                     report.screenshots.append(shot)
+                    diagnostics = getattr(self, 'last_login_diagnostics', None) or {}
+                    submitted = bool(diagnostics.get('clicked')) or diagnostics.get('submitted_via') == 'enter'
+                    report.screenshot_stages.append('post_click' if submitted else 'step_failure')
                 raise
             finally:
                 try:

@@ -146,23 +146,35 @@ def execute_1c(suite, profile):
                         result['login'] = dict(web_runner.last_login_diagnostics)
                     attached = False
                     tiny = False
-                    # Приоритет: валидный снимок шага (последний по порядку) → pre-submit → недоступно.
+                    # Снимки разделены по стадии: pre_submit не считается ни пост-кликовым, ни снимком шага.
                     shots = list(report.screenshots)
+                    stages = list(getattr(report, 'screenshot_stages', []) or [])
+                    if len(stages) < len(shots):
+                        stages += ['step_failure'] * (len(shots) - len(stages))
                     pre = getattr(report, 'pre_submit_screenshot', b'') or b''
 
                     def usable(shot: bytes) -> bool:
                         return bool(shot) and 100 <= len(shot) <= 2 * 1024 * 1024
 
-                    step_valid = [shot for shot in shots if usable(shot)]
-                    pre_valid = pre if usable(pre) else b''
-                    chosen = step_valid[-1] if step_valid else pre_valid
-                    tiny = any(len(shot) < 100 for shot in shots + [pre])
-                    result['evidence_provenance'] = 'step' if step_valid else ('pre_submit' if pre_valid else 'none')
-                    result['post_click_screenshot_bytes'] = len(step_valid[-1]) if step_valid else 0
-                    result['pre_submit_screenshot_bytes'] = len(pre) if pre else 0
+                    step_pairs = [(shot, stage) for shot, stage in zip(shots, stages)
+                                  if stage != 'pre_submit' and usable(shot)]
+                    pre_pairs = [(shot, stage) for shot, stage in zip(shots, stages)
+                                 if stage == 'pre_submit' and usable(shot)]
+                    if usable(pre):
+                        pre_pairs.append((pre, 'pre_submit'))
+
+                    chosen = step_pairs[-1][0] if step_pairs else (pre_pairs[-1][0] if pre_pairs else b'')
+                    post_click_sizes = [len(shot) for shot, stage in zip(shots, stages) if stage == 'post_click']
+                    result['evidence_provenance'] = (
+                        'step' if step_pairs else ('pre_submit' if pre_pairs else 'none')
+                    )
+                    result['post_click_screenshot_bytes'] = post_click_sizes[-1] if post_click_sizes else 0
+                    result['pre_submit_screenshot_bytes'] = len(pre_pairs[-1][0]) if pre_pairs else 0
                     if chosen:
                         evidence.append((len(results), chosen))
                         attached = True
+                    all_sizes = [len(shot) for shot in shots] + ([len(pre)] if pre else [])
+                    tiny = any(size < 100 for size in all_sizes)
                     if not attached:
                         result['screenshot_unavailable'] = True
                         result['screenshot_unavailable_reason'] = (
