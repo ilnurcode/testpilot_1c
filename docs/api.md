@@ -62,6 +62,7 @@
 |---|---|---|
 | POST / GET | ai/suites | Генерация плана (`provider`, для внешних — `consent`) / история прогонов проекта (`?project_id=…&limit=`) |
 | GET | ai/suites/{id} | Полный план; у каждого предложения поле `mutating` |
+| GET | ai/suites/{id}/preflight | Read-only preflight плана: `would_run`, `approved_indices`, `engines` (engine, mutating, steps_count, blocked_reason), `settings` (web_url/odata_url/пользователь/пароль), `runtime` (grace/login_wait/login_submit/audit_max_issues/предохранитель/режимы), `warnings`; браузер не запускается, в БД не пишется |
 | DELETE | ai/suites/{id}?confirm={id} | Адресное удаление прогона (expert): без/неверный `confirm` — 409, неизвестный id — 404; каскад `evidence`, тестов `ai-<id>-*` с `coverage`/`priorities`, прогона `ai-run-<id>` с `results`/`defects` и самой строки suite; пакет и планы не удаляются; ответ `{suite_id, deleted:{…}}` |
 | POST | ai/suites/{id}/approve | Подтверждение выбранных предложений (expert) |
 | POST | ai/suites/{id}/run-1c | Прогон на базе 1С по настройкам проекта; флаги `allow_mutations`, `strict_read_only` |

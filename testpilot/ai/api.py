@@ -394,6 +394,76 @@ def run_1c(sid:str,allow_mutations:bool=False,strict_read_only:bool=False,actor=
     return _suite_response(_execute_1c_row(row,actor,s,allow_mutations,strict_read_only))
 
 
+@router.get('/suites/{sid}/preflight')
+def suite_preflight(sid:str,actor=Depends(user),s=Depends(session,scope='function')):
+    """Read-only preflight: что будет выполнено и чего не хватает. Ничего не запускает и не пишет в БД."""
+    from fastapi import HTTPException as _HTTPException
+    from testpilot.audit_limit import MAX_ISSUES_KEPT
+    from testpilot.ai import login_guard
+    from testpilot.integration.webclient import WebClientRunner
+
+    row=require(s.get(AISuiteRow,sid),'Сохранённый план не найден')
+    payload=row.payload or {}
+    proposals=(payload.get('suggestion') or {}).get('proposals') or []
+    approved_raw=(payload.get('approval') or {}).get('selected_proposals') or []
+    approved_indices=sorted(index for index in approved_raw if isinstance(index,int) and 0<=index<len(proposals))
+    project=s.get(ProjectRow,row.project_id)
+    web_url=(project.web_url or '').strip() if project else ''
+    odata_url=(project.odata_url or '').strip() if project else ''
+    username=(project.auth_username or '').strip() if project else ''
+    has_password=bool(project and project.auth_password)
+    allow_mode=bool(payload.get('allow_mutations'))
+    strict_mode=bool(payload.get('strict_read_only'))
+
+    def steps_count(proposal):
+        total=sum(len(case.get('steps') or []) for case in (proposal.get('cases') or []))
+        return total or len(proposal.get('steps') or [])
+
+    engines=[]
+    warnings=[]
+    for index in approved_indices:
+        proposal=proposals[index]
+        engine=(proposal.get('engine') or '').strip()
+        blocked=None
+        if engine=='playwright' and not web_url:
+            blocked='web_url не настроен: заполните подключение проекта'
+        elif engine=='odata' and not odata_url:
+            blocked='odata_url не настроен: заполните подключение проекта'
+        engines.append({'index':index,'engine':engine,'mutating':bool(proposal.get('mutating')),
+                        'steps_count':steps_count(proposal),'blocked_reason':blocked})
+
+    if not approved_indices:
+        warnings.append('нет утверждённых предложений: подтвердите план перед прогоном')
+    if mutation_conflicts(payload) and not allow_mode:
+        warnings.append('изменяющие шаги требуют allow_mutations=true: '+'; '.join(mutation_conflicts(payload)[:2]))
+    if strict_conflicts(payload):
+        warnings.append('строгий режим (strict_read_only) заблокирует клики: '+'; '.join(strict_conflicts(payload)[:2]))
+    try:
+        login_guard.ensure_login_allowed(s,payload,row.project_id)
+    except _HTTPException as error:
+        warnings.append(str(error.detail))
+
+    would_run=bool(approved_indices) and not any(item['blocked_reason'] for item in engines)
+    return {
+        'suite_id':sid,
+        'status':row.status,
+        'approved_indices':approved_indices,
+        'engines':engines,
+        'settings':{'web_url_present':bool(web_url),'odata_url_present':bool(odata_url),
+                    'username_present':bool(username),'has_password':has_password},
+        'runtime':{'grace_seconds':WebClientRunner.LOGIN_GRACE_SECONDS,
+                   'login_wait_seconds':WebClientRunner.LOGIN_WAIT_SECONDS,
+                   'login_submit':WebClientRunner.LOGIN_SUBMIT,
+                   'audit_max_issues':MAX_ISSUES_KEPT,
+                   'login_cooldown_minutes':login_guard.COOLDOWN_MINUTES,
+                   'login_max_failures':login_guard.MAX_FAILURES,
+                   'allow_mutations_mode':allow_mode,
+                   'strict_read_only_mode':strict_mode},
+        'warnings':warnings,
+        'would_run':would_run,
+    }
+
+
 @router.get('/suites/{sid}/report')
 def run_report(sid:str,format:str='md',actor=Depends(user),s=Depends(session,scope='function'))->Response:
     """Отчёт о прогоне сохранённого плана: только чтение сохранённых данных."""
