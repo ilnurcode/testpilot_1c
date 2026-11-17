@@ -309,6 +309,7 @@ def test_projects_list_reports_last_run_null_and_after_execution(clients, monkey
     rows = impact.get('/api/v1/projects', params={'limit': 200}).json()['items']
     mine = next(row for row in rows if row['id'] == project['id'])
     assert mine['last_run'] is None
+    assert mine['has_draft_plan'] is False
     assert mine['upload_count'] == 0 and mine['latest_upload'] is None
 
     p = _package('last-run')
@@ -523,3 +524,45 @@ def test_projects_only_with_issues_uses_latest_run_only(clients, monkeypatch):
 
     history = c.get('/api/v1/ai/suites', params={'project_id': project['id']}).json()
     assert any(row['counts']['failed'] == 1 for row in history), 'failed-прогон должен остаться в истории'
+
+
+def test_last_run_is_last_executed_not_newer_draft(clients, monkeypatch):
+    impact, c = clients
+    project = _project_with_run(impact, c, monkeypatch, 'Прогон и черновик', ['passed', 'failed'])
+    pkg = _package('draft-after-run')
+    assert c.post('/api/v1/impact-packages', json=pkg).status_code == 200
+    draft = c.post('/api/v1/ai/suites', json={
+        'package_id': pkg['package_id'], 'project_id': project['id'], 'provider': 'local',
+    })
+    assert draft.status_code == 200, draft.text
+
+    mine = next(row for row in _items(impact)['items'] if row['id'] == project['id'])
+    assert mine['last_run'] is not None, 'черновик не должен скрывать выполненный прогон'
+    assert mine['last_run']['suite_id'] != draft.json()['suite_id']
+    assert mine['last_run']['status'] == 'completed'
+    assert mine['last_run']['counts'] == {'passed': 1, 'failed': 1, 'error': 0, 'skipped': 0}
+    assert mine['has_draft_plan'] is True
+
+
+def test_last_run_null_when_only_draft_exists(clients):
+    impact, c = clients
+    project = _project(impact, 'Только черновик')
+    pkg = _package('only-draft')
+    assert c.post('/api/v1/impact-packages', json=pkg).status_code == 200
+    draft = c.post('/api/v1/ai/suites', json={
+        'package_id': pkg['package_id'], 'project_id': project['id'], 'provider': 'local',
+    })
+    assert draft.status_code == 200, draft.text
+
+    mine = next(row for row in _items(impact)['items'] if row['id'] == project['id'])
+    assert mine['last_run'] is None
+    assert mine['has_draft_plan'] is True
+
+
+def test_last_run_null_without_any_suite(clients):
+    impact, _ = clients
+    project = _project(impact, 'Без планов')
+
+    mine = next(row for row in _items(impact)['items'] if row['id'] == project['id'])
+    assert mine['last_run'] is None
+    assert mine['has_draft_plan'] is False

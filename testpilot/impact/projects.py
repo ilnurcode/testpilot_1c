@@ -59,6 +59,8 @@ def upload_or_404(s,pid,upload_id):
 
 UPLOAD_FIELDS=('id','project_id','number','filename','kind','component','label','size_bytes','checksum','status','message','version_id','baseline_id','created_by','created_at','summary')
 RUN_COUNT_KEYS=('passed','failed','error','skipped')
+# Прогоном считается только выполненный план: draft ещё не запускался.
+EXECUTED_SUITE_STATUSES=('completed','error')
 
 def upload_payload(values):
     payload={k:values[k] for k in UPLOAD_FIELDS}
@@ -76,18 +78,25 @@ def last_run_payload(suite_id,status,payload,created_at):
             'finished_at':(payload or {}).get('finished_at'),'created_at':created_at}
 
 
-def project_payload(p,*,upload_count,size_bytes,latest_upload,last_run=None):
-    return {'id':p.id,'name':p.name,'description':p.description,'configuration_id':p.configuration_id,'created_by':p.created_by,'created_at':p.created_at,'upload_count':upload_count,'size_bytes':int(size_bytes),'latest_upload':latest_upload,'last_run':last_run,'connection_settings':{'odata_url':p.odata_url,'web_url':p.web_url,'auth_username':p.auth_username,'has_password':bool(p.auth_password)}}
+def project_payload(p,*,upload_count,size_bytes,latest_upload,last_run=None,has_draft_plan=False):
+    return {'id':p.id,'name':p.name,'description':p.description,'configuration_id':p.configuration_id,'created_by':p.created_by,'created_at':p.created_at,'upload_count':upload_count,'size_bytes':int(size_bytes),'latest_upload':latest_upload,'last_run':last_run,'has_draft_plan':bool(has_draft_plan),'connection_settings':{'odata_url':p.odata_url,'web_url':p.web_url,'auth_username':p.auth_username,'has_password':bool(p.auth_password)}}
+
+
+def project_has_draft(s,pid):
+    return bool(s.scalar(select(func.count()).select_from(AISuiteRow).where(AISuiteRow.project_id==pid,AISuiteRow.status=='draft')))
 
 
 def project_dict(s,p,last_run=None):
     count,size=s.execute(select(func.count(UploadRow.id),func.coalesce(func.sum(UploadRow.size_bytes),0)).where(UploadRow.project_id==p.id)).one()
     last=s.scalar(metadata_query().where(UploadRow.project_id==p.id).order_by(UploadRow.number.desc()).limit(1))
-    return project_payload(p,upload_count=count,size_bytes=int(size),latest_upload=upload_dict(last) if last else None,last_run=last_run)
+    return project_payload(p,upload_count=count,size_bytes=int(size),latest_upload=upload_dict(last) if last else None,last_run=last_run,
+                           has_draft_plan=project_has_draft(s,p.id))
 
 
 def project_last_run(s,pid):
-    row=s.execute(select(AISuiteRow.id,AISuiteRow.status,AISuiteRow.payload,AISuiteRow.created_at).where(AISuiteRow.project_id==pid)
+    # Последний прогон — только выполненный: черновик плана не является прогоном.
+    row=s.execute(select(AISuiteRow.id,AISuiteRow.status,AISuiteRow.payload,AISuiteRow.created_at)
+                  .where(AISuiteRow.project_id==pid,AISuiteRow.status.in_(EXECUTED_SUITE_STATUSES))
                   .order_by(AISuiteRow.created_at.desc(),AISuiteRow.id.desc()).limit(1)).first()
     return last_run_payload(*row) if row else None
 
@@ -207,13 +216,18 @@ def list_projects(q:str|None=None,only_with_issues:bool=False,limit:int=50,offse
     latest_suite=select(AISuiteRow.project_id.label('project_id'),AISuiteRow.id.label('suite_id'),AISuiteRow.status.label('status'),
                         AISuiteRow.payload.label('payload'),AISuiteRow.created_at.label('created_at'),
                         func.row_number().over(partition_by=AISuiteRow.project_id,
-                                               order_by=(AISuiteRow.created_at.desc(),AISuiteRow.id.desc())).label('rn')).subquery()
+                                               order_by=(AISuiteRow.created_at.desc(),AISuiteRow.id.desc())).label('rn')
+                        ).where(AISuiteRow.status.in_(EXECUTED_SUITE_STATUSES)).subquery()
+    draft_flags=select(AISuiteRow.project_id.label('project_id'),
+                       func.count(AISuiteRow.id).label('draft_count')).where(AISuiteRow.status=='draft').group_by(AISuiteRow.project_id).subquery()
     upload_columns=[latest_upload.c[f].label(f'up_{f}') for f in UPLOAD_FIELDS]+[latest_upload.c.audit_result.label('up_audit_result')]
     suite_columns=[latest_suite.c.suite_id.label('run_suite_id'),latest_suite.c.status.label('run_status'),
                    latest_suite.c.payload.label('run_payload'),latest_suite.c.created_at.label('run_created_at')]
     stmt=(select(ProjectRow,stats.c.upload_count.label('upload_count'),stats.c.size_bytes.label('size_bytes'),
+                 draft_flags.c.draft_count.label('draft_count'),
                  *upload_columns,*suite_columns)
           .outerjoin(stats,stats.c.project_id==ProjectRow.id)
+          .outerjoin(draft_flags,draft_flags.c.project_id==ProjectRow.id)
           .outerjoin(latest_upload,and_(latest_upload.c.project_id==ProjectRow.id,latest_upload.c.rn==1))
           .outerjoin(latest_suite,and_(latest_suite.c.project_id==ProjectRow.id,latest_suite.c.rn==1)))
     conditions=[]
@@ -235,7 +249,8 @@ def list_projects(q:str|None=None,only_with_issues:bool=False,limit:int=50,offse
         projects.append(project_payload(project,upload_count=int(values['upload_count'] or 0),size_bytes=int(values['size_bytes'] or 0),
                                         latest_upload=upload,
                                         last_run=last_run_payload(values['run_suite_id'],values['run_status'],
-                                                                  values['run_payload'],values['run_created_at'])))
+                                                                  values['run_payload'],values['run_created_at']),
+                                        has_draft_plan=bool(values['draft_count'])))
     return {'items':projects,'total':total,'limit':limit,'offset':offset}
 
 

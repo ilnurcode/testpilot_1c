@@ -37,7 +37,7 @@ function projectDialog(){return `<dialog id="projectDialog" aria-labelledby="pro
 function deleteProjectDialog(p){return `<dialog id="deleteProjectDialog" aria-labelledby="deleteProjectTitle"><form id="deleteProjectForm"><h2 id="deleteProjectTitle">Удалить проект</h2><p>Будут удалены загрузки, анализы, пакеты проверок, прогоны и скриншоты проекта. Действие необратимо.</p><label>Введите идентификатор проекта<input id="deleteProjectConfirm" autocomplete="off" placeholder="${E(p.id)}"></label><div id="deleteProjectFeedback"></div><div class="row"><button type="button" id="cancelDeleteProject" class="secondary">Отмена</button><button type="submit" class="primary">Удалить проект</button></div></form></dialog>`}
 function lastRunLine(p){
  const run=p&&p.last_run;
- if(!run||!run.suite_id)return '<p class="caption">прогонов не было</p>';
+ if(!run||!run.suite_id)return `<p class="caption">прогонов не было${p&&p.has_draft_plan?' · есть черновик плана':''}</p>`;
  const counts=run.counts||{};
  const passed=counts.passed||0,failed=counts.failed||0,errors=counts.error||0;
  const accent=(errors>0||run.status==='error')?'error':failed>0?'warning':'';
