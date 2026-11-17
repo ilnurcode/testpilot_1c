@@ -1,6 +1,8 @@
 """Вход в 1С: явная ошибка вместо тихого прохода. Сеть не используется — только HTML-моки."""
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from testpilot.integration.probe import Profile
@@ -288,11 +290,70 @@ def test_confirmed_form_inside_iframe_is_found(page):
 
 def test_no_form_in_any_frame_reports_frame_diagnostics(page):
     page.set_content('<main><div id="empty">пусто</div></main>')
+    runner = _runner()
+    runner.LOGIN_WAIT_SECONDS = 1
 
+    started = time.monotonic()
     with pytest.raises(RuntimeError) as error:
-        _runner().handle_login(page)
+        runner.handle_login(page)
+    elapsed = time.monotonic() - started
 
     message = str(error.value)
     assert 'форма входа не найдена ни в одном фрейме' in message
     assert 'фреймов: 1' in message
     assert 'origin:' in message
+    assert 0.9 <= elapsed < 5, f'ожидание должно быть ограничено LOGIN_WAIT_SECONDS, а не 300 мс; прошло {elapsed:.1f} с'
+
+
+def test_form_appearing_after_delay_is_awaited(page):
+    page.set_content(
+        """
+        <div id="root"></div>
+        <script>
+          window.__clicks = 0;
+          setTimeout(() => {
+            document.getElementById('root').innerHTML =
+              '<div id="authWindow">' +
+              '<input id="authWindow_basic_login" name="login" type="text">' +
+              '<input id="authWindow_basic_password" name="password" type="password">' +
+              '<button id="authWindow_basic_okButton" onclick="window.__clicks++;' +
+              'document.body.innerHTML=\\'<div>Продажи</div>\\'">Войти</button></div>';
+          }, 1000);
+        </script>
+        """
+    )
+    runner = _runner()
+    runner.LOGIN_WAIT_SECONDS = 10
+
+    runner.handle_login(page)
+
+    assert page.evaluate('window.__clicks') == 1
+    assert 'Продажи' in page.inner_text('body')
+
+
+def test_workspace_appearing_before_form_skips_login(page):
+    page.set_content(
+        """
+        <div id="root"></div>
+        <script>
+          window.__clicks = 0;
+          window.__fills = 0;
+          setTimeout(() => { document.body.insertAdjacentHTML('beforeend', '<div>Главное</div>'); }, 500);
+          setTimeout(() => {
+            document.getElementById('root').innerHTML =
+              '<div id="authWindow"><input id="authWindow_basic_login" type="text">' +
+              '<button id="authWindow_basic_okButton" onclick="window.__clicks++">Войти</button></div>';
+          }, 1500);
+        </script>
+        """
+    )
+    runner = _runner()
+    runner.LOGIN_WAIT_SECONDS = 5
+
+    started = time.monotonic()
+    runner.handle_login(page)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.4, 'рабочий стол должен завершать ожидание сразу'
+    assert page.evaluate('window.__clicks') == 0
+    assert page.evaluate('window.__fills') == 0

@@ -91,3 +91,23 @@ def test_login_grace_is_configurable_and_wired(monkeypatch):
         message = str(error.value)
         assert 'TP_1C_LOGIN_GRACE_SECONDS' in message
         assert 'от 2 до 60' in message
+
+
+@pytest.mark.parametrize('raw, expected', [(None, 25), ('5', 5), ('120', 120), ('', 25), (' 60 ', 60)])
+def test_login_wait_seconds_is_bounded_and_wired(raw, expected):
+    from testpilot.integration.webclient import WebClientRunner
+
+    assert config.int_env('TP_1C_LOGIN_WAIT_SECONDS', 25, 5, 120, raw=raw) == expected
+    assert WebClientRunner.LOGIN_WAIT_SECONDS == config.int_env('TP_1C_LOGIN_WAIT_SECONDS', 25, 5, 120)
+
+
+@pytest.mark.parametrize('raw', ['4', '121', '0', '-1', 'abc'])
+def test_login_wait_seconds_out_of_range_fails_start(raw):
+    from testpilot.integration.webclient import WebClientRunner
+
+    with pytest.raises(ValueError) as error:
+        config.int_env('TP_1C_LOGIN_WAIT_SECONDS', 25, 5, 120, raw=raw)
+    message = str(error.value)
+    assert 'TP_1C_LOGIN_WAIT_SECONDS' in message
+    assert 'от 5 до 120' in message
+    assert WebClientRunner.LOGIN_WAIT_SECONDS == 25

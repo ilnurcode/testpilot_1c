@@ -242,6 +242,9 @@ class WebClientRunner:
     # Сколько ждём ухода формы логина после одной попытки, прежде чем считать вход неудачным.
     # Настраивается TP_1C_LOGIN_GRACE_SECONDS (2..60): на медленном стенде дефолт 10 с может быть мал.
     LOGIN_GRACE_SECONDS = int_env('TP_1C_LOGIN_GRACE_SECONDS', 10, 2, 60)
+    # Сколько ждём появления формы входа (или рабочего стола) после навигации: публикация DemoTrd
+    # отдаёт форму примерно через 15 с. Настраивается TP_1C_LOGIN_WAIT_SECONDS (5..120).
+    LOGIN_WAIT_SECONDS = int_env('TP_1C_LOGIN_WAIT_SECONDS', 25, 5, 120)
     LOGIN_FAILED = ('Вход в 1С не выполнен: форма логина осталась на экране '
                     '(селектор не найден или кнопка «Войти» не сработала)')
 
@@ -340,7 +343,9 @@ class WebClientRunner:
         """Рабочий стол уже открыт: маркеры ищем во всех фреймах, не только в верхнем документе."""
         for frame in _visible_frames(page):
             try:
-                text = frame.evaluate('() => (document.body && document.body.textContent) || ""') or ''
+                # innerText, а не textContent: текст <script> со словами вроде «Продажи» не должен
+                # выглядеть как открытый рабочий стол.
+                text = frame.evaluate('() => (document.body && document.body.innerText) || ""') or ''
             except Exception:
                 continue
             if any(marker in text for marker in self.WORKSPACE_MARKERS):
@@ -356,12 +361,31 @@ class WebClientRunner:
         reason = f'форма входа не найдена ни в одном фрейме (фреймов: {len(frames)}; origin: {origins})'
         return self._login_failure(page, reason=reason)
 
+    def _await_login_state(self, page):
+        """Опрос всех фреймов до появления формы входа или рабочего стола.
+
+        Пределы пути входа не суммируются бесконтрольно: ожидание <= LOGIN_WAIT_SECONDS
+        (5..120, по умолчанию 25 с), затем ожидание видимого поля <= 3 с, после клика grace
+        <= 45 с (внутри — LOGIN_GRACE_SECONDS), финальная рабочая область <= 20 с и 1.5 с
+        стабилизации. Худший случай ~ 94.5 с, обычный — секунды.
+        """
+        deadline = time.monotonic() + self.LOGIN_WAIT_SECONDS
+        while True:
+            frame = self._login_frame(page)
+            if frame is not None:
+                return 'form', frame
+            if self._workspace_visible(page):
+                return 'workspace', None
+            if time.monotonic() >= deadline:
+                return 'timeout', None
+            page.wait_for_timeout(500)
+
     def handle_login(self, page) -> None:
         """Авторизация в веб-клиенте 1С 8.3/8.5; ровно одна попытка, при неудаче — понятная ошибка."""
-        frame = self._login_frame(page)
-        if frame is None:
-            if self._workspace_visible(page):
-                return  # формы входа нет — уже рабочий стол
+        state, frame = self._await_login_state(page)
+        if state == 'workspace':
+            return  # формы входа нет — уже рабочий стол
+        if state == 'timeout':
             raise self._login_frame_error(page)
 
         user_input = frame.locator(', '.join(self.LOGIN_FIELD_SELECTORS)).first
