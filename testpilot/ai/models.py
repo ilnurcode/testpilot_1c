@@ -57,3 +57,5 @@ class LLMSettingsInput(Model):
     base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
+    # persist=true требует TP_ALLOW_ENV_WRITE=1: по умолчанию настройки живут только в памяти процесса.
+    persist: bool = False

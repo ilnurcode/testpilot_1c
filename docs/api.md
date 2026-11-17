@@ -68,8 +68,11 @@
 | GET | ai/suites/{id}/report?format=md/csv | Отчёт о прогоне: md по кейсам, csv — одна строка на результат |
 | POST | ai/suites/{id}/run-demo | Прогон на синтетическом стенде presentation-sales |
 | GET | ai/status, ai/settings/llm, ai/codex/status | Состояние провайдеров и Codex |
-| PUT | ai/settings/llm, ai/codex/login, ai/codex/logout | Настройки API и вход Codex (expert) |
+| PUT | ai/settings/llm | `base_url`/`model`/`api_key` — только в памяти процесса; `persist=true` требует `TP_ALLOW_ENV_WRITE=1` и пишет в файл `TP_ENV_FILE` (по умолчанию `.env`) |
+| POST / GET | ai/codex/login, ai/codex/logout | Вход и выход Codex (expert) |
 | GET | ai/evidence/{id} | PNG-скриншот прогона |
+
+`PUT /api/v1/ai/settings/llm` отвечает `persisted`, `env_file`, `env_write_allowed` и `note`: по умолчанию настройки меняются только в памяти процесса (`persisted: false`), `api_key` никогда не возвращается (только `has_key`). Запись в файл окружения включается `TP_ALLOW_ENV_WRITE=1`, путь берётся из `TP_ENV_FILE`; попытка `persist=true` без флага — 409 «Запись в .env отключена…».
 
 История отдаёт сводку без `suggestion`/`payload`: `suite_id`, `package_id`, `model`, `provider`, `status`, `counts`, `created_at`, `finished_at`, `approved_count`, `mutating_count`.
 Отчёты отдаются вложением `run-<suite_id>.md|csv` и строятся только из сохранённых данных; для прогона без результатов вместо строк кейсов стоит пометка «результата нет».

@@ -31,8 +31,18 @@ def get_llm_settings(actor=Depends(user)):
         'configured': st.get('configured', False)
     }
 
+def _env_write_allowed():
+    """Запись в файл окружения разрешена только явным TP_ALLOW_ENV_WRITE=1."""
+    return (os.environ.get('TP_ALLOW_ENV_WRITE') or '').strip().lower() in ('1','true','yes','on')
+
+
+def _env_file():
+    return Path(os.environ.get('TP_ENV_FILE') or '.env')
+
+
 @router.put('/settings/llm')
 def update_llm_settings(q: LLMSettingsInput, actor=Depends(expert)):
+    """По умолчанию меняет настройки только в памяти процесса; запись в файл — явный opt-in."""
     if q.base_url:
         os.environ['TP_LLM_BASE_URL'] = q.base_url.strip()
     if q.model:
@@ -40,11 +50,13 @@ def update_llm_settings(q: LLMSettingsInput, actor=Depends(expert)):
     if q.api_key is not None and q.api_key.strip():
         os.environ['TP_LLM_API_KEY'] = q.api_key.strip()
 
-    try:
-        env_path = Path('.env')
-        if env_path.exists():
-            content = env_path.read_text(encoding='utf-8')
-            lines = content.splitlines()
+    env_path = _env_file()
+    persisted = False
+    if q.persist:
+        if not _env_write_allowed():
+            raise HTTPException(409,'Запись в .env отключена. Установите TP_ALLOW_ENV_WRITE=1 или используйте изменения только в памяти (persist=false).')
+        try:
+            lines = env_path.read_text(encoding='utf-8').splitlines() if env_path.exists() else []
             def set_var(key, val):
                 nonlocal lines
                 lines = [l for l in lines if not l.startswith(f"{key}=")]
@@ -53,10 +65,19 @@ def update_llm_settings(q: LLMSettingsInput, actor=Depends(expert)):
             if q.model: set_var('TP_LLM_MODEL', q.model.strip())
             if q.api_key is not None and q.api_key.strip(): set_var('TP_LLM_API_KEY', q.api_key.strip())
             env_path.write_text("\n".join(lines) + "\n", encoding='utf-8')
-    except Exception:
-        pass
+            persisted = True
+        except OSError as error:
+            raise HTTPException(500, f'Не удалось записать настройки в {env_path}: {error}')
 
-    return get_llm_settings(actor)
+    data = get_llm_settings(actor)
+    data.update({
+        'persisted': persisted,
+        'env_file': str(env_path),
+        'env_write_allowed': _env_write_allowed(),
+        'note': ('Настройки записаны в файл окружения.' if persisted else
+                 'Изменения только в памяти процесса. Для записи в .env задайте TP_ALLOW_ENV_WRITE=1 и persist=true.'),
+    })
+    return data
 
 def _codex_status_for(actor):
     result = codex.status()

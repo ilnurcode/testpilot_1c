@@ -857,58 +857,92 @@ def test_run_report_has_no_odata_hint_for_passed_results(clients, monkeypatch):
     assert 'Возможная причина: EntitySet не опубликован' not in body
 
 
-def test_llm_settings_write_only_to_working_directory_env(clients, monkeypatch, tmp_path):
-    """PUT настроек пишет .env текущего каталога и не трогает файл репозитория."""
+def test_llm_settings_default_changes_memory_only(clients, monkeypatch):
     import pathlib
 
     _, c = clients
     repo_env = pathlib.Path('.env').resolve()
     before = repo_env.read_bytes() if repo_env.exists() else None
-    (tmp_path / '.env').write_text('TP_LLM_MODEL=old-model\n', encoding='utf-8')
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv('TP_ALLOW_ENV_WRITE', raising=False)
 
     response = c.put('/api/v1/ai/settings/llm', json={
         'base_url': 'https://llm.example.test/v1',
-        'model': 'unit-model',
+        'model': 'unit-memory-model',
         'api_key': 'unit-key',
     })
 
     assert response.status_code == 200, response.text
-    written = tmp_path / '.env'
-    assert written.is_file()
-    assert 'TP_LLM_MODEL=unit-model' in written.read_text(encoding='utf-8')
+    body = response.json()
+    assert body['persisted'] is False
+    assert body['env_write_allowed'] is False
+    assert body['env_file'] == '.env'
+    assert 'только в памяти' in body['note']
+    assert body['model'] == 'unit-memory-model'
     assert (repo_env.read_bytes() if repo_env.exists() else None) == before, 'реальный .env изменён'
 
 
-def test_llm_settings_cannot_write_repository_env(clients, monkeypatch, tmp_path):
-    """Даже из каталога репозитория запись уходит только в подменённый целевой путь."""
-    import pathlib
+def test_llm_settings_apply_to_next_generation_in_process(clients, monkeypatch):
+    _, c = clients
+    monkeypatch.delenv('TP_ALLOW_ENV_WRITE', raising=False)
+    monkeypatch.setenv('TP_LLM_API_KEY', 'unit-key')
 
-    from testpilot.ai import api as ai_api
+    c.put('/api/v1/ai/settings/llm', json={'model': 'unit-next-model'})
+    base, model, key = provider.configuration()
+
+    assert model == 'unit-next-model'
+    assert key == 'unit-key'
+
+
+def test_llm_settings_persist_true_without_flag_is_409(clients, monkeypatch):
+    _, c = clients
+    monkeypatch.delenv('TP_ALLOW_ENV_WRITE', raising=False)
+
+    response = c.put('/api/v1/ai/settings/llm', json={'model': 'unit-model', 'persist': True})
+
+    assert response.status_code == 409, response.text
+    assert response.json()['error']['message'] == (
+        'Запись в .env отключена. Установите TP_ALLOW_ENV_WRITE=1 '
+        'или используйте изменения только в памяти (persist=false).'
+    )
+
+
+def test_llm_settings_persist_true_with_flag_writes_only_target_file(clients, monkeypatch, tmp_path):
+    import pathlib
 
     _, c = clients
     repo_env = pathlib.Path('.env').resolve()
     before = repo_env.read_bytes() if repo_env.exists() else None
-    target = tmp_path / 'redirected.env'
+    target = tmp_path / 'custom.env'
     target.write_text('TP_LLM_MODEL=old-model\n', encoding='utf-8')
-    real_path = pathlib.Path
-
-    def redirected(value='.'):
-        candidate = real_path(value)
-        return target if candidate.name == '.env' else candidate
-
-    monkeypatch.setattr(ai_api, 'Path', redirected)
+    monkeypatch.setenv('TP_ALLOW_ENV_WRITE', '1')
+    monkeypatch.setenv('TP_ENV_FILE', str(target))
 
     response = c.put('/api/v1/ai/settings/llm', json={
         'base_url': 'https://llm.example.test/v1',
-        'model': 'unit-model',
+        'model': 'unit-file-model',
         'api_key': 'unit-key',
+        'persist': True,
     })
 
     assert response.status_code == 200, response.text
-    assert target.is_file()
-    assert 'TP_LLM_MODEL=unit-model' in target.read_text(encoding='utf-8')
+    body = response.json()
+    assert body['persisted'] is True
+    assert body['env_file'] == str(target)
+    content = target.read_text(encoding='utf-8')
+    assert 'TP_LLM_MODEL=unit-file-model' in content
+    assert 'TP_LLM_API_KEY=unit-key' in content
     assert (repo_env.read_bytes() if repo_env.exists() else None) == before, 'реальный .env изменён'
+
+
+def test_llm_settings_never_return_api_key(clients, monkeypatch):
+    _, c = clients
+    monkeypatch.delenv('TP_ALLOW_ENV_WRITE', raising=False)
+
+    response = c.put('/api/v1/ai/settings/llm', json={'api_key': 'unit-secret-key'})
+
+    assert response.status_code == 200, response.text
+    assert 'unit-secret-key' not in response.text
+    assert response.json()['has_key'] is True
 
 
 def test_generate_without_key_returns_503_before_network(monkeypatch):
