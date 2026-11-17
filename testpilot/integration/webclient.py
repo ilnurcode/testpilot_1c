@@ -609,7 +609,7 @@ def collect_login_facts(page) -> dict:
 PROBE_READY_SCRIPT = """() => {
     const visible = element => !!(element.offsetWidth || element.offsetHeight);
     const form = [...document.querySelectorAll('input[type="password"], [id^="authWindow"]')].some(visible);
-    const txt = document.body.innerText || '';
+    const txt = (document.body && document.body.textContent) || '';
     const workspace = ['Продажи', 'Главное', 'Закупки', 'Начальная страница'].some(text => txt.includes(text));
     return form || workspace;
 }"""
@@ -652,18 +652,43 @@ def _blocked_origin_error(state, web_url: str) -> RuntimeError:
     return RuntimeError(f'Запрос на сторонний origin отклонён: {state["blocked_origins"][0]} (разрешено: {allowed_text})')
 
 
+PROBE_RETRY_ERRORS = ('ERR_CONNECTION_REFUSED', 'ERR_NAME_NOT_RESOLVED', 'ERR_ADDRESS_UNREACHABLE')
+
+
+def _is_connection_error(error) -> bool:
+    """Переходить к следующему адресу можно только при отказе соединения: не таймаут и не HTTP-статус."""
+    text = str(error)
+    return any(token in text for token in PROBE_RETRY_ERRORS)
+
+
 def probe_login_page(page, web_url: str, timeout_ms: int = 20000) -> dict:
     """Открывает web_url на переданной странице и возвращает факты; ошибки открытия/origin не скрываются."""
-    allowed = {_origin(url) for url in container_access_urls(web_url)}
+    targets = list(container_access_urls(web_url))
+    allowed = {_origin(url) for url in targets}
     state = {'blocked': 0, 'blocked_non_get': 0, 'blocked_origins': [], 'blocked_main': False}
     if hasattr(page, 'route'):
         page.route('**/*', probe_route_guard(allowed, state))
-    try:
-        navigate(page, web_url)
-    except Exception as error:
-        if state['blocked_main']:
-            raise _blocked_origin_error(state, web_url) from error
-        raise _login_probe_open_error(error) from error
+
+    tried: list[str] = []
+    opened = False
+    last_error = None
+    for index, target in enumerate(targets):
+        tried.append(_origin_text(target))
+        state['blocked_main'] = False
+        try:
+            navigate(page, target)
+            opened = True
+            break
+        except Exception as error:
+            if state['blocked_main']:
+                raise _blocked_origin_error(state, web_url) from error
+            last_error = error
+            if index + 1 < len(targets) and _is_connection_error(error):
+                continue
+            break
+    if not opened:
+        suffix = f'; испробованы: {", ".join(tried)}' if len(tried) > 1 else ''
+        raise _login_probe_open_error(f'{last_error}{suffix}') from last_error
 
     actual = page.url or ''
     parts = urlsplit(actual)
@@ -682,6 +707,7 @@ def probe_login_page(page, web_url: str, timeout_ms: int = 20000) -> dict:
 
     page.wait_for_timeout(1000)
     facts = collect_login_facts(page)
+    facts['web_url_used'] = _origin_text(actual)
     facts['blocked_requests'] = state['blocked']
     facts['blocked_non_get'] = state['blocked_non_get']
     return facts

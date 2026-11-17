@@ -433,3 +433,73 @@ def test_successful_probe_reports_zero_non_get(monkeypatch):
 
     assert result['blocked_non_get'] == 0
     assert result['blocked_requests'] == 0
+
+
+def _patch_targets(monkeypatch, *urls):
+    from testpilot.integration import webclient
+
+    monkeypatch.setattr(webclient, 'container_access_urls', lambda web_url: list(urls))
+
+
+def test_probe_falls_back_to_second_address(monkeypatch):
+    from testpilot.integration import webclient
+
+    first, second = 'http://localhost:8088/DemoTrd', 'http://host.docker.internal:8088/DemoTrd'
+    _patch_targets(monkeypatch, first, second)
+    page = RoutingPage(url='about:blank')
+    attempts = []
+
+    def navigate(page_obj, url, **kwargs):
+        attempts.append(url)
+        if url == first:
+            raise RuntimeError('page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:8088/DemoTrd')
+        page_obj._url = url + '/'
+
+    monkeypatch.setattr(webclient, 'navigate', navigate)
+
+    result = webclient.probe_login_page(page, first)
+
+    assert attempts == [first, second]
+    assert result['web_url_used'] == 'http://host.docker.internal:8088'
+
+
+def test_probe_lists_all_addresses_when_everything_refuses(monkeypatch):
+    from testpilot.integration import webclient
+
+    first, second = 'http://localhost:8088/DemoTrd', 'http://host.docker.internal:8088/DemoTrd'
+    _patch_targets(monkeypatch, first, second)
+    page = RoutingPage(url='about:blank')
+
+    def navigate(page_obj, url, **kwargs):
+        raise RuntimeError(f'page.goto: net::ERR_CONNECTION_REFUSED at {url}')
+
+    monkeypatch.setattr(webclient, 'navigate', navigate)
+
+    with pytest.raises(RuntimeError) as error:
+        webclient.probe_login_page(page, first)
+
+    message = str(error.value)
+    assert message.startswith('Не удалось открыть веб-клиент проекта:')
+    assert 'испробованы: http://localhost:8088, http://host.docker.internal:8088' in message
+
+
+def test_probe_does_not_retry_on_timeout(monkeypatch):
+    from testpilot.integration import webclient
+
+    first, second = 'http://localhost:8088/DemoTrd', 'http://host.docker.internal:8088/DemoTrd'
+    _patch_targets(monkeypatch, first, second)
+    page = RoutingPage(url='about:blank')
+    attempts = []
+
+    def navigate(page_obj, url, **kwargs):
+        attempts.append(url)
+        raise RuntimeError('page.goto: Timeout 20000ms exceeded')
+
+    monkeypatch.setattr(webclient, 'navigate', navigate)
+
+    with pytest.raises(RuntimeError) as error:
+        webclient.probe_login_page(page, first)
+
+    assert attempts == [first]
+    assert 'Timeout 20000ms exceeded' in str(error.value)
+    assert 'испробованы' not in str(error.value)
