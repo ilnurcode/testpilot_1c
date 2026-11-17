@@ -159,3 +159,59 @@ def test_platform_error_does_not_trigger_retry(page):
 
     assert 'Превышено количество попыток' in str(error.value)
     assert page.evaluate('window.__clicks') == 1, 'повторных кликов быть не должно'
+
+
+def test_failure_message_contains_form_dump(page):
+    page.set_content(
+        """
+        <div id="authWindow">
+          <input name="userName" type="text" placeholder="Пользователь">
+          <input type="password" placeholder="Пароль">
+          <button>Войти</button>
+        </div>
+        """
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        _runner().handle_login(page)
+
+    message = str(error.value)
+    assert 'форма входа:' in message
+    assert 'input[name=userName,type=text,placeholder=Пользователь]' in message
+    assert 'input[type=password,placeholder=Пароль]' in message
+    assert 'button[text=Войти]' in message
+    assert '#authWindow' in message
+
+
+def test_failure_message_does_not_leak_field_values(page):
+    page.set_content(
+        """
+        <div id="authWindow">
+          <input name="userName" type="text" value="ТайныйЛогин">
+          <input type="password" value="СЕКРЕТ_ЗАГЛУШКА">
+          <button>Войти</button>
+        </div>
+        """
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        _runner().handle_login(page)
+
+    message = str(error.value)
+    assert 'СЕКРЕТ_ЗАГЛУШКА' not in message, 'значение пароля не должно попадать в диагностику'
+    assert 'ТайныйЛогин' not in message, 'значения полей не собираются вовсе'
+
+
+def test_successful_login_has_no_dump(page):
+    page.set_content(
+        """
+        <div id="authWindow">
+          <input name="userName" type="text">
+          <button onclick="document.body.innerHTML = '<div>Продажи</div>';">Войти</button>
+        </div>
+        """
+    )
+
+    _runner().handle_login(page)  # ошибки нет — дампа тоже нет
+
+    assert 'форма входа:' not in page.inner_text('body')

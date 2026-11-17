@@ -232,6 +232,8 @@ class WebClientRunner:
         'input[id*="login" i]',
     )
     LOGIN_FORM_HINT = 'input[type="password"], #authWindow, #authWindowBasic'
+    # Сколько ждём ухода формы логина после одной попытки, прежде чем считать вход неудачным.
+    LOGIN_GRACE_SECONDS = 4.0
     LOGIN_FAILED = ('Вход в 1С не выполнен: форма логина осталась на экране '
                     '(селектор не найден или кнопка «Войти» не сработала)')
 
@@ -265,24 +267,64 @@ class WebClientRunner:
                 return marker
         return None
 
+    LOGIN_DUMP_SCRIPT = """() => {
+        const visible = element => !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+        const clip = (value, limit) => (value || '').replace(/\\s+/g, ' ').trim().slice(0, limit);
+        const inputs = [...document.querySelectorAll('input')].filter(visible).slice(0, 8).map(element => ({
+            id: clip(element.id, 60),
+            name: clip(element.getAttribute('name'), 60),
+            type: clip(element.getAttribute('type'), 60),
+            placeholder: clip(element.getAttribute('placeholder'), 60),
+        }));
+        const buttons = [...document.querySelectorAll('button, [role="button"], input[type="submit"]')]
+            .filter(visible).slice(0, 5).map(element => ({
+                id: clip(element.id, 40),
+                text: clip(element.innerText || element.value, 40),
+            }));
+        const auth = [...document.querySelectorAll('[id^="authWindow"]')].map(element => clip(element.id, 60));
+        return {inputs, buttons, auth};
+    }"""
+
+    def _login_form_dump(self, page) -> str:
+        """Компактное описание видимой формы входа: теги, id/name/type/placeholder, кнопки. Без значений полей."""
+        try:
+            state = page.evaluate(self.LOGIN_DUMP_SCRIPT) or {}
+        except Exception:
+            return ''
+        parts: list[str] = []
+        for item in state.get('inputs') or []:
+            attributes = [f'{key}={item[key]}' for key in ('id', 'name', 'type', 'placeholder') if item.get(key)]
+            parts.append('input[' + ','.join(attributes) + ']')
+        for item in state.get('buttons') or []:
+            attributes = [f'{key}={item[key]}' for key in ('id', 'text') if item.get(key)]
+            parts.append('button[' + ','.join(attributes) + ']')
+        for container in state.get('auth') or []:
+            parts.append(f'#{container}')
+        return ('форма входа: ' + ', '.join(parts))[:400] if parts else ''
+
+    def _login_failure(self, page, reason: str = '', note: str = '') -> RuntimeError:
+        """Ошибка входа с причиной и компактным дампом видимой формы (без значений полей)."""
+        dump = self._login_form_dump(page)
+        message = f'{self.LOGIN_FAILED}{note}'
+        if reason:
+            message += f': {reason}'
+        if dump:
+            message += f'\n{dump}'
+        return RuntimeError(message)
+
     def handle_login(self, page) -> None:
         """Авторизация в веб-клиенте 1С 8.3/8.5; ровно одна попытка, при неудаче — понятная ошибка."""
-        user_input = None
+        user_input = page.locator(', '.join(self.LOGIN_FIELD_SELECTORS)).first
         last_error: Exception | None = None
-        for selector in self.LOGIN_FIELD_SELECTORS:
-            candidate = page.locator(selector).first
-            try:
-                candidate.wait_for(state='visible', timeout=2000)
-            except Exception as error:  # селектор не подошёл — пробуем следующий
-                last_error = error
-                continue
-            user_input = candidate
-            break
+        try:
+            user_input.wait_for(state='visible', timeout=3000)
+        except Exception as error:  # ни один селектор не подошёл
+            last_error = error
+            user_input = None
 
         if user_input is None:
             if self._login_form_visible(page):
-                reason = f': {last_error}' if last_error else ''
-                raise RuntimeError(f'{self.LOGIN_FAILED}{reason}')
+                raise self._login_failure(page, reason=str(last_error) if last_error else '')
             return  # формы входа нет — уже рабочий стол
 
         # Пустой пароль легитимен (так настроен демо-стенд): заполняем только непустой, submit не блокируем.
@@ -302,27 +344,40 @@ class WebClientRunner:
                 raise RuntimeError('кнопка «Войти» не найдена на форме логина')
             ok_btn.click()  # ровно одна попытка: повторных кликов и ретраев нет
         except Exception as error:
-            raise RuntimeError(f'{self.LOGIN_FAILED}{password_note}: {error}') from error
+            raise self._login_failure(page, reason=str(error), note=password_note) from error
+
+        # Ждём исхода одной попытки: ошибка платформы, уход формы логина или рабочая область.
+        started = time.monotonic()
+        while time.monotonic() - started < 45.0:
+            if self._platform_login_error(page):
+                break
+            if not self._login_form_visible(page):
+                break
+            if time.monotonic() - started >= self.LOGIN_GRACE_SECONDS:
+                break  # форма не ушла за отведённое время — считаем вход неудачным
+            page.wait_for_timeout(200)
+
+        platform_error = self._platform_login_error(page)
+        if platform_error:
+            raise self._login_failure(page, reason=platform_error, note=password_note)
+        if self._login_form_visible(page):
+            raise self._login_failure(page, note=password_note)  # форма осталась — без ожидания 45 с
 
         try:
             page.wait_for_function(
-                """markers => {
+                """() => {
                     const txt = document.body.innerText || '';
-                    const workspace = ['Продажи', 'Главное', 'Закупки', 'Начальная страница',
-                        'Не найдена лицензия', 'вход в приложение невозможен', 'Выполнить запуск'];
-                    return workspace.some(text => txt.includes(text)) || markers.some(marker => txt.includes(marker));
+                    return ['Продажи', 'Главное', 'Закупки', 'Начальная страница', 'Не найдена лицензия',
+                        'вход в приложение невозможен', 'Выполнить запуск'].some(text => txt.includes(text));
                 }""",
-                arg=list(self.LOGIN_ERROR_MARKERS),
-                timeout=45000,
+                timeout=20000,
             )
         except Exception:
             pass
 
         platform_error = self._platform_login_error(page)
         if platform_error:
-            raise RuntimeError(f'{self.LOGIN_FAILED}{password_note}: {platform_error}')
-        if self._login_form_visible(page):
-            raise RuntimeError(f'{self.LOGIN_FAILED}{password_note}')
+            raise self._login_failure(page, reason=platform_error, note=password_note)
         page.wait_for_timeout(1500)
 
     def wait_for_1c(self, page) -> None:
