@@ -109,3 +109,48 @@ def test_empty_or_tiny_screenshot_is_not_saved(monkeypatch):
     assert evidence == [], 'пустой или крошечный снимок не должен сохраняться'
     assert results[0]['screenshot_unavailable'] is True
     assert 'снимок пуст' in results[0]['screenshot_unavailable_reason']
+
+
+def test_empty_post_submit_uses_pre_submit_screenshot(monkeypatch):
+    pre = b'\x89PNG\r\n\x1a\n' + b'pre-submit-form' * 10
+    report = ScenarioReport(title='Веб-клиент 1С', status='error',
+                            error='Вход в 1С не выполнен: форма логина осталась на экране',
+                            screenshots=[b''], pre_submit_screenshot=pre)
+    _patch_runner(monkeypatch, report, {'stage': 'after_click', 'user_filled': True,
+                                        'password_filled': False, 'clicked': True,
+                                        'form_visible_after': True})
+
+    results, evidence = executor.execute_1c(_suite(), _Profile())
+
+    assert evidence == [(0, pre)], 'fallback должен взять снимок формы до отправки'
+    assert 'screenshot_unavailable' not in results[0]
+
+
+def test_both_post_and_pre_submit_empty_marks_unavailable(monkeypatch):
+    report = ScenarioReport(title='Веб-клиент 1С', status='error',
+                            error='Вход в 1С не выполнен', screenshots=[b''],
+                            pre_submit_screenshot=b'')
+    _patch_runner(monkeypatch, report, {'stage': 'after_click', 'user_filled': False,
+                                        'password_filled': False, 'clicked': True,
+                                        'form_visible_after': True})
+
+    results, evidence = executor.execute_1c(_suite(), _Profile())
+
+    assert evidence == []
+    assert results[0]['screenshot_unavailable'] is True
+    assert 'снимок пуст' in results[0]['screenshot_unavailable_reason']
+
+
+def test_successful_run_saves_one_evidence_only(monkeypatch):
+    first = b'\x89PNG\r\n\x1a\n' + b'open-url' * 20
+    last = b'\x89PNG\r\n\x1a\n' + b'final-step' * 20
+    report = ScenarioReport(title='Веб-клиент 1С', status='passed', screenshots=[first, last])
+    _patch_runner(monkeypatch, report, {'stage': 'after_click', 'user_filled': True,
+                                        'password_filled': False, 'clicked': True,
+                                        'form_visible_after': False})
+
+    results, evidence = executor.execute_1c(_suite(), _Profile())
+
+    assert results[0]['status'] == 'passed'
+    assert len(evidence) == 1, 'на результат — ровно один evidence, без дубликатов'
+    assert evidence[0] == (0, last), 'берётся последний осмысленный снимок шага'

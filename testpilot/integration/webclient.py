@@ -107,6 +107,8 @@ class ScenarioReport:
     error: str | None = None
     screenshots: list[bytes] = field(default_factory=list)
     url: str | None = None
+    # Снимок формы входа до отправки: fallback, если пост-кликовый снимок пуст.
+    pre_submit_screenshot: bytes = b'' 
 
 
 def _safe_screenshot(context, page) -> bytes:
@@ -213,6 +215,8 @@ class WebClientRunner:
         self.last_web_url = self.web_url
         # Факты последней попытки входа без значений полей (заполняется в handle_login).
         self.last_login_diagnostics: dict | None = None
+        # Снимок формы до отправки: пригодится, если снимок после клика окажется пустым.
+        self.last_login_presubmit_shot: bytes = b'' 
 
     def _checked_navigation_addresses(self, target: str) -> list[str]:
         """Адреса перехода для open_url: mapped и исходный, но только в пределах публикации проекта."""
@@ -448,6 +452,11 @@ class WebClientRunner:
                 raise RuntimeError('кнопка «Войти» не найдена на форме логина')
             if not ok_btn.is_enabled(timeout=1000):
                 raise RuntimeError('форма не готова к отправке: кнопка недоступна')
+            # Снимок готовой формы до submit: fallback-evidence, если пост-кликовый снимок пуст.
+            try:
+                self.last_login_presubmit_shot = _safe_screenshot(page.context, page) or b''
+            except Exception:
+                self.last_login_presubmit_shot = b''
             ok_btn.click()  # ровно одна попытка: повторных кликов и ретраев нет
             self.last_login_diagnostics['clicked'] = True
         except Exception as error:
@@ -528,6 +537,13 @@ class WebClientRunner:
                 self.last_web_url = page_url
                 report.url = page_url
                 self.handle_login(page)
+                report.pre_submit_screenshot = self.last_login_presubmit_shot or b''
+                if report.pre_submit_screenshot:
+                    report.steps.append(StepResult(
+                        step_number=0, action='login', target='вход: скриншот формы до отправки', value=None,
+                        status='passed', message='Форма входа готова к отправке', duration_seconds=0.0,
+                        screenshot=report.pre_submit_screenshot,
+                    ))
                 self.wait_for_1c(page)
                 body_txt = page.locator('body').inner_text() or ''
                 if 'Не найдена лицензия' in body_txt or 'вход в приложение невозможен' in body_txt:
@@ -654,6 +670,7 @@ class WebClientRunner:
 
             except Exception as error:
                 # Ошибка до шагов (навигация, вход): снимок делаем до закрытия страницы, иначе evidence теряется.
+                report.pre_submit_screenshot = getattr(self, 'last_login_presubmit_shot', b'') or b''
                 shot = _safe_screenshot(context, page)
                 if shot:
                     report.steps.append(StepResult(

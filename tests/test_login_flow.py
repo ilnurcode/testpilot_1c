@@ -423,3 +423,4 @@ def test_ready_form_submits_exactly_once(page):
     assert page.evaluate('window.__clicks') == 1, 'ровно один submit'
     assert runner.last_login_diagnostics['clicked'] is True
     assert runner.last_login_diagnostics['form_visible_after'] is False
+    assert runner.last_login_presubmit_shot[:8] == b'\x89PNG\r\n\x1a\n', 'снимок формы до отправки сделан'

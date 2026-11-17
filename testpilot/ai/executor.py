@@ -146,16 +146,18 @@ def execute_1c(suite, profile):
                         result['login'] = dict(web_runner.last_login_diagnostics)
                     attached = False
                     tiny = False
-                    for shot in report.screenshots:
-                        if not shot:
-                            tiny = True
-                            continue
-                        if len(shot) < 100:
+                    # Приоритет: снимок шага (после ошибки) → снимок формы до отправки → недоступно.
+                    candidates = list(report.screenshots) + [getattr(report, 'pre_submit_screenshot', b'')]
+                    valid = []
+                    for shot in candidates:
+                        if not shot or len(shot) < 100:
                             tiny = True
                             continue
                         if len(shot) <= 2 * 1024 * 1024:
-                            evidence.append((len(results), shot))
-                            attached = True
+                            valid.append(shot)
+                    if valid:
+                        evidence.append((len(results), valid[-1]))
+                        attached = True
                     if not attached:
                         result['screenshot_unavailable'] = True
                         result['screenshot_unavailable_reason'] = (

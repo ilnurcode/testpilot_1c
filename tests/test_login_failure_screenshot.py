@@ -69,3 +69,4 @@ def test_run_scenario_keeps_screenshot_when_login_fails(publication):
     assert runner.last_login_diagnostics is not None
     assert runner.last_login_diagnostics['clicked'] is True
     assert runner.last_login_diagnostics['form_visible_after'] is True
+    assert report.pre_submit_screenshot[:8] == b'\x89PNG\r\n\x1a\n', 'есть fallback-снимок до клика'
