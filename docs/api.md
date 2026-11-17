@@ -77,6 +77,23 @@
 История отдаёт сводку без `suggestion`/`payload`: `suite_id`, `package_id`, `model`, `provider`, `status`, `counts`, `created_at`, `finished_at`, `approved_count`, `mutating_count`.
 Отчёты отдаются вложением `run-<suite_id>.md|csv` и строятся только из сохранённых данных; для прогона без результатов вместо строк кейсов стоит пометка «результата нет».
 
+## Веб-сервис: UI, шлюз и стенд (8000)
+
+Всё под Basic Auth, кроме `/health`, `/static/*`, `/` (страница логина) и перечисленного отдельно.
+
+| Метод | Путь | Назначение и коды |
+|---|---|---|
+| GET | / | HTML-оболочка UI; без учётных данных — 401 (форма логина) |
+| GET | /api/whoami | Текущая роль из Basic Auth |
+| GET / POST / PUT / DELETE | /gateway/{service}/{path} | Прокси к impact/intelligence с теми же заголовками; коды и тело — от целевого сервиса |
+| POST | /api/demo | Демонстрационный прогон impact+intelligence (expert); ошибки контура — 502 |
+| POST | /api/presentation | Презентационный набор данных |
+| GET | /api/presentation/sample/{which} | Образец страницы стенда |
+| POST | /api/sandbox/orders | Учебный стенд «Продажи»: создание заказа |
+| GET / DELETE | /api/sandbox/orders/{oid} | Заказ стенда: чтение и удаление |
+| GET | /api/sandbox/orders/{oid} | Заказ стенда |
+| GET | /sandbox/sales | HTML страницы стенда |
+
 ## Checksum и обмен
 
 `ImpactPackage` содержит schema_version, package_id, configuration_id, base_version, target_version, analysis_id, created_at, synthetic, changed_objects, affected_objects, dependency_paths, warnings, checksum. JSON Schema в `contracts`, строгие проверки ссылок и checksum в Pydantic.
@@ -107,7 +124,10 @@
 | DELETE | scans/{scan_id}?confirm={scan_id} | Адресное удаление одной записи журнала: без/неверный `confirm` — 409, неизвестный id — 404, успех — `{scan_id, deleted: true}`; роль expert |
 | GET | scans/{scan_id}/report?format=md/csv | Отчёт по записи; 400 на другой формат, 404 без записи |
 | POST | scan-upload | Аудит файла или архива, загруженного в проект |
+| GET | uploads/{upload_id} | Карточка сохранённого аудита загрузки (при >5000 замечаний без `issues`, с `issues_url`) |
 | GET | uploads/{upload_id}/report?format=md/csv | Отчёт по сохранённому аудиту загрузки |
+| GET | uploads/{upload_id}/issues?offset=0&limit=100 | Постраничная выдача замечаний аудита загрузки |
+| GET | rules | Перечень правил сканера (без данных); единственный маршрут аудита без Basic Auth |
 | GET | uploads/{upload_id}/issues?offset=0&limit=100 | Постраничная выдача замечаний аудита загрузки: те же правила и порядок, что у сканов |
 
 Карточка записи: `scan_id`, `source_name`, `sha256`, `created_at`, `status`, `message`, `total_files`, `sources_checked`, `total_issues`, `issues_by_severity`, `issues_by_category`, `issues_url`, `issues_kept`, `issues_truncated`, `issues`, `passed`, `duration_ms`. `GET /scans/{scan_id}` отдаёт её без изменений относительно ответа `POST /scan`.
