@@ -16,7 +16,7 @@
 | POST | analyses/{id}/deliver | Повторяемая HTTP-доставка по INTELLIGENCE_URL |
 | GET | graph | configuration_id, version_name, limit≤500, focus, depth≤10, node_type, edge_type, direction=incoming/outgoing/both |
 | GET | audit | Последние 200 действий |
-| POST / GET | projects | Создание / список; в списке у каждого проекта `last_run` (`suite_id`, `status`, `counts`, `finished_at`, `created_at`) или `null`, одним SQL-запросом |
+| POST / GET | projects | Создание / список: `q` (подстрока имени, без учёта регистра), `only_with_issues=true` (последний прогон с `failed>0` или `error>0`), `limit` 1..200 (по умолчанию 50), `offset≥0`; ответ `{items, total, limit, offset}`, в каждом элементе `last_run` (`suite_id`, `status`, `counts`, `finished_at`, `created_at`) или `null` |
 | GET / DELETE | projects/{project_id} | Карточка с загрузками и анализами / удаление одной транзакцией (`?confirm=<project_id>`, без него 409) |
 | POST | projects/{project_id}/uploads | Тело файла + `filename`, `kind`, `component`, `label`, `baseline_id` |
 | GET | projects/{project_id}/uploads/{upload_id}/download | Исходные байты загрузки |
@@ -89,6 +89,8 @@
 
 
 ## Проекты и файлы
+
+Список проектов отдаётся страницей: на страницу уходит один запрос за `items` и один `count` за `total` (два SQL, без N+1); сортировка — `created_at DESC, id DESC`, поэтому страницы с `offset` не пересекаются. `limit` вне 1..200 и отрицательный `offset` — 400.
 
 Проект удаляется через `DELETE /api/v1/projects/{id}?confirm=<id>` (роль expert, без `confirm` — 409): одной транзакцией уходят загрузки, анализы, `suite` с их evidence, тесты и прогоны утверждённых планов, неразделяемые пакеты и записи `audit` по этим идентификаторам; совместные пакеты и тесты, планы, задания исполнения, модели ML, справочники конфигурации и журнал `code_audit` остаются. Ответ содержит `deleted` с числом удалённых записей по типам.
 

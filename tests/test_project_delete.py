@@ -306,7 +306,7 @@ def test_projects_list_reports_last_run_null_and_after_execution(clients, monkey
 
     impact, c = clients
     project = _project(impact, 'Проект без прогонов')
-    rows = impact.get('/api/v1/projects').json()
+    rows = impact.get('/api/v1/projects', params={'limit': 200}).json()['items']
     mine = next(row for row in rows if row['id'] == project['id'])
     assert mine['last_run'] is None
     assert mine['upload_count'] == 0 and mine['latest_upload'] is None
@@ -326,7 +326,7 @@ def test_projects_list_reports_last_run_null_and_after_execution(clients, monkey
     run = c.post(f"/api/v1/ai/suites/{suite.json()['suite_id']}/run-1c")
     assert run.status_code == 200, run.text
 
-    mine = next(row for row in impact.get('/api/v1/projects').json() if row['id'] == project['id'])
+    mine = next(row for row in impact.get('/api/v1/projects', params={'limit': 200}).json()['items'] if row['id'] == project['id'])
     assert mine['last_run']['suite_id'] == suite.json()['suite_id']
     assert mine['last_run']['counts'] == {'passed': 1, 'failed': 1, 'error': 0, 'skipped': 0}
     assert mine['last_run']['status'] == 'completed'
@@ -352,7 +352,7 @@ def test_projects_list_shows_newest_run_as_last_run(clients, monkeypatch):
     rerun = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/rerun")
     assert rerun.status_code == 200, rerun.text
 
-    rows = impact.get('/api/v1/projects').json()
+    rows = impact.get('/api/v1/projects', params={'limit': 200}).json()['items']
     mine = next(row for row in rows if row['id'] == project['id'])
     assert mine['last_run']['suite_id'] == rerun.json()['suite_id']
     assert mine['last_run']['suite_id'] != suite['suite_id']
@@ -380,19 +380,111 @@ def test_projects_list_last_run_tiebreak_by_id(clients):
             row.created_at = stamp
         s.commit()
 
-    mine = next(row for row in impact.get('/api/v1/projects').json() if row['id'] == project['id'])
+    mine = next(row for row in impact.get('/api/v1/projects', params={'limit': 200}).json()['items'] if row['id'] == project['id'])
     assert mine['last_run']['suite_id'] == 'bbbbbbbb-0000-0000-0000-000000000002'
 
 
 def test_projects_list_has_no_n_plus_one(clients):
     impact, _ = clients
     single = _project(impact, 'Один проект')
-    one_query, one_rows = _run_count(impact, '/api/v1/projects')
-    assert len(one_rows) >= 1
+    one_query, one_page = _run_count(impact, '/api/v1/projects?limit=200')
+    assert len(one_page['items']) >= 1
 
     for index in range(4):
         _project(impact, f'Проект {index}')
-    five_queries, five_rows = _run_count(impact, '/api/v1/projects')
+    five_queries, five_page = _run_count(impact, '/api/v1/projects?limit=200')
 
-    assert len(five_rows) == len(one_rows) + 4
+    assert len(five_page['items']) == len(one_page['items']) + 4
+    assert five_page['total'] == len(five_page['items'])
     assert five_queries == one_query, f'число запросов выросло: {one_query} -> {five_queries}'
+    assert five_queries <= 2, f'страница должна стоить не больше 2 SQL, got {five_queries}'
+
+
+def _project_with_run(impact, c, monkeypatch, name, statuses):
+    from testpilot.ai import executor as executor_module
+
+    project = _project(impact, name)
+    import uuid
+
+    pkg = _package(f'filters-{uuid.uuid4().hex[:10]}')
+    assert c.post('/api/v1/impact-packages', json=pkg).status_code == 200
+    suite = c.post('/api/v1/ai/suites', json={'package_id': pkg['package_id'], 'project_id': project['id'], 'provider': 'local'})
+    assert suite.status_code == 200, suite.text
+    suite_id = suite.json()['suite_id']
+    assert c.post(f'/api/v1/ai/suites/{suite_id}/approve',
+                  json={'reason': 'Фильтры', 'selected_proposals': [0]}).status_code == 200
+    monkeypatch.setattr(executor_module, 'execute_1c', lambda s, profile: ([
+        {'proposal_index': 0, 'case_index': index, 'engine': 'playwright', 'title': 'Шаг',
+         'status': status, 'message': status, 'duration_seconds': 0.1, 'started_at': 'unit'}
+        for index, status in enumerate(statuses)
+    ], []))
+    assert c.post(f'/api/v1/ai/suites/{suite_id}/run-1c').status_code == 200
+    return project
+
+
+def _items(client, **params):
+    response = client.get('/api/v1/projects', params={'limit': 200, **params})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_projects_filter_q_is_case_insensitive(clients):
+    impact, _ = clients
+    upper = _project(impact, 'Alpha Beta Project')
+    lower = _project(impact, 'гамма проект')
+    _project(impact, 'Совсем другое имя')
+
+    assert [row['id'] for row in _items(impact, q='alpha')['items']] == [upper['id']]
+    assert [row['id'] for row in _items(impact, q='ALPHA')['items']] == [upper['id']]
+    assert [row['id'] for row in _items(impact, q='ГАММА')['items']] == [lower['id']]
+    assert _items(impact, q='alpha')['total'] == 1
+
+
+def test_projects_filter_only_with_issues(clients, monkeypatch):
+    impact, c = clients
+    broken = _project_with_run(impact, c, monkeypatch, 'Проект с расхождениями', ['failed', 'passed'])
+    clean = _project_with_run(impact, c, monkeypatch, 'Проект без расхождений', ['passed'])
+    no_runs = _project(impact, 'Проект без прогонов')
+
+    flagged = {row['id'] for row in _items(impact, only_with_issues='true')['items']}
+    assert broken['id'] in flagged
+    assert clean['id'] not in flagged
+    assert no_runs['id'] not in flagged
+
+    rows = {row['id']: row for row in _items(impact)['items']}
+    assert rows[broken['id']]['last_run']['counts'] == {'passed': 1, 'failed': 1, 'error': 0, 'skipped': 0}
+    assert rows[clean['id']]['last_run']['counts'] == {'passed': 1, 'failed': 0, 'error': 0, 'skipped': 0}
+
+
+def test_projects_pagination_rejects_bad_bounds(clients):
+    impact, _ = clients
+    assert impact.get('/api/v1/projects', params={'limit': 0}).status_code == 400
+    assert impact.get('/api/v1/projects', params={'limit': 201}).status_code == 400
+    assert impact.get('/api/v1/projects', params={'offset': -1}).status_code == 400
+    assert impact.get('/api/v1/projects', params={'limit': 200}).status_code == 200
+
+
+def test_projects_pagination_offset_does_not_overlap(clients):
+    impact, _ = clients
+    for index in range(5):
+        _project(impact, f'Страница {index}')
+
+    first = _items(impact, limit=2, offset=0)
+    second = _items(impact, limit=2, offset=2)
+
+    assert first['limit'] == 2 and first['offset'] == 0
+    assert second['offset'] == 2
+    assert len(first['items']) == 2 and len(second['items']) == 2
+    assert {row['id'] for row in first['items']}.isdisjoint({row['id'] for row in second['items']})
+    assert first['total'] == second['total'] >= 5
+
+
+def test_projects_total_counts_filtered_set_not_page(clients):
+    impact, _ = clients
+    for index in range(3):
+        _project(impact, f'Тотал {index}')
+
+    page = _items(impact, q='Тотал', limit=1)
+
+    assert page['total'] == 3
+    assert len(page['items']) == 1

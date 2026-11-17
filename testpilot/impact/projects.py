@@ -13,7 +13,7 @@ from zipfile import ZipFile, BadZipFile
 from fastapi import APIRouter,Depends,HTTPException,Request,Query
 from fastapi.responses import Response
 from pydantic import Field,ValidationError
-from sqlalchemy import select,func,delete,update,and_
+from sqlalchemy import select,func,delete,update,and_,or_,Integer
 from sqlalchemy.orm import defer
 from testpilot.common import analyst,expert,user,require,upload_body
 from testpilot.contracts import Model,Text,Configuration,ImpactPackage
@@ -191,8 +191,14 @@ def create_project(q:ProjectInput,actor=Depends(analyst),s=Depends(session,scope
 
 
 @router.get('')
-def list_projects(actor=Depends(user),s=Depends(session,scope='function')):
-    """Список проектов с агрегатами загрузок и последнего прогона одним SQL-запросом (без N+1)."""
+def list_projects(q:str|None=None,only_with_issues:bool=False,limit:int=50,offset:int=0,
+                  actor=Depends(user),s=Depends(session,scope='function')):
+    """Страница списка проектов: q — подстрока имени, only_with_issues — последний прогон с расхождениями/ошибками.
+
+    На страницу уходит один запрос за items и один дешёвый count за total (два SQL, без N+1).
+    """
+    if limit<1 or limit>200:raise HTTPException(400,'limit должен быть от 1 до 200')
+    if offset<0:raise HTTPException(400,'offset не может быть отрицательным')
     stats=select(UploadRow.project_id.label('project_id'),func.count(UploadRow.id).label('upload_count'),
                  func.coalesce(func.sum(UploadRow.size_bytes),0).label('size_bytes')).group_by(UploadRow.project_id).subquery()
     latest_upload=select(*[getattr(UploadRow,f) for f in UPLOAD_FIELDS],
@@ -209,10 +215,18 @@ def list_projects(actor=Depends(user),s=Depends(session,scope='function')):
                  *upload_columns,*suite_columns)
           .outerjoin(stats,stats.c.project_id==ProjectRow.id)
           .outerjoin(latest_upload,and_(latest_upload.c.project_id==ProjectRow.id,latest_upload.c.rn==1))
-          .outerjoin(latest_suite,and_(latest_suite.c.project_id==ProjectRow.id,latest_suite.c.rn==1))
-          .order_by(ProjectRow.created_at.desc()))
+          .outerjoin(latest_suite,and_(latest_suite.c.project_id==ProjectRow.id,latest_suite.c.rn==1)))
+    conditions=[]
+    if q and q.strip():conditions.append(ProjectRow.name.ilike(f'%{q.strip()}%'))
+    if only_with_issues:
+        def payload_count(key):
+            return func.coalesce(func.cast(latest_suite.c.payload.op('->')('counts').op('->>')(key),Integer),0)
+        conditions.append(and_(latest_suite.c.rn==1,or_(payload_count('failed')>0,payload_count('error')>0)))
+    if conditions:stmt=stmt.where(*conditions)
+    total=int(s.scalar(select(func.count()).select_from(stmt.with_only_columns(ProjectRow.id).subquery())) or 0)
+    page=stmt.order_by(ProjectRow.created_at.desc(),ProjectRow.id.desc()).limit(limit).offset(offset)
     projects=[]
-    for row in s.execute(stmt).all():
+    for row in s.execute(page).all():
         values=row._mapping
         project=values[ProjectRow]
         upload=None
@@ -222,7 +236,7 @@ def list_projects(actor=Depends(user),s=Depends(session,scope='function')):
                                         latest_upload=upload,
                                         last_run=last_run_payload(values['run_suite_id'],values['run_status'],
                                                                   values['run_payload'],values['run_created_at'])))
-    return projects
+    return {'items':projects,'total':total,'limit':limit,'offset':offset}
 
 
 @router.get('/{pid}')

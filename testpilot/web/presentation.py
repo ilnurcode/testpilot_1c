@@ -40,7 +40,7 @@ async def prepare(request:Request,actor=Depends(expert)):
     base=os.environ.get('IMPACT_URL','http://127.0.0.1:8001')+'/api/v1'
     async with httpx.AsyncClient(timeout=60,headers={'Authorization':request.headers['authorization']}) as c:
         projects=await c.get(base+'/projects');projects.raise_for_status()
-        project=next((p for p in projects.json() if p['configuration_id']=='presentation-sales'),None)
+        project=next((p for p in projects.json()['items'] if p['configuration_id']=='presentation-sales'),None)
         if not project:
             r=await c.post(base+'/projects',json={'name':'Продажи — презентационный стенд','description':'Учебная разработка: версии, зависимости, сценарии и реальные проверки на синтетическом стенде. Не реальная 1С.'});r.raise_for_status();project=r.json()
         uploads=[]

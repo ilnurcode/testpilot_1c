@@ -43,11 +43,42 @@ function lastRunLine(p){
 }
 function openProjectDialog(){const d=$('#projectDialog');if(!d)return;d.showModal();$('#projectName').focus()}
 async function projectsPage(){
- currentProject=null;chosenFile=null;heading('Проекты и файлы');const projects=await api('impact','projects');
- $('#content').innerHTML=`<div class="page-heading"><div><div class="eyebrow">БИБЛИОТЕКА РАЗРАБОТОК</div><h1>Проекты и файлы</h1><p class="page-description">Каждая загрузка остаётся в истории. Возвращайтесь к любой версии и выбирайте её для сравнения.</p></div><button id="newProject">＋ Новый проект</button></div><div class="section-heading"><h2>Все проекты <span class="badge">${projects.length}</span></h2><div class="project-tools"><input id="projectSearch" class="project-search" aria-label="Поиск проектов" placeholder="Поиск по названию или описанию"></div></div>${projects.length?`<div class="project-grid">${projects.map(projectCard).join('')}</div><p id="noProjectMatches" class="caption" hidden>По вашему запросу проекты не найдены.</p>`:`<div class="empty-state"><span class="empty-icon">▧</span><h2>Здесь будут ваши проекты</h2><p>Создайте проект, загрузите расширение или обработку. Файлы сохранятся после выхода и перезапуска сервиса.</p><button id="emptyNewProject">Создать первый проект</button></div>`}<details class="card"><summary>Расширенный импорт нормализованного JSON</summary><p class="caption">Прямой импорт версии через прежний интерфейс. Для сохранения самого файла используйте загрузку внутри проекта.</p><button id="advancedImport" class="secondary">Открыть прямой импорт</button></details>${projectDialog()}`;
- wireProjectCards();$('#newProject').onclick=openProjectDialog;if($('#emptyNewProject'))$('#emptyNewProject').onclick=openProjectDialog;
- $('#cancelProject').onclick=()=>$('#projectDialog').close();$('#projectForm').onsubmit=e=>{e.preventDefault();const data={name:$('#projectName').value.trim(),description:$('#projectDescription').value.trim()};if(!data.name){msg('Укажите название проекта.',true);return}task(async()=>{const p=await api('impact','projects','POST',data);$('#projectDialog').close();await openProject(p.id)})};
- $('#projectSearch').oninput=e=>{let visible=0;document.querySelectorAll('.project-card').forEach(card=>{card.hidden=!card.dataset.search.includes(e.target.value.toLowerCase().trim());if(!card.hidden)visible++});if($('#noProjectMatches'))$('#noProjectMatches').hidden=visible>0};wireTask('#advancedImport',imports);
+ currentProject=null;chosenFile=null;heading('Проекты и файлы');
+ const filter={q:'',onlyIssues:false,limit:50,offset:0};
+ const load=async(reset)=>{
+  if(reset)filter.offset=0;
+  const params=new URLSearchParams({limit:String(filter.limit),offset:String(filter.offset)});
+  if(filter.q)params.set('q',filter.q);
+  if(filter.onlyIssues)params.set('only_with_issues','true');
+  return await api('impact','projects?'+params.toString());
+ };
+ const render=(data,append)=>{
+  const grid=$('#projectGrid');
+  if(!grid)return;
+  if(!append)grid.innerHTML=data.items.map(projectCard).join('');
+  else grid.insertAdjacentHTML('beforeend',data.items.map(projectCard).join(''));
+  wireProjectCards();
+  const shown=grid.querySelectorAll('.project-card').length;
+  $('#projectsCount').textContent=`показано ${shown} из ${data.total}`;
+  const empty=$('#noProjectMatches');
+  if(empty){
+   empty.hidden=data.total!==0&&shown>0;
+   empty.textContent=filter.q||filter.onlyIssues?'По фильтру ничего не найдено.':'Проектов пока нет — создайте первый.';
+  }
+  const more=$('#projectsMore');
+  if(more){more.innerHTML=shown<data.total?`<button id="projectsMoreBtn" class="secondary">Показать ещё ${Math.min(filter.limit,data.total-shown)}</button>`:'';
+   if($('#projectsMoreBtn'))$('#projectsMoreBtn').onclick=()=>task(async()=>{filter.offset=shown;const next=await load(false);render(next,true)})}
+ };
+ const first=await load(true);
+ $('#content').innerHTML=`<div class="page-heading"><div><div class="eyebrow">БИБЛИОТЕКА РАЗРАБОТОК</div><h1>Проекты и файлы</h1><p class="page-description">Каждая загрузка остаётся в истории. Возвращайтесь к любой версии и выбирайте её для сравнения.</p></div><button id="newProject">＋ Новый проект</button></div><div class="section-heading"><h2>Все проекты <span id="projectsCount" class="caption">показано 0 из 0</span></h2><div class="project-tools"><input id="projectSearch" class="project-search" aria-label="Поиск проектов" placeholder="Поиск по названию"><label class="checkbox" style="margin-left:12px"><input type="checkbox" id="onlyIssues"> только с расхождениями</label></div></div><div class="project-grid" id="projectGrid"></div><p id="noProjectMatches" class="caption" hidden></p><div id="projectsMore" style="margin-top:12px"></div><details class="card"><summary>Расширенный импорт нормализованного JSON</summary><p class="caption">Прямой импорт версии через прежний интерфейс. Для сохранения самого файла используйте загрузку внутри проекта.</p><button id="advancedImport" class="secondary">Открыть прямой импорт</button></details>${projectDialog()}`;
+ render(first,false);
+ wireProjectCards();$('#newProject').onclick=openProjectDialog;
+ wireTask('#advancedImport',imports);
+ $('#cancelProject').onclick=()=>$('#projectDialog').close();
+ $('#projectForm').onsubmit=e=>{e.preventDefault();const data={name:$('#projectName').value.trim(),description:$('#projectDescription').value.trim()};if(!data.name){msg('Укажите название проекта.',true);return}task(async()=>{const p=await api('impact','projects','POST',data);$('#projectDialog').close();await openProject(p.id)})};
+ let searchTimer=null;
+ $('#projectSearch').oninput=e=>{filter.q=e.target.value.trim();clearTimeout(searchTimer);searchTimer=setTimeout(()=>task(async()=>render(await load(true),false)),300)};
+ $('#onlyIssues').onchange=e=>task(async()=>{filter.onlyIssues=e.target.checked;render(await load(true),false)});
 }
 function uploadTable(p){return table(['Файл / версия','Компонент','Режим','Состояние','Загружено',''],p.uploads.map(u=>[
  `<div class="filename-cell"><span class="file-pill">${E(u.filename.split('.').pop().toUpperCase())}</span><span><strong>${E(u.label)}</strong><small>${E(u.filename)} · ${sizeText(u.size_bytes)}</small></span></div>`,
