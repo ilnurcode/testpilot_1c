@@ -1005,3 +1005,41 @@ def test_local_provider_generates_plan_without_llm_key(clients, monkeypatch):
 
     assert response.status_code == 200, response.text
     assert response.json()['model'] == 'local-rules'
+
+
+def test_evidence_survives_new_application_session(clients, monkeypatch):
+    """Скриншот лежит в БД: новая сессия и новый TestClient читают те же байты."""
+    from fastapi.testclient import TestClient as FreshClient
+
+    from testpilot import db
+    from testpilot.intelligence.api import app as intelligence_app
+
+    c, project, run = _executed_suite(clients, monkeypatch)
+    evidence_id = next(r['evidence_id'] for r in run['results'] if r.get('evidence_id'))
+
+    with db._factory() as fresh_session:
+        stored = fresh_session.get(db.EvidenceRow, evidence_id)
+        assert stored is not None
+        stored_bytes = bytes(stored.content)
+
+    with FreshClient(intelligence_app) as client:
+        client.auth = ('expert', 'test-password-only')
+        response = client.get(f'/api/v1/ai/evidence/{evidence_id}')
+
+    assert response.status_code == 200, response.text
+    assert response.headers['content-type'] == 'image/png'
+    assert response.headers['x-content-type-options'] == 'nosniff'
+    assert response.content == stored_bytes
+    assert response.content.startswith(b'\x89PNG')
+
+
+def test_evidence_unknown_id_is_404(clients):
+    from fastapi.testclient import TestClient as FreshClient
+
+    from testpilot.intelligence.api import app as intelligence_app
+
+    with FreshClient(intelligence_app) as client:
+        client.auth = ('expert', 'test-password-only')
+        response = client.get('/api/v1/ai/evidence/00000000-0000-0000-0000-000000000000')
+
+    assert response.status_code == 404
