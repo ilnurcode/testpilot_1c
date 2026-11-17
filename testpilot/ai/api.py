@@ -557,7 +557,4 @@ def delete_suite(sid:str,confirm:str|None=None,actor=Depends(expert),s=Depends(s
 
 @router.get('/evidence/{eid}')
 def evidence(eid:str,actor=Depends(user),s=Depends(session,scope='function')):
-    # Читаем только content: эндпоинт не зависит от более новых колонок (например created_at).
-    content=s.scalar(select(EvidenceRow.content).where(EvidenceRow.id==eid))
-    require(content,'Сохранённый снимок не найден')
-    return Response(content,media_type='image/png',headers={'X-Content-Type-Options':'nosniff'})
+    e=require(s.get(EvidenceRow,eid));return Response(e.content,media_type='image/png',headers={'X-Content-Type-Options':'nosniff'})

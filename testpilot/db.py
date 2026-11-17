@@ -1,7 +1,6 @@
 import os
-from datetime import datetime
 from uuid import uuid4
-from sqlalchemy import (create_engine, String, Float, Boolean, Integer, ForeignKey, ForeignKeyConstraint, UniqueConstraint, JSON, Text, LargeBinary, CheckConstraint, DateTime, func)
+from sqlalchemy import (create_engine, String, Float, Boolean, Integer, ForeignKey, ForeignKeyConstraint, UniqueConstraint, JSON, Text, LargeBinary, CheckConstraint)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from testpilot.contracts import now
 
@@ -228,7 +227,6 @@ class EvidenceRow(Base):
     id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
     suite_id: Mapped[str]=mapped_column(ForeignKey('ti_ai_suites.id'),index=True)
     content: Mapped[bytes]=mapped_column(LargeBinary)
-    created_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True),server_default=func.now(),nullable=True)
 
 class DemoOrderRow(Base):
     __tablename__='demo_orders'

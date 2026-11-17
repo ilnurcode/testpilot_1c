@@ -82,7 +82,7 @@ def app(title, *, lifespan=None):
         with engine().connect() as c:
             c.execute(text('SELECT 1'))
             revision=c.execute(text('SELECT version_num FROM alembic_version')).scalar()
-            if revision not in ('0004', '0005', '0006', '0007', '0008', '0009'): raise HTTPException(503,f'Миграции не обновлены: {revision}')
+            if revision not in ('0004', '0005', '0006', '0007', '0008'): raise HTTPException(503,f'Миграции не обновлены: {revision}')
             with_connection=c.execute(text("SELECT count(*) FROM impact_projects WHERE coalesce(web_url,'')<>'' OR coalesce(odata_url,'')<>''")).scalar()
         env_configured=bool((os.environ.get('TP_1C_ODATA_URL') or '').strip() or (os.environ.get('TP_1C_WEB_URL') or '').strip())
         from testpilot import audit_limit
