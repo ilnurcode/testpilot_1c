@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Восстановление БД TestPilot из дампа.
-# Пишет только в БД запущенного compose-стека: тома не удаляются, `down -v` не вызывается.
-# Формат выбирается по расширению: .sql -> psql, .dump/.backup -> pg_restore (без --clean).
-# Использование: bash scripts/restore.sh --dump PATH [--yes] [--force]
-#   --yes   подтверждение: без него скрипт только печатает план и выходит с кодом 1
-#   --force разрешает заливку в непустую БД (иначе отказ при наличии проектов)
-# Переменные: POSTGRES_USER/POSTGRES_DB (иначе из контейнера db), COMPOSE_PROJECT_NAME.
+# ЧЕРНОВИК: не проверялся на реальном дампе. Проверять только на отдельном стеке
+# (`-p testpilot-restore`), не на рабочем.
+#
+# Восстановление БД TestPilot из дампа. Пишет только в БД указанного compose-проекта:
+# тома не удаляются, `down -v` не вызывается.
+# Формат по расширению: .sql -> psql -v ON_ERROR_STOP=1, .dump/.backup -> pg_restore --clean --if-exists --no-owner.
+# Плейн-дамп содержит CREATE TABLE: заливка в мигрированную БД ломается об существующие таблицы,
+# поэтому непустая схема требует осознанного --force или чистого проекта.
+# Использование: bash scripts/restore.sh --dump PATH [--yes] [--force] [--project NAME]
+#   --yes     подтверждение: без него печатается только план (код 1)
+#   --force   разрешает заливку в непустую схему/БД
+#   --project compose-проект (по умолчанию testpilot или $COMPOSE_PROJECT_NAME)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,18 +19,21 @@ cd "$ROOT"
 DUMP=""
 CONFIRMED=0
 FORCE=0
+PROJECT="${COMPOSE_PROJECT_NAME:-testpilot}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --dump) DUMP="${2:-}"; shift 2 ;;
     --dump=*) DUMP="${1#*=}"; shift ;;
     --yes) CONFIRMED=1; shift ;;
     --force) FORCE=1; shift ;;
+    --project) PROJECT="${2:-}"; shift 2 ;;
+    --project=*) PROJECT="${1#*=}"; shift ;;
     *) echo "Неизвестный аргумент: $1" >&2; exit 2 ;;
   esac
 done
 
 if [ -z "$DUMP" ]; then
-  echo "Отказ: укажите дамп — bash scripts/restore.sh --dump путь/к/файлу.sql [--yes] [--force]" >&2
+  echo "Отказ: укажите дамп — bash scripts/restore.sh --dump путь/к/файлу.sql [--yes] [--force] [--project NAME]" >&2
   exit 2
 fi
 if [ ! -f "$DUMP" ]; then echo "Отказ: файл дампа не найден: $DUMP" >&2; exit 2; fi
@@ -38,41 +46,57 @@ case "$DUMP" in
   *) echo "Отказ: неизвестное расширение (ожидается .sql, .dump или .backup): $DUMP" >&2; exit 2 ;;
 esac
 
-DB_USER="${POSTGRES_USER:-$(docker compose exec -T db printenv POSTGRES_USER 2>/dev/null | tr -d '\r')}"
-DB_NAME="${POSTGRES_DB:-$(docker compose exec -T db printenv POSTGRES_DB 2>/dev/null | tr -d '\r')}"
+dc() { docker compose -p "$PROJECT" "$@"; }
+DB_USER="${POSTGRES_USER:-$(dc exec -T db printenv POSTGRES_USER 2>/dev/null | tr -d '\r')}"
+DB_NAME="${POSTGRES_DB:-$(dc exec -T db printenv POSTGRES_DB 2>/dev/null | tr -d '\r')}"
 DB_USER="${DB_USER:-testpilot}"
 DB_NAME="${DB_NAME:-testpilot}"
-PROJECT="${COMPOSE_PROJECT_NAME:-testpilot}"
 
-PROJECTS="$(docker compose exec -T db psql -U "$DB_USER" -d "$DB_NAME" -t -A -c 'SELECT count(*) FROM impact_projects' 2>/dev/null | tr -d '\r' || true)"
-if ! printf '%s' "${PROJECTS:-}" | grep -Eq '^[0-9]+$'; then
-  echo "Отказ: не удалось прочитать БД (стек не запущен или нет миграций). Запустите: docker compose -p $PROJECT up -d --wait" >&2
+STATE="$(dc exec -T db psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -t -A -c "
+SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema='public')
+    || ' ' ||
+       CASE WHEN to_regclass('public.impact_projects') IS NULL THEN 0
+            ELSE (SELECT count(*) FROM impact_projects) END" 2>/dev/null | tr -d '\r' || true)"
+TABLES="${STATE%% *}"
+PROJECTS="${STATE##* }"
+if ! printf '%s' "${TABLES:-}" | grep -Eq '^[0-9]+$' || ! printf '%s' "${PROJECTS:-}" | grep -Eq '^[0-9]+$'; then
+  echo "Отказ: не удалось прочитать БД проекта $PROJECT (стек не запущен или нет миграций)." >&2
+  echo "       Для чистого восстановления: docker compose -p testpilot-restore up -d --wait, затем --project testpilot-restore" >&2
   exit 2
 fi
 
 echo "План восстановления:"
 echo "  дамп: $DUMP ($SIZE байт, способ: $METHOD)"
 echo "  проект compose: $PROJECT; база: $DB_USER@db/$DB_NAME"
-echo "  текущих проектов в БД: $PROJECTS"
+echo "  текущая схема: $TABLES таблиц в public; проектов: $PROJECTS"
 echo "  будут изменены только данные БД; тома, контейнеры и файлы не удаляются"
 
 if [ "$CONFIRMED" -ne 1 ]; then
   echo "Отказ: повторите с --yes, чтобы выполнить восстановление." >&2
   exit 1
 fi
-if [ "$PROJECTS" -gt 0 ] && [ "$FORCE" -ne 1 ]; then
-  echo "Отказ: в БД уже $PROJECTS проектов; заливка поверх живых данных требует --force." >&2
+if [ "$TABLES" -gt 0 ] && [ "$FORCE" -ne 1 ]; then
+  echo "Отказ: схема уже содержит $TABLES таблиц: восстановление плейн-дампа перезапишет/сломает её;" >&2
+  echo "       используйте --force осознанно или чистый стек -p testpilot-restore." >&2
   exit 1
 fi
 
+set +e
 if [ "$METHOD" = "psql" ]; then
-  docker compose exec -T db psql -U "$DB_USER" -d "$DB_NAME" < "$DUMP"
+  dc exec -T db psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" < "$DUMP"
 else
-  docker compose exec -T db pg_restore -U "$DB_USER" -d "$DB_NAME" < "$DUMP"
+  dc exec -T db pg_restore --clean --if-exists --no-owner -U "$DB_USER" -d "$DB_NAME" < "$DUMP"
+fi
+RESTORE_RC=$?
+set -e
+if [ "$RESTORE_RC" -ne 0 ]; then
+  echo "FAIL  восстановление завершилось с кодом $RESTORE_RC" >&2
+  exit 1
 fi
 
+echo "Ревизия после восстановления: $(dc exec -T intelligence alembic current 2>/dev/null | tr -d '\r' | tail -1)"
 echo "Счётчики после восстановления:"
-docker compose exec -T db psql -U "$DB_USER" -d "$DB_NAME" -t -A \
+dc exec -T db psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -t -A \
   -c "SELECT 'impact_projects='||count(*) FROM impact_projects" \
   -c "SELECT 'impact_uploads='||count(*) FROM impact_uploads" \
   -c "SELECT 'ti_ai_suites='||count(*) FROM ti_ai_suites" \
