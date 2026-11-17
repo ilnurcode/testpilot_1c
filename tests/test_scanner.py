@@ -181,3 +181,61 @@ def test_rules_doc_matches_scanner_rules():
     )
     assert 'DEMO_NOT_A_SECRET' not in doc
     assert 'S3cr3t-value' not in doc
+
+def _bulk_module(lines: int, bad_every: int) -> str:
+    """Реалистичный модуль с типовым нарушением SEC011 каждые bad_every процедур."""
+    out: list[str] = []
+    proc = 0
+    while len(out) < lines:
+        proc += 1
+        out += [
+            f"// Процедура {proc}",
+            f"Процедура Тест{proc}(Параметр{proc})",
+            "\tЗапрос = Новый Запрос;",
+            *(
+                [
+                    "\tЗапрос.Текст = \"ВЫБРАТЬ *",
+                    "\t|ИЗ Справочник.Товары",
+                    '\t|ГДЕ Код = " + Параметр%d;' % proc,
+                ]
+                if proc % bad_every == 0
+                else ['\tЗапрос.Текст = "ВЫБРАТЬ * ИЗ Справочник.Товары ГДЕ Код = &Код";']
+            ),
+            "\tРезультат = Запрос.Выполнить();",
+            "\tВыборка = Результат.Выбрать();",
+            "\tСумма = 0;",
+            "\tПока Выборка.Следующий() Цикл",
+            "\t\tСумма = Сумма + Выборка.Количество;",
+            "\tКонецЦикла;",
+            "\tПопытка",
+            "\t\tОбъект = Справочники.Товары.НайтиПоКоду(Параметр%d);" % proc,
+            "\t\tОбъект.Записать();",
+            "\tИсключение",
+            '\t\tЗаписьЖурналаРегистрации("Ошибка", УровеньЖурналаРегистрации.Ошибка, , , ОписаниеОшибки());',
+            "\tКонецПопытки;",
+            "\tВозврат Сумма;",
+            "КонецПроцедуры",
+            "",
+        ]
+    return "\n".join(out[:lines]) + "\n"
+
+
+def test_scan_directory_budget_on_bulk_project(tmp_path):
+    """Объёмный каталог не деградирует: 200 файлов x 100 строк укладываются в бюджет с запасом."""
+    import time
+
+    body = _bulk_module(100, bad_every=2)
+    per_file = body.count("+ Параметр")
+    assert per_file >= 1, "генератор не дал ни одного нарушения SEC011"
+    for i in range(200):
+        (tmp_path / f"module_{i:04d}.bsl").write_text(body, encoding="utf-8")
+
+    started = time.perf_counter()
+    summary = ScannerEngine().scan_directory(tmp_path)
+    elapsed = time.perf_counter() - started
+
+    assert summary.total_files == 200
+    sec011 = [issue for issue in summary.issues if issue.rule_id == "SEC011"]
+    assert len(sec011) == 200 * per_file, f"ожидалось {200 * per_file} SEC011, найдено {len(sec011)}"
+    assert summary.duration_ms < 15_000, f"бюджет сканера превышен: {summary.duration_ms} мс"
+    assert elapsed < 15, f"бюджет сканера превышен: {elapsed:.2f} с"
