@@ -13,7 +13,7 @@ from zipfile import ZipFile, BadZipFile
 from fastapi import APIRouter,Depends,HTTPException,Request,Query
 from fastapi.responses import Response
 from pydantic import Field,ValidationError
-from sqlalchemy import select,func,delete,update
+from sqlalchemy import select,func,delete,update,and_
 from sqlalchemy.orm import defer
 from testpilot.common import analyst,expert,user,require,upload_body
 from testpilot.contracts import Model,Text,Configuration,ImpactPackage
@@ -57,14 +57,39 @@ def upload_or_404(s,pid,upload_id):
     return require(s.scalar(metadata_query().where(UploadRow.id==upload_id,UploadRow.project_id==pid)),'Загрузка в этом проекте не найдена')
 
 
+UPLOAD_FIELDS=('id','project_id','number','filename','kind','component','label','size_bytes','checksum','status','message','version_id','baseline_id','created_by','created_at','summary')
+RUN_COUNT_KEYS=('passed','failed','error','skipped')
+
+def upload_payload(values):
+    payload={k:values[k] for k in UPLOAD_FIELDS}
+    return payload | {'mode':'changes' if payload['baseline_id'] else 'full','has_audit':values.get('audit_result') is not None}
+
+
 def upload_dict(r):
-    return {k:getattr(r,k) for k in ('id','project_id','number','filename','kind','component','label','size_bytes','checksum','status','message','version_id','baseline_id','created_by','created_at','summary')} | {'mode':'changes' if r.baseline_id else 'full','has_audit':r.audit_result is not None}
+    return upload_payload({k:getattr(r,k) for k in UPLOAD_FIELDS} | {'audit_result':r.audit_result})
 
 
-def project_dict(s,p):
+def last_run_payload(suite_id,status,payload,created_at):
+    if not suite_id:return None
+    counts=(payload or {}).get('counts') or {}
+    return {'suite_id':suite_id,'status':status,'counts':{key:int(counts.get(key) or 0) for key in RUN_COUNT_KEYS},
+            'finished_at':(payload or {}).get('finished_at'),'created_at':created_at}
+
+
+def project_payload(p,*,upload_count,size_bytes,latest_upload,last_run=None):
+    return {'id':p.id,'name':p.name,'description':p.description,'configuration_id':p.configuration_id,'created_by':p.created_by,'created_at':p.created_at,'upload_count':upload_count,'size_bytes':int(size_bytes),'latest_upload':latest_upload,'last_run':last_run,'connection_settings':{'odata_url':p.odata_url,'web_url':p.web_url,'auth_username':p.auth_username,'has_password':bool(p.auth_password)}}
+
+
+def project_dict(s,p,last_run=None):
     count,size=s.execute(select(func.count(UploadRow.id),func.coalesce(func.sum(UploadRow.size_bytes),0)).where(UploadRow.project_id==p.id)).one()
     last=s.scalar(metadata_query().where(UploadRow.project_id==p.id).order_by(UploadRow.number.desc()).limit(1))
-    return {'id':p.id,'name':p.name,'description':p.description,'configuration_id':p.configuration_id,'created_by':p.created_by,'created_at':p.created_at,'upload_count':count,'size_bytes':int(size),'latest_upload':upload_dict(last) if last else None,'connection_settings':{'odata_url':p.odata_url,'web_url':p.web_url,'auth_username':p.auth_username,'has_password':bool(p.auth_password)}}
+    return project_payload(p,upload_count=count,size_bytes=int(size),latest_upload=upload_dict(last) if last else None,last_run=last_run)
+
+
+def project_last_run(s,pid):
+    row=s.execute(select(AISuiteRow.id,AISuiteRow.status,AISuiteRow.payload,AISuiteRow.created_at).where(AISuiteRow.project_id==pid)
+                  .order_by(AISuiteRow.created_at.desc(),AISuiteRow.id.desc()).limit(1)).first()
+    return last_run_payload(*row) if row else None
 
 
 def filename_validated(name):
@@ -167,7 +192,37 @@ def create_project(q:ProjectInput,actor=Depends(analyst),s=Depends(session,scope
 
 @router.get('')
 def list_projects(actor=Depends(user),s=Depends(session,scope='function')):
-    return [project_dict(s,p) for p in s.scalars(select(ProjectRow).order_by(ProjectRow.created_at.desc()))]
+    """Список проектов с агрегатами загрузок и последнего прогона одним SQL-запросом (без N+1)."""
+    stats=select(UploadRow.project_id.label('project_id'),func.count(UploadRow.id).label('upload_count'),
+                 func.coalesce(func.sum(UploadRow.size_bytes),0).label('size_bytes')).group_by(UploadRow.project_id).subquery()
+    latest_upload=select(*[getattr(UploadRow,f) for f in UPLOAD_FIELDS],
+                         UploadRow.audit_result.label('audit_result'),
+                         func.row_number().over(partition_by=UploadRow.project_id,order_by=UploadRow.number.desc()).label('rn')).subquery()
+    latest_suite=select(AISuiteRow.project_id.label('project_id'),AISuiteRow.id.label('suite_id'),AISuiteRow.status.label('status'),
+                        AISuiteRow.payload.label('payload'),AISuiteRow.created_at.label('created_at'),
+                        func.row_number().over(partition_by=AISuiteRow.project_id,
+                                               order_by=(AISuiteRow.created_at.desc(),AISuiteRow.id.desc())).label('rn')).subquery()
+    upload_columns=[latest_upload.c[f].label(f'up_{f}') for f in UPLOAD_FIELDS]+[latest_upload.c.audit_result.label('up_audit_result')]
+    suite_columns=[latest_suite.c.suite_id.label('run_suite_id'),latest_suite.c.status.label('run_status'),
+                   latest_suite.c.payload.label('run_payload'),latest_suite.c.created_at.label('run_created_at')]
+    stmt=(select(ProjectRow,stats.c.upload_count.label('upload_count'),stats.c.size_bytes.label('size_bytes'),
+                 *upload_columns,*suite_columns)
+          .outerjoin(stats,stats.c.project_id==ProjectRow.id)
+          .outerjoin(latest_upload,and_(latest_upload.c.project_id==ProjectRow.id,latest_upload.c.rn==1))
+          .outerjoin(latest_suite,and_(latest_suite.c.project_id==ProjectRow.id,latest_suite.c.rn==1))
+          .order_by(ProjectRow.created_at.desc()))
+    projects=[]
+    for row in s.execute(stmt).all():
+        values=row._mapping
+        project=values[ProjectRow]
+        upload=None
+        if values['up_id']:
+            upload=upload_payload({f:values[f'up_{f}'] for f in UPLOAD_FIELDS} | {'audit_result':values['up_audit_result']})
+        projects.append(project_payload(project,upload_count=int(values['upload_count'] or 0),size_bytes=int(values['size_bytes'] or 0),
+                                        latest_upload=upload,
+                                        last_run=last_run_payload(values['run_suite_id'],values['run_status'],
+                                                                  values['run_payload'],values['run_created_at'])))
+    return projects
 
 
 @router.get('/{pid}')
@@ -175,7 +230,7 @@ def get_project(pid:str,actor=Depends(user),s=Depends(session,scope='function'))
     p=project_or_404(s,pid)
     uploads=list(s.scalars(metadata_query().where(UploadRow.project_id==pid).order_by(UploadRow.number.desc())))
     runs=list(s.scalars(select(UploadAnalysisRow).where(UploadAnalysisRow.project_id==pid).order_by(UploadAnalysisRow.created_at.desc())))
-    return {**project_dict(s,p),'uploads':[upload_dict(r) for r in uploads],
+    return {**project_dict(s,p,last_run=project_last_run(s,pid)),'uploads':[upload_dict(r) for r in uploads],
             'analyses':[{'analysis_id':r.analysis_id,'upload_id':r.upload_id,'baseline_id':r.baseline_id,'mode':r.mode,'created_at':r.created_at,'affected_count':len(s.get(AnalysisRow,r.analysis_id).package['affected_objects'])} for r in runs]}
 
 

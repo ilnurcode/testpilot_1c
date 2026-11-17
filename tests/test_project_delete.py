@@ -280,3 +280,119 @@ def test_delete_leaves_no_orphans_in_referencing_tables(clients):
             __import__('sqlalchemy').select(db.AuditRow.action).where(db.AuditRow.entity_id == project['id'])
         ).scalars().all()
     assert audit_rows == ['delete_project']
+
+
+def _run_count(client, url):
+    from sqlalchemy import event
+
+    from testpilot import db
+
+    statements = []
+
+    def counter(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(db._engine, 'before_cursor_execute', counter)
+    try:
+        response = client.get(url)
+        assert response.status_code == 200, response.text
+    finally:
+        event.remove(db._engine, 'before_cursor_execute', counter)
+    return len(statements), response.json()
+
+
+def test_projects_list_reports_last_run_null_and_after_execution(clients, monkeypatch):
+    from testpilot.ai import executor as executor_module
+
+    impact, c = clients
+    project = _project(impact, 'Проект без прогонов')
+    rows = impact.get('/api/v1/projects').json()
+    mine = next(row for row in rows if row['id'] == project['id'])
+    assert mine['last_run'] is None
+    assert mine['upload_count'] == 0 and mine['latest_upload'] is None
+
+    p = _package('last-run')
+    assert c.post('/api/v1/impact-packages', json=p).status_code == 200
+    suite = c.post('/api/v1/ai/suites', json={'package_id': p['package_id'], 'project_id': project['id'], 'provider': 'local'})
+    assert suite.status_code == 200, suite.text
+    monkeypatch.setattr(executor_module, 'execute_1c', lambda suite, profile: ([
+        {'proposal_index': 0, 'case_index': 0, 'engine': 'playwright', 'title': 'Навигация',
+         'status': 'failed', 'message': 'Расхождение на стенде', 'duration_seconds': 0.4, 'started_at': 'unit'},
+        {'proposal_index': 0, 'case_index': 1, 'engine': 'playwright', 'title': 'Навигация',
+         'status': 'passed', 'message': 'Ок', 'duration_seconds': 0.1, 'started_at': 'unit'},
+    ], []))
+    assert c.post(f"/api/v1/ai/suites/{suite.json()['suite_id']}/approve",
+                  json={'reason': 'Приёмка last_run', 'selected_proposals': [0]}).status_code == 200
+    run = c.post(f"/api/v1/ai/suites/{suite.json()['suite_id']}/run-1c")
+    assert run.status_code == 200, run.text
+
+    mine = next(row for row in impact.get('/api/v1/projects').json() if row['id'] == project['id'])
+    assert mine['last_run']['suite_id'] == suite.json()['suite_id']
+    assert mine['last_run']['counts'] == {'passed': 1, 'failed': 1, 'error': 0, 'skipped': 0}
+    assert mine['last_run']['status'] == 'completed'
+    assert mine['last_run']['created_at']
+    assert mine['last_run']['finished_at']
+
+
+def test_projects_list_shows_newest_run_as_last_run(clients, monkeypatch):
+    from testpilot.ai import executor as executor_module
+
+    impact, c = clients
+    project = _project(impact, 'Проект с rerun')
+    p = _package('rerun')
+    assert c.post('/api/v1/impact-packages', json=p).status_code == 200
+    suite = c.post('/api/v1/ai/suites', json={'package_id': p['package_id'], 'project_id': project['id'], 'provider': 'local'}).json()
+    assert c.post(f"/api/v1/ai/suites/{suite['suite_id']}/approve",
+                  json={'reason': 'Повтор', 'selected_proposals': [0]}).status_code == 200
+    monkeypatch.setattr(executor_module, 'execute_1c', lambda s, profile: ([
+        {'proposal_index': 0, 'case_index': 0, 'engine': 'playwright', 'title': 'Навигация',
+         'status': 'passed', 'message': 'Ок', 'duration_seconds': 0.1, 'started_at': 'unit'},
+    ], []))
+    assert c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c").status_code == 200
+    rerun = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/rerun")
+    assert rerun.status_code == 200, rerun.text
+
+    rows = impact.get('/api/v1/projects').json()
+    mine = next(row for row in rows if row['id'] == project['id'])
+    assert mine['last_run']['suite_id'] == rerun.json()['suite_id']
+    assert mine['last_run']['suite_id'] != suite['suite_id']
+
+
+def test_projects_list_last_run_tiebreak_by_id(clients):
+    import time
+
+    from testpilot import db
+
+    impact, c = clients
+    project = _project(impact, 'Проект с равным временем')
+    pkg = _package('tie')
+    assert c.post('/api/v1/impact-packages', json=pkg).status_code == 200
+    stamp = '2026-01-01T00:00:00.000000Z'
+    from sqlalchemy import select as sql_select
+
+    with db._factory() as s:
+        for suite_id in ('aaaaaaaa-0000-0000-0000-000000000001', 'bbbbbbbb-0000-0000-0000-000000000002'):
+            s.add(db.AISuiteRow(id=suite_id, package_id=pkg['package_id'], project_id=project['id'], status='completed',
+                                payload={'suite_id': suite_id, 'counts': {'passed': 1, 'failed': 0, 'error': 0, 'skipped': 0},
+                                         'finished_at': stamp, 'created_at': stamp, 'approval': {'selected_proposals': [0]}}))
+        s.commit()
+        for row in s.scalars(sql_select(db.AISuiteRow).where(db.AISuiteRow.project_id == project['id'])):
+            row.created_at = stamp
+        s.commit()
+
+    mine = next(row for row in impact.get('/api/v1/projects').json() if row['id'] == project['id'])
+    assert mine['last_run']['suite_id'] == 'bbbbbbbb-0000-0000-0000-000000000002'
+
+
+def test_projects_list_has_no_n_plus_one(clients):
+    impact, _ = clients
+    single = _project(impact, 'Один проект')
+    one_query, one_rows = _run_count(impact, '/api/v1/projects')
+    assert len(one_rows) >= 1
+
+    for index in range(4):
+        _project(impact, f'Проект {index}')
+    five_queries, five_rows = _run_count(impact, '/api/v1/projects')
+
+    assert len(five_rows) == len(one_rows) + 4
+    assert five_queries == one_query, f'число запросов выросло: {one_query} -> {five_queries}'

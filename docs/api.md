@@ -16,7 +16,7 @@
 | POST | analyses/{id}/deliver | Повторяемая HTTP-доставка по INTELLIGENCE_URL |
 | GET | graph | configuration_id, version_name, limit≤500, focus, depth≤10, node_type, edge_type, direction=incoming/outgoing/both |
 | GET | audit | Последние 200 действий |
-| POST / GET | projects | Создание / список проектов |
+| POST / GET | projects | Создание / список; в списке у каждого проекта `last_run` (`suite_id`, `status`, `counts`, `finished_at`, `created_at`) или `null`, одним SQL-запросом |
 | GET / DELETE | projects/{project_id} | Карточка с загрузками и анализами / удаление одной транзакцией (`?confirm=<project_id>`, без него 409) |
 | POST | projects/{project_id}/uploads | Тело файла + `filename`, `kind`, `component`, `label`, `baseline_id` |
 | GET | projects/{project_id}/uploads/{upload_id}/download | Исходные байты загрузки |

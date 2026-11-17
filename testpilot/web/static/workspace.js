@@ -19,7 +19,7 @@ const dateText=value=>value?new Date(value).toLocaleString('ru-RU',{day:'2-digit
 const sizeText=n=>n>=1024*1024?(n/1024/1024).toFixed(1)+' МиБ':n>=1024?(n/1024).toFixed(1)+' КиБ':n+' Б';
 const statusBadge=u=>`<span class="badge ${u.status==='ready'?'ready':'pending'}">${u.status==='ready'?'Готов к анализу':(u.status==='metadata_only'?'Контейнер прочитан, BSL не извлечён':'Ожидает разбора')}</span>`;
 let currentProject=null,chosenFile=null;
-function projectCard(p){return `<article class="project-card" data-search="${E((p.name+' '+p.description).toLowerCase())}"><div class="project-card-header"><span class="project-icon">${lineIcon(1)}</span><span class="badge ${p.upload_count?'blue':''}">${p.upload_count} ${pluralRU(p.upload_count,'загрузка','загрузки','загрузок')}</span></div><h3>${E(p.name)}</h3><p>${E(p.description||'История разработки, версии файлов и результаты анализа.')}</p><div class="project-meta"><span>${E(sizeText(p.size_bytes))}</span><span>·</span><span>${E(dateText(p.latest_upload?.created_at||p.created_at))}</span></div><button class="text-button project-open" data-project="${E(p.id)}">Открыть проект <span>→</span></button></article>`}
+function projectCard(p){return `<article class="project-card" data-search="${E((p.name+' '+p.description).toLowerCase())}"><div class="project-card-header"><span class="project-icon">${lineIcon(1)}</span><span class="badge ${p.upload_count?'blue':''}">${p.upload_count} ${pluralRU(p.upload_count,'загрузка','загрузки','загрузок')}</span></div><h3>${E(p.name)}</h3><p>${E(p.description||'История разработки, версии файлов и результаты анализа.')}</p><div class="project-meta"><span>${E(sizeText(p.size_bytes))}</span><span>·</span><span>${E(dateText(p.latest_upload?.created_at||p.created_at))}</span></div>${lastRunLine(p)}<button class="text-button project-open" data-project="${E(p.id)}">Открыть проект <span>→</span></button></article>`}
 function wireProjectCards(){document.querySelectorAll('[data-project]').forEach(b=>b.onclick=()=>task(()=>openProject(b.dataset.project)))}
 function wireTask(selector,fn){const el=$(selector);if(el)el.onclick=()=>task(fn)}
 function processStrip(active=1){return `<div class="process-strip">${[['Загрузите разработку','Исходный файл и его версия'],['Выберите область','Всё или только изменения'],['Изучите влияние','Объекты и зависимости'],['Подготовьте проверки','Каталог и тест-план']].map(([a,b],i)=>`<div class="process-step ${i+1===active?'active':''}"><span class="step-number">${i+1}</span><div><strong>${a}</strong>${b}</div></div>`).join('')}</div>`}
@@ -32,6 +32,15 @@ async function workspaceOverview(){
 }
 function projectDialog(){return `<dialog id="projectDialog" aria-labelledby="projectDialogTitle"><form id="projectForm"><h2 id="projectDialogTitle">Новый проект</h2><p>Объедините файлы одной разработки, её версии и результаты анализа.</p><label>Название проекта<input id="projectName" name="name" maxlength="120" required placeholder="Например, Продажи — расширение УТ" autocomplete="off"></label><label>Описание <span class="caption">Необязательно</span><textarea id="projectDescription" class="prose" maxlength="3000" placeholder="Что разрабатываете и какую конфигурацию используете"></textarea></label><div class="actions"><button type="button" class="secondary" id="cancelProject">Отмена</button><button type="submit">Создать проект</button></div></form></dialog>`}
 function deleteProjectDialog(p){return `<dialog id="deleteProjectDialog" aria-labelledby="deleteProjectTitle"><form id="deleteProjectForm"><h2 id="deleteProjectTitle">Удалить проект</h2><p>Будут удалены загрузки, анализы, пакеты проверок, прогоны и скриншоты проекта. Действие необратимо.</p><label>Введите идентификатор проекта<input id="deleteProjectConfirm" autocomplete="off" placeholder="${E(p.id)}"></label><div id="deleteProjectFeedback"></div><div class="row"><button type="button" id="cancelDeleteProject" class="secondary">Отмена</button><button type="submit" class="primary">Удалить проект</button></div></form></dialog>`}
+function lastRunLine(p){
+ const run=p&&p.last_run;
+ if(!run||!run.suite_id)return '<p class="caption">прогонов не было</p>';
+ const counts=run.counts||{};
+ const passed=counts.passed||0,failed=counts.failed||0,errors=counts.error||0;
+ const accent=(errors>0||run.status==='error')?'error':failed>0?'warning':'';
+ const link=`<a href="#ai/${encodeURIComponent(run.suite_id)}">открыть прогон</a>`;
+ return `<p class="caption ${accent}">Последний прогон: ${E(dateText(run.created_at))} · ${passed} пройдено / ${failed} расхождений / ${errors} ошибок · ${link}</p>`;
+}
 function openProjectDialog(){const d=$('#projectDialog');if(!d)return;d.showModal();$('#projectName').focus()}
 async function projectsPage(){
  currentProject=null;chosenFile=null;heading('Проекты и файлы');const projects=await api('impact','projects');
