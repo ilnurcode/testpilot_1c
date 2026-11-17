@@ -4,7 +4,7 @@
 
 ## Состояние
 
-- Коммит: `b4f55cb` (`docs: документ передачи состояния`), ветка `main`.
+- Коммит кода: `133b27c` (последний перед этим документом), ветка `main`; сам документ идёт следующим коммитом — точный HEAD смотрите `git log -1 --oneline`.
 - Тесты: **291 passed, 1 skipped** (`docker compose exec -T intelligence python -m pytest tests/ -q`, 73 с).
 - Миграции: `0007 (head)` (`docker compose exec -T intelligence alembic current`).
 - Compose: `db`, `impact`, `intelligence`, `web` — Up (healthy); `migrate` — Exited (0).
@@ -37,7 +37,7 @@
 - Нет TLS, rate-limit и ролей на чтение: любой аутентифицированный видит все проекты, отчёты и evidence.
 - Пароль подключения к 1С лежит в `impact_projects.auth_password` открытым текстом.
 - Коммит `a244b67` в истории нерабочий — не точка отката.
-- Push не выполнялся: `main` впереди `origin/main` на **46 коммитов**.
+- Push не выполнялся: на момент подготовки документа `main` впереди `origin/main` на **47 коммитов** (после коммита с самим документом — на один больше; считать: `git rev-list --count origin/main..HEAD`).
 
 ## Как продолжить
 
