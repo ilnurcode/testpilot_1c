@@ -145,13 +145,22 @@ def execute_1c(suite, profile):
                     if getattr(web_runner, 'last_login_diagnostics', None):
                         result['login'] = dict(web_runner.last_login_diagnostics)
                     attached = False
+                    tiny = False
                     for shot in report.screenshots:
-                        if shot and len(shot) <= 2 * 1024 * 1024:
+                        if not shot:
+                            tiny = True
+                            continue
+                        if len(shot) < 100:
+                            tiny = True
+                            continue
+                        if len(shot) <= 2 * 1024 * 1024:
                             evidence.append((len(results), shot))
                             attached = True
                     if not attached:
                         result['screenshot_unavailable'] = True
                         result['screenshot_unavailable_reason'] = (
+                            'снимок пуст: страница не отрисована или браузер закрылся'
+                            if tiny else
                             'скриншот не получен: браузер закрылся до снимка или страница не отрисовалась'
                         )
             except Exception as exc:

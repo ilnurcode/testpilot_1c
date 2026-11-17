@@ -382,6 +382,24 @@ class WebClientRunner:
                 return 'timeout', None
             page.wait_for_timeout(500)
 
+    def _await_login_form_ready(self, frame, user_input) -> None:
+        """До 3 с (шаг 100 мс) ждём, что поле логина удержало значение: иначе submit не делаем.
+
+        Счётчик кликов не сбрасывается и не повторяется: одна попытка на прогон.
+        """
+        expected = (self.profile.username or '').strip()
+        deadline = time.monotonic() + 3.0
+        while True:
+            try:
+                value = (user_input.input_value(timeout=500) or '').strip()
+            except Exception:
+                value = ''
+            if value == expected:
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError('форма не готова к отправке: поле логина не удержало значение')
+            frame.wait_for_timeout(100)
+
     def handle_login(self, page) -> None:
         """Авторизация в веб-клиенте 1С 8.3/8.5; ровно одна попытка, при неудаче — понятная ошибка."""
         # Диагностика для результата прогона: без значений полей, только факты действий.
@@ -418,8 +436,7 @@ class WebClientRunner:
             if self.profile.username:
                 user_input.fill(self.profile.username)
                 self.last_login_diagnostics['user_filled'] = True
-                if not (user_input.input_value(timeout=2000) or '').strip():
-                    raise RuntimeError('поле логина осталось пустым после заполнения')
+                self._await_login_form_ready(frame, user_input)
             pwd_input = frame.locator(', '.join(self.LOGIN_PASSWORD_SELECTORS)).first
             if pwd_input.is_visible(timeout=1000) and self.profile.password:
                 pwd_input.fill(self.profile.password)
@@ -429,6 +446,8 @@ class WebClientRunner:
                 ok_btn = frame.locator(', '.join(self.LOGIN_BUTTON_SELECTORS)).first
             if not ok_btn.is_visible(timeout=1000):
                 raise RuntimeError('кнопка «Войти» не найдена на форме логина')
+            if not ok_btn.is_enabled(timeout=1000):
+                raise RuntimeError('форма не готова к отправке: кнопка недоступна')
             ok_btn.click()  # ровно одна попытка: повторных кликов и ретраев нет
             self.last_login_diagnostics['clicked'] = True
         except Exception as error:

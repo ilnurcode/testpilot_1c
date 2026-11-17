@@ -357,3 +357,69 @@ def test_workspace_appearing_before_form_skips_login(page):
     assert elapsed < 1.4, 'рабочий стол должен завершать ожидание сразу'
     assert page.evaluate('window.__clicks') == 0
     assert page.evaluate('window.__fills') == 0
+
+
+def test_login_field_value_not_retained_blocks_submit(page):
+    page.set_content(
+        """
+        <div id="authWindow">
+          <input id="authWindow_basic_login" name="login" type="text"
+                 oninput="this.value = ''; window.__cleared = (window.__cleared || 0) + 1;">
+          <input id="authWindow_basic_password" name="password" type="password">
+          <button id="authWindow_basic_okButton" onclick="window.__clicks = (window.__clicks || 0) + 1">Войти</button>
+        </div>
+        <script>window.__clicks = 0;</script>
+        """
+    )
+    runner = _runner()
+
+    with pytest.raises(RuntimeError) as error:
+        runner.handle_login(page)
+
+    assert 'поле логина не удержало значение' in str(error.value)
+    assert page.evaluate('window.__clicks') == 0, 'submit не должен выполняться'
+    assert runner.last_login_diagnostics['clicked'] is False
+
+
+def test_disabled_login_button_blocks_submit(page):
+    page.set_content(
+        """
+        <div id="authWindow">
+          <input id="authWindow_basic_login" name="login" type="text">
+          <input id="authWindow_basic_password" name="password" type="password">
+          <button id="authWindow_basic_okButton" disabled
+                  onclick="window.__clicks = (window.__clicks || 0) + 1">Войти</button>
+        </div>
+        <script>window.__clicks = 0;</script>
+        """
+    )
+    runner = _runner()
+
+    with pytest.raises(RuntimeError) as error:
+        runner.handle_login(page)
+
+    assert 'кнопка недоступна' in str(error.value)
+    assert page.evaluate('window.__clicks') == 0, 'submit не должен выполняться'
+    assert runner.last_login_diagnostics['clicked'] is False
+
+
+def test_ready_form_submits_exactly_once(page):
+    page.set_content(
+        """
+        <div id="authWindow">
+          <input id="authWindow_basic_login" name="login" type="text">
+          <input id="authWindow_basic_password" name="password" type="password">
+          <button id="authWindow_basic_okButton" onclick="window.__clicks = (window.__clicks || 0) + 1;
+                  document.getElementById('authWindow').style.display='none';
+                  document.body.insertAdjacentHTML('beforeend', '<div>Продажи</div>');">Войти</button>
+        </div>
+        <script>window.__clicks = 0;</script>
+        """
+    )
+    runner = _runner()
+
+    runner.handle_login(page)
+
+    assert page.evaluate('window.__clicks') == 1, 'ровно один submit'
+    assert runner.last_login_diagnostics['clicked'] is True
+    assert runner.last_login_diagnostics['form_visible_after'] is False

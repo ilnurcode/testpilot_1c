@@ -7,7 +7,7 @@ from __future__ import annotations
 from testpilot.ai import executor
 from testpilot.integration.webclient import ScenarioReport, StepResult
 
-PNG = b'\x89PNG\r\n\x1a\nunit'
+PNG = b'\x89PNG\r\n\x1a\n' + b'screenshot-payload' * 10  # >100 байт, как настоящий снимок
 
 
 def _suite() -> dict:
@@ -94,3 +94,18 @@ def test_missing_screenshot_is_reported_honestly(monkeypatch):
     assert evidence == []
     assert results[0]['screenshot_unavailable'] is True
     assert results[0]['screenshot_unavailable_reason']
+
+
+def test_empty_or_tiny_screenshot_is_not_saved(monkeypatch):
+    report = ScenarioReport(title='Веб-клиент 1С', status='error',
+                            error='Вход в 1С не выполнен: форма логина осталась на экране',
+                            screenshots=[b'', b'\x89PNG'])
+    _patch_runner(monkeypatch, report, {'stage': 'after_click', 'user_filled': True,
+                                        'password_filled': False, 'clicked': True,
+                                        'form_visible_after': True})
+
+    results, evidence = executor.execute_1c(_suite(), _Profile())
+
+    assert evidence == [], 'пустой или крошечный снимок не должен сохраняться'
+    assert results[0]['screenshot_unavailable'] is True
+    assert 'снимок пуст' in results[0]['screenshot_unavailable_reason']
