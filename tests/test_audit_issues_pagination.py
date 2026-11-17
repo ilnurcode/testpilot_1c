@@ -100,3 +100,21 @@ def test_small_scan_detail_response_keeps_issues_and_url(clients):
     page = _page(scan['scan_id'], offset=0, limit=100)
     assert len(page['items']) == 10
     assert page['total'] == 10 and page['issues_truncated'] is False
+
+
+def test_issues_offset_at_kept_boundary_returns_empty_page(clients):
+    scan = _scan(clients, 6000)
+    page = _page(scan['scan_id'], offset=5000, limit=100)
+
+    assert page['items'] == []
+    assert page['total'] == 6000
+    assert page['issues_kept'] == 5000
+
+
+def test_issues_last_saved_item_is_reachable(clients):
+    scan = _scan(clients, 6000)
+    page = _page(scan['scan_id'], offset=4999, limit=100)
+
+    assert len(page['items']) == 1
+    assert page['items'][0]['line'] == 5000
+    assert page['total'] == 6000

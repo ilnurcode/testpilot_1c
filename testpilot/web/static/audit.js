@@ -95,6 +95,8 @@ function renderAuditResult(summary) {
 }
 
 const AUDIT_PAGE_SIZE = 100;
+// Поколение рендера контейнера: ответы прошлого рендера не дописывают карточки в новый список.
+const auditRenderTokens = new Map();
 
 function auditIssueCard(iss) {
   const isCrit = iss.severity === 'CRITICAL';
@@ -117,6 +119,8 @@ function auditIssueCard(iss) {
 async function renderAuditResultInto(summary, selector, options = {}) {
   const target = $(selector);
   if (!target) return;
+  const token = (auditRenderTokens.get(selector) || 0) + 1;
+  auditRenderTokens.set(selector, token);
 
   const passed = summary.passed;
   const nothingChecked = (summary.status || 'scanned') !== 'scanned';
@@ -171,10 +175,10 @@ async function renderAuditResultInto(summary, selector, options = {}) {
   html += '</div>';
   target.innerHTML = html;
   if (options.scroll !== false) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  if (pager) await fillAuditIssues(target, pager.summary, pager.total);
+  if (pager) await fillAuditIssues(target, pager.summary, pager.total, selector, token);
 }
 
-async function fillAuditIssues(target, summary, total) {
+async function fillAuditIssues(target, summary, total, selector, token) {
   const list = target.querySelector('[data-audit-list]');
   const counter = target.querySelector('[data-audit-counter]');
   const limitNote = target.querySelector('[data-audit-limit]');
@@ -182,36 +186,42 @@ async function fillAuditIssues(target, summary, total) {
   const url = summary.issues_url || '';
   const kept = Number(summary.issues_kept ?? (summary.issues || []).length ?? total);
   const truncated = Boolean(summary.issues_truncated);
-  const available = url ? kept : Math.min(total, (summary.issues || []).length || total);
-  const state = { url, items: url ? [] : (summary.issues || []).slice(0, AUDIT_PAGE_SIZE), offset: 0 };
+  // Детали есть только в пределах среза: за его границей запросы не отправляются и кнопка не показывается.
+  const available = truncated ? Math.min(kept, total) : total;
+  const state = { url, items: url ? [] : (summary.issues || []).slice(0, AUDIT_PAGE_SIZE) };
+  const stale = () => auditRenderTokens.get(selector) !== token;
 
   if (truncated) {
-    limitNote.textContent = `Детализация в хранилище ограничена ${kept} замечаниями; полное число (${total}) — в сводке.`;
+    limitNote.textContent = `Детализация в хранилище ограничена ${available} замечаниями; полное число (${total}) — в сводке.`;
     limitNote.style.display = '';
   }
 
   const paint = () => {
     list.innerHTML = state.items.map(auditIssueCard).join('');
-    counter.textContent = `показано ${state.items.length} из ${total}`;
-    const next = Math.min(AUDIT_PAGE_SIZE, available - state.items.length);
+    const shown = state.items.length;
+    counter.textContent = truncated
+      ? `показано ${shown} из ${available} сохранённых (всего замечаний ${total})`
+      : `показано ${shown} из ${total}`;
+    const next = Math.min(AUDIT_PAGE_SIZE, available - shown);
     more.style.display = next > 0 ? '' : 'none';
     if (next > 0) more.textContent = `Показать ещё ${next}`;
   };
 
   const loadNext = async () => {
+    if (state.items.length >= available) return;
     if (state.url) {
-      const page = await request(`${state.url}?offset=${state.offset}&limit=${AUDIT_PAGE_SIZE}`);
-      state.items = state.items.concat(page.items || []);
-      state.offset += (page.items || []).length;
+      const page = await request(`${state.url}?offset=${state.items.length}&limit=${AUDIT_PAGE_SIZE}`);
+      if (stale()) return;
+      state.items = state.items.concat((page.items || []).slice(0, available - state.items.length));
     } else {
       const slice = (summary.issues || []).slice(state.items.length, state.items.length + AUDIT_PAGE_SIZE);
-      state.items = state.items.concat(slice);
-      state.offset = state.items.length;
+      state.items = state.items.concat(slice.slice(0, available - state.items.length));
     }
     paint();
   };
 
   if (state.url) await loadNext(); else paint();
+  if (stale()) return;
   more.onclick = () => task(async () => {
     more.disabled = true;
     try { await loadNext(); } finally { more.disabled = false; }
