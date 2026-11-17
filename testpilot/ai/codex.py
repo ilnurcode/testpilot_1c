@@ -18,6 +18,8 @@ from urllib.parse import urlsplit
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from testpilot.config import int_env
+
 from testpilot.ai import provider
 from testpilot.ai.models import Case, CodexStatus, Suggestion
 from testpilot.contracts import canonical
@@ -33,6 +35,10 @@ _CODE = re.compile(r'(?m)^\s*([A-Z0-9]{4}-[A-Z0-9]{4})\s*$')
 
 class _CommandError(Exception):
     """Из исполнителя выходит только ограниченная причина ошибки без секретов."""
+
+
+# Проверяется один раз при импорте модуля: невалидное значение роняет старт сервиса.
+CODEX_TIMEOUT_SECONDS = int_env('TP_CODEX_TIMEOUT_SECONDS', 180, 1, 900)
 
 
 @dataclass(frozen=True)
@@ -71,12 +77,7 @@ def _configuration():
     model = os.environ.get('TP_CODEX_MODEL', '').strip() or None
     if model is not None and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,127}', model):
         raise HTTPException(503, 'Некорректный TP_CODEX_MODEL. Укажите идентификатор модели Codex без пробелов и параметров CLI.')
-    try:
-        timeout = int(os.environ.get('TP_CODEX_TIMEOUT_SECONDS', '180'))
-        if not 1 <= timeout <= 900:
-            raise ValueError
-    except ValueError:
-        raise HTTPException(503, 'TP_CODEX_TIMEOUT_SECONDS должен быть целым числом от 1 до 900.') from None
+    timeout = CODEX_TIMEOUT_SECONDS
     default_root = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local')) if os.name == 'nt' else Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local' / 'share'))
     home = Path(os.environ.get('CODEX_HOME', str(default_root / 'testpilot' / 'codex'))).expanduser().resolve()
     if home == (Path.home() / '.codex').resolve():
