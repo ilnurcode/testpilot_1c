@@ -190,7 +190,8 @@ def test_upload_and_analyze_binary_cfe(clients):
     assert len(res['package']['affected_objects']) >= 2
 
 
-def test_project_connection_settings_and_script(clients):
+def test_project_connection_settings_and_script(clients, monkeypatch):
+    monkeypatch.setenv('TP_ALLOW_LOCAL_TARGETS', '1')
     c, _ = clients
     p = project(c, 'Проект с 1С')
     
@@ -206,12 +207,22 @@ def test_project_connection_settings_and_script(clients):
         'auth_username': 'Администратор',
         'auth_password': '123'
     }
+    import os
     r = c.put(f'/api/v1/projects/{p}/connection', json=payload)
-    assert r.status_code == 200, r.text
-    res = r.json()
-    assert res['ok'] is True
-    assert res['connection_settings']['odata_url'] == payload['odata_url']
-    assert res['connection_settings']['has_password'] is True
+    # Пароль не сохраняется открытым текстом: на Windows — DPAPI, иначе явный отказ.
+    if os.name == 'nt':
+        assert r.status_code == 200, r.text
+        saved = r.json()['connection_settings']
+        assert saved['has_password'] is True and saved['password_encrypted'] is True
+    else:
+        assert r.status_code == 503, r.text
+    public = c.put(f'/api/v1/projects/{p}/connection',
+                   json={'odata_url': payload['odata_url'], 'web_url': payload['web_url'],
+                         'auth_username': payload['auth_username']})
+    assert public.status_code == 200, public.text
+    assert public.json()['connection_settings']['odata_url'] == payload['odata_url']
+    # URL-обновление не теряет уже сохранённый секрет.
+    assert public.json()['connection_settings']['has_password'] is (os.name == 'nt')
 
     # 3. Скачивание BSL скрипта включения OData
     sr = c.get(f'/api/v1/projects/{p}/connection/enable-odata-script')

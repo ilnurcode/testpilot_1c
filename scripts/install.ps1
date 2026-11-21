@@ -9,15 +9,22 @@ try {
     }
     Invoke-Checked py @('-3.12', '-c', "import struct; assert struct.calcsize('P')==8, 'Python x64 required'")
     if (-not (Test-Path -LiteralPath $script:PythonExe)) {
-        if (Test-Path -LiteralPath '.venv') {
-            throw 'An incompatible .venv exists (possibly from Linux). Rename it before installing on Windows.'
+        if (Test-Path -LiteralPath $script:VenvDir) {
+            throw "An incompatible environment exists at $script:VenvDir (possibly from Linux). Rename it before installing on Windows."
         }
-        Invoke-Checked py @('-3.12', '-m', 'venv', '.venv')
+        New-Item -ItemType Directory -Path (Split-Path -Parent $script:VenvDir) -Force | Out-Null
+        Invoke-Checked py @('-3.12', '-m', 'venv', $script:VenvDir)
     }
     $env:PYTHONUTF8 = '1'
     Invoke-Checked $script:PythonExe @('-c', "import sys; assert sys.version_info[:2]==(3,12), 'Python 3.12 required'")
     Invoke-Checked $script:PythonExe @('-m', 'pip', 'install', '-r', 'requirements.lock')
-    Invoke-Checked $script:PythonExe @('-m', 'pip', 'install', '--no-deps', '-e', '.')
+    if (Test-WritableDirectory $script:ProjectRoot) {
+        Invoke-Checked $script:PythonExe @('-m', 'pip', 'install', '--no-deps', '-e', '.')
+    } else {
+        # Пакет неизменяем (например Program Files): приложение импортируется по PYTHONPATH,
+        # который выставляет windows-common.ps1. Зависимости уже стоят в окружении данных.
+        Write-Host "Каталог программы только для чтения: editable-установка не выполняется, импорт идёт из $script:ProjectRoot."
+    }
     Invoke-Checked $script:PythonExe @('scripts/local_env.py')
     Import-LocalEnv
     Invoke-Checked $script:PythonExe @('-m', 'playwright', 'install', 'chromium')

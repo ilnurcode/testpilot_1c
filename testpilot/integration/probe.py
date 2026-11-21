@@ -8,6 +8,8 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from xml.etree import ElementTree as ET
 
+from testpilot.target_policy import check_target, redact_url
+
 import httpx
 
 MAX_BYTES=4*1024*1024
@@ -64,7 +66,9 @@ class Profile:
     ca_file: str | None = None
 
     def __post_init__(self):
-        validated_url(self.odata_url)
+        if not self.odata_url and not self.web_url:
+            raise ValueError('Задайте odata_url или web_url подключения')
+        if self.odata_url: validated_url(self.odata_url)
         if self.web_url: validated_url(self.web_url)
         if (self.username is not None and self.password is None) or (self.password is not None and not self.username):
             raise ValueError('Для Basic Auth нужны оба значения TP_1C_USERNAME и TP_1C_PASSWORD')
@@ -77,6 +81,10 @@ class Profile:
     def from_environment(cls):
         url=os.environ.get('TP_1C_ODATA_URL','')
         if not url:raise ValueError('Задайте TP_1C_ODATA_URL; значения секретов в чат не передавайте')
+        # Адрес из окружения проходит ту же политику целей, что и адрес проекта.
+        check_target(validated_url(url),purpose='TP_1C_ODATA_URL')
+        if os.environ.get('TP_1C_WEB_URL'):
+            check_target(validated_url(os.environ['TP_1C_WEB_URL']),purpose='TP_1C_WEB_URL')
         return cls(url,os.environ.get('TP_1C_WEB_URL') or None,
                    os.environ.get('TP_1C_USERNAME') or None,os.environ.get('TP_1C_PASSWORD') or None,
                    os.environ.get('TP_1C_AUTHORIZATION') or None,os.environ.get('TP_1C_CA_FILE') or None)
@@ -130,22 +138,23 @@ def probe(profile,transport=None):
     if profile.authorization:headers['Authorization']=profile.authorization
     elif profile.username:auth=httpx.BasicAuth(profile.username,profile.password)
     verify=ssl.create_default_context(cafile=profile.ca_file) if profile.ca_file else True
-    result={'odata':{'status':'not_checked'},'web':{'status':'not_checked'},
+    result={'odata':{'status':'not_configured'},'web':{'status':'not_checked'},
             'code_changes_detected':False,'tests_executed':0,
             'warnings':['OData $metadata не содержит исходный BSL-код и не выявляет изменения расширений.',
                         'Доступность веб-страницы не подтверждает успешный вход или совместимость Playwright-сценариев.']}
     with httpx.Client(timeout=30,verify=verify,follow_redirects=False,transport=transport) as client:
-        try:
-            status,body,used_url=read_bounded(client,validated_url(profile.odata_url)+'/$metadata',headers,auth)
-            if status==200:
-                entities=parse_metadata(body)
-                result['odata']={'status':'metadata_available','entity_sets':entities,'entity_set_count':len(entities),'url':used_url}
-            else:
-                result['odata']={'status':'authentication_required' if status==401 else 'access_denied' if status==403 else 'http_error','http_status':status,'url':used_url}
-        except httpx.HTTPError:
-            result['odata']={'status':'connection_error','message':'Не удалось получить $metadata: проверьте адрес, сеть и цепочку доверия TLS'}
-        except ValueError as e:
-            result['odata']={'status':'invalid_metadata','message':str(e)}
+        if profile.odata_url:
+            try:
+                status,body,used_url=read_bounded(client,validated_url(profile.odata_url)+'/$metadata',headers,auth)
+                if status==200:
+                    entities=parse_metadata(body)
+                    result['odata']={'status':'metadata_available','entity_sets':entities,'entity_set_count':len(entities),'url':used_url}
+                else:
+                    result['odata']={'status':'authentication_required' if status==401 else 'access_denied' if status==403 else 'http_error','http_status':status,'url':used_url}
+            except httpx.HTTPError:
+                result['odata']={'status':'connection_error','message':'Не удалось получить $metadata: проверьте адрес, сеть и цепочку доверия TLS'}
+            except ValueError as e:
+                result['odata']={'status':'invalid_metadata','message':str(e)}
         if profile.web_url:
             try:
                 # Не переносим OData-пароль на публикацию веб-клиента. Вход проверит отдельный сценарий.

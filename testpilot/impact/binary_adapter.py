@@ -2,7 +2,7 @@
 import re
 from dataclasses import dataclass
 from testpilot.contracts import Configuration, Object, Edge
-from testpilot.impact.v8_container import V8Container
+from testpilot.impact.v8_container import V8Container, V8LimitsExceeded
 
 # Признак исходного модуля: проверяется по декодированному тексту потока.
 BSL_SIGNATURE = re.compile(r'(?:Процедура|Функция|КонецПроцедуры|КонецФункции|Procedure|Function|EndProcedure|EndFunction)\b')
@@ -62,7 +62,14 @@ class Binary1CAdapter:
         container = V8Container(raw)
         if not container.is_valid():
             raise ValueError("Не является валидным составным контейнером 1С v8")
-        files = container.extract_files()
+        try:
+            files = container.extract_files()
+        except V8LimitsExceeded as error:
+            # Предел разбора — это не «разобрано»: нужен внешний адаптер/агент 1С.
+            raise ValueError(
+                f"Контейнер 1С превышает безопасные пределы разбора ({error.code}); "
+                "автоматический разбор остановлен, нужен внешний адаптер или агент 1С."
+            ) from error
         if not files:
             raise ValueError("Контейнер 1С v8 не содержит распознаваемых внутренних файлов")
 

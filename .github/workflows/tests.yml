@@ -27,6 +27,9 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgresql+psycopg://testpilot:testpilot@localhost:5432/testpilot
+      TP_TEST_DATABASE_URL: postgresql+psycopg://testpilot:testpilot@localhost:5432/testpilot_test
+      TP_TEST_EXPECT_DB: testpilot_test
+      TP_TEST_INSTANCE_TOKEN: ci-testpilot-disposable
     steps:
       - uses: actions/checkout@v4
 
@@ -47,7 +50,14 @@ jobs:
       - name: Браузер для сценариев веб-клиента
         run: python -m playwright install --with-deps chromium
 
-      - name: Миграции
+      - name: Отдельная тестовая БД
+        run: |
+          PGPASSWORD=testpilot psql -h localhost -U testpilot -d testpilot -v ON_ERROR_STOP=1 \
+            -c 'CREATE DATABASE testpilot_test'
+          PGPASSWORD=testpilot psql -h localhost -U testpilot -d testpilot -v ON_ERROR_STOP=1 \
+            -c "COMMENT ON DATABASE testpilot_test IS 'ci-testpilot-disposable'"
+
+      - name: Миграции (рабочая схема CI)
         run: alembic upgrade head
 
       - name: Страж undefined names (pyflakes)
@@ -81,15 +91,65 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: "Стек: сборка и ожидание healthy"
-        run: docker compose -p testpilot-ci up -d --build --wait
+      - name: Одноразовый env стенда (изолированные порты и фиктивные credentials)
+        run: |
+          mkdir -p .runtime
+          cat > .runtime/ci.env <<'EOF'
+          POSTGRES_USER=testpilot
+          POSTGRES_PASSWORD=TestPilot_Db_Local_Only_2026
+          POSTGRES_DB=testpilot_ci
+          TP_ANALYST_PASSWORD=TestPilotAnalystLocal123!
+          TP_EXPERT_PASSWORD=TestPilotLocal123!
+          TP_RUNNER_PASSWORD=TestPilotRunnerLocal123!
+          TP_DB_HOST_PORT=15432
+          TP_IMPACT_HOST_PORT=18001
+          TP_INTEL_HOST_PORT=18002
+          TP_WEB_HOST_PORT=18000
+          TP_1C_ODATA_URL=
+          TP_1C_WEB_URL=
+          TP_1C_USERNAME=
+          TP_1C_PASSWORD=
+          TP_1C_AUTHORIZATION=
+          TP_LLM_API_KEY=
+          TP_INSTANCE_TOKEN=ci-instance-token
+          EOF
+
+      - name: "CI: только БД, затем marker"
+        env:
+          TP_DISPOSABLE_IDENTITY: testpilot-ci
+        run: |
+          bash scripts/compose.sh -p testpilot-ci --env-file .runtime/ci.env up -d --wait db
+          bash scripts/compose.sh -p testpilot-ci --env-file .runtime/ci.env exec -T db \
+            psql -U testpilot -d testpilot_ci -c "COMMENT ON DATABASE testpilot_ci IS 'ci-instance-token'"
+
+      - name: "CI: явная инициализация схемы (profile init, disposable DB)"
+        env:
+          TP_DISPOSABLE_IDENTITY: testpilot-ci
+        run: |
+          bash scripts/compose.sh -p testpilot-ci --env-file .runtime/ci.env --profile init run --rm --build migrate \
+            python scripts/schema_actions.py --init
+          bash scripts/compose.sh -p testpilot-ci --env-file .runtime/ci.env --profile init run --rm migrate \
+            python scripts/schema_state.py --require-head
+
+      - name: "Стек: приложения после явного init"
+        env:
+          TP_DISPOSABLE_IDENTITY: testpilot-ci
+        run: bash scripts/compose.sh -p testpilot-ci --env-file .runtime/ci.env up -d --build --wait
 
       - name: "Полная приёмка (без ИИ и живой 1С)"
+        env:
+          TP_ACCEPTANCE_PROJECT: testpilot-ci
+          TP_ACCEPTANCE_EXPECT_DB: testpilot_ci
+          TP_ACCEPTANCE_DISPOSABLE: '1'
+          TP_ACCEPTANCE_COMPOSE_FILE: compose.yaml
+          TP_ACCEPTANCE_ENV_FILE: .runtime/ci.env
+          TP_ACCEPTANCE_INSTANCE_TOKEN: ci-instance-token
+          TP_EXPERT_PASSWORD: TestPilotLocal123!
         run: bash scripts/acceptance.sh --no-build
 
       - name: Логи контейнеров при падении
         if: failure()
-        run: docker compose -p testpilot-ci logs --no-color > logs.txt
+        run: bash scripts/compose.sh -p testpilot-ci --env-file .runtime/ci.env logs --no-color > logs.txt
 
       - name: Выгрузить логи
         if: failure()
@@ -104,4 +164,6 @@ jobs:
 
       - name: Остановить стек
         if: always()
-        run: docker compose -p testpilot-ci down -v
+        env:
+          TP_DISPOSABLE_IDENTITY: testpilot-ci
+        run: bash scripts/compose.sh -p testpilot-ci --env-file .runtime/ci.env down -v

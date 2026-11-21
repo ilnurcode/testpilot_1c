@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
+# Обычный запуск на хосте: миграции не выполняются, схема только проверяется.
+# Создание/обновление схемы — отдельные явные действия: scripts/schema_actions.py --init|--update.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+if [[ ! -x .venv/bin/python ]]; then
+  echo 'Нет .venv: выполните установку по README (Linux-разработка) и повторите.' >&2
+  exit 1
+fi
 set -a
 source .env
 set +a
+.venv/bin/python scripts/schema_state.py --require-head
 mkdir -p .runtime
 # Только процессы, созданные этим скриптом. Второй запуск не порождает дубликаты.
 for spec in 'impact:8001' 'intelligence:8002' 'web:8000'; do
@@ -21,3 +28,4 @@ PYVERIFY
   echo "$!" > "$pidfile"
 done
 .venv/bin/python scripts/smoke.py --health-only
+.venv/bin/python scripts/instance_status.py --require-ready --write-receipt .runtime/start-receipt.json

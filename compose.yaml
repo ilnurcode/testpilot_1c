@@ -10,9 +10,9 @@ x-app: &app
     TP_EXPERT_PASSWORD: ${TP_EXPERT_PASSWORD:-TestPilotLocal123!}
     TP_RUNNER_PASSWORD: ${TP_RUNNER_PASSWORD:-TestPilotRunnerLocal123!}
     TP_AUDIT_MAX_ISSUES: ${TP_AUDIT_MAX_ISSUES:-5000}
-  depends_on:
-    migrate:
-      condition: service_completed_successfully
+    TP_INSTANCE_TOKEN: ${TP_INSTANCE_TOKEN:-}
+  # Обычный запуск не выполняет миграции: сервис migrate доступен только явно
+  # (--profile init) и не является зависимостью приложений.
   restart: unless-stopped
 services:
   db:
@@ -22,15 +22,18 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-testpilot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-TestPilot_Db_Local_Only_2026}
     volumes: [pgdata:/var/lib/postgresql/data]
-    ports: ["127.0.0.1:5432:5432"]
+    ports: ["127.0.0.1:${TP_DB_HOST_PORT:-5432}:5432"]
     healthcheck:
       test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
       interval: 3s
       timeout: 3s
       retries: 30
+  # Явная инициализация/обновление схемы; обычный `up` этот сервис не запускает.
+  #   docker compose --profile init run --rm migrate
   migrate:
     <<: *app
     command: [alembic, upgrade, head]
+    profiles: ["init"]
     restart: "no"
     depends_on:
       db:
@@ -38,7 +41,7 @@ services:
   impact:
     <<: *app
     command: [uvicorn, testpilot.impact.api:app, --host, 0.0.0.0, --port, "8001"]
-    ports: ["127.0.0.1:8001:8001"]
+    ports: ["127.0.0.1:${TP_IMPACT_HOST_PORT:-8001}:8001"]
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 5s
@@ -65,7 +68,7 @@ services:
     volumes:
       - codex_auth:/var/lib/testpilot/codex
     command: [uvicorn, testpilot.intelligence.api:app, --host, 0.0.0.0, --port, "8002"]
-    ports: ["127.0.0.1:8002:8002"]
+    ports: ["127.0.0.1:${TP_INTEL_HOST_PORT:-8002}:8002"]
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
       interval: 5s
@@ -73,7 +76,7 @@ services:
       retries: 20
   web:
     <<: *app
-    ports: ["127.0.0.1:8000:8000"]
+    ports: ["127.0.0.1:${TP_WEB_HOST_PORT:-8000}:8000"]
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 5s

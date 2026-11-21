@@ -1,6 +1,6 @@
 import os
 from uuid import uuid4
-from sqlalchemy import (create_engine, String, Float, Boolean, Integer, ForeignKey, ForeignKeyConstraint, UniqueConstraint, JSON, Text, LargeBinary, CheckConstraint)
+from sqlalchemy import (create_engine, String, Float, Boolean, Integer, ForeignKey, ForeignKeyConstraint, UniqueConstraint, JSON, Text, LargeBinary, CheckConstraint, Index)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from testpilot.contracts import now
 
@@ -178,6 +178,11 @@ class ProjectRow(Base):
     web_url: Mapped[str|None] = mapped_column(String(500), nullable=True)
     auth_username: Mapped[str|None] = mapped_column(String(120), nullable=True)
     auth_password: Mapped[str|None] = mapped_column(String(120), nullable=True)
+    # A4: зашифрованный секрет подключения; схема и время записи. Legacy auth_password
+    # остаётся до явной проверенной миграции и не используется для отправки.
+    auth_secret: Mapped[str|None] = mapped_column(Text, nullable=True)
+    auth_secret_scheme: Mapped[str|None] = mapped_column(String(30), nullable=True)
+    auth_secret_updated_at: Mapped[str|None] = mapped_column(String(50), nullable=True)
 
 class UploadRow(Base):
     __tablename__='impact_uploads'
@@ -215,11 +220,24 @@ class UploadAnalysisRow(Base):
 
 class AISuiteRow(Base):
     __tablename__='ti_ai_suites'
+    __table_args__=(
+        Index('ix_ti_ai_suites_idempotency_key','idempotency_key',unique=True),
+        Index('ix_ti_ai_suites_status','status'),
+    )
     id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
     package_id: Mapped[str]=mapped_column(ForeignKey('ti_packages.id'),index=True)
     project_id: Mapped[str]=mapped_column(String(36),index=True)
     status: Mapped[str]=mapped_column(String(30))
     payload: Mapped[dict]=mapped_column(JSON)
+    attempt_id: Mapped[str | None]=mapped_column(String(36),nullable=True)
+    attempt_version: Mapped[int]=mapped_column(Integer,default=0)
+    idempotency_key: Mapped[str | None]=mapped_column(String(64),nullable=True)
+    lease_expires_at: Mapped[str | None]=mapped_column(String(50),nullable=True)
+    cancel_requested: Mapped[bool]=mapped_column(Boolean,default=False)
+    plan_revision: Mapped[str | None]=mapped_column(String(64),nullable=True)
+    started_at: Mapped[str | None]=mapped_column(String(50),nullable=True)
+    finished_at: Mapped[str | None]=mapped_column(String(50),nullable=True)
+    last_heartbeat_at: Mapped[str | None]=mapped_column(String(50),nullable=True)
     created_at: Mapped[str]=mapped_column(String(50),default=now)
 
 class EvidenceRow(Base):

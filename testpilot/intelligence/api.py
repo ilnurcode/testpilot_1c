@@ -14,9 +14,15 @@ from testpilot.intelligence import ml
 
 @asynccontextmanager
 async def lifespan(application):
+    from testpilot import db
+    from testpilot.ai import worker
+    db.engine()
+    factory = db._factory
+    worker.start(factory)
     try:
         yield
     finally:
+        worker.stop()
         shutdown_codex()
 
 

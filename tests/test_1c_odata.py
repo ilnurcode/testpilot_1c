@@ -13,6 +13,12 @@ from testpilot.integration.odata import (
 
 PROFILE = Profile(odata_url='https://1c.example.test/trade/odata/standard.odata', username='test_user', password='pwd')
 
+
+@pytest.fixture(autouse=True)
+def explicit_test_targets(monkeypatch):
+    monkeypatch.setenv('TP_TARGET_ALLOWLIST', '1c.example.test')
+    monkeypatch.setenv('TP_ALLOW_LOCAL_TARGETS', '1')
+
 def test_validate_entity_set_enforces_whitelist():
     client = ODataClient(PROFILE)
     assert client.validate_entity_set('Catalog_Товары') == 'Catalog_Товары'
@@ -96,28 +102,33 @@ def test_executor_fails_for_missing_entity_even_when_metadata_is_available(monke
         requests.append(request.url.path)
         if request.url.path.endswith('/$metadata'):
             return httpx.Response(200, content=metadata)
-        assert request.url.path.endswith('/Catalog_Отсутствует')
+        assert request.url.path.endswith("/Catalog_Отсутствует('1')")
         return httpx.Response(404)
 
     client = ODataClient(PROFILE, transport=httpx.MockTransport(handler))
-    monkeypatch.setattr(odata, 'ODataClient', lambda profile: client)
+    monkeypatch.setattr(odata, 'ODataClient', lambda profile, **kwargs: client)
     suite = {
         'approval': {'selected_proposals': [0]},
         'suggestion': {'proposals': [{
             'title': 'Проверка сущности', 'engine': 'odata',
-            'cases': [{'entity': 'Catalog_Отсутствует', 'expected': 'доступна'}],
+            'cases': [{'assertions': [{
+                'id': 'missing', 'scope': 'business', 'check': 'odata_field_equals',
+                'engine': 'odata', 'operator': 'equals',
+                'selector': {'entity': 'Catalog_Отсутствует', 'key': '1', 'field': 'Description'},
+                'expected': {'type': 'string', 'value': 'доступна'}, 'source_ref': 'ТЗ',
+            }]}],
         }]},
     }
 
     results, evidence = execute_1c(suite, PROFILE)
 
     assert len(results) == 1
-    assert results[0]['status'] == 'failed'
-    assert 'Catalog_Отсутствует' in results[0]['message']
+    assert results[0]['status'] == 'error'
+    assert results[0]['business_success'] is None
     assert '404' in results[0]['message']
-    assert 'actual' not in results[0]
+    assert results[0]['assertions'][0]['actual'] is None
     assert evidence == []
-    assert requests == ['/trade/odata/standard.odata/Catalog_Отсутствует']
+    assert requests == ["/trade/odata/standard.odata/Catalog_Отсутствует('1')"]
 
 
 def test_executor_checks_metadata_without_entity(monkeypatch):
@@ -142,12 +153,15 @@ def test_executor_checks_metadata_without_entity(monkeypatch):
         return httpx.Response(200, content=metadata)
 
     client = ODataClient(PROFILE, transport=httpx.MockTransport(handler))
-    monkeypatch.setattr(odata, 'ODataClient', lambda profile: client)
+    monkeypatch.setattr(odata, 'ODataClient', lambda profile, **kwargs: client)
     suite = {
         'approval': {'selected_proposals': [0]},
         'suggestion': {'proposals': [{
             'title': 'Доступность OData $metadata', 'engine': 'odata',
-            'cases': [{'check': 'metadata', 'expected': 'HTTP 200 OK'}],
+            'cases': [{'assertions': [{
+                'id': 'metadata', 'scope': 'metadata', 'check': 'metadata_entity',
+                'engine': 'odata', 'operator': 'exists', 'selector': {'entity': 'Catalogs'},
+            }]}],
         }]},
     }
 
@@ -155,8 +169,8 @@ def test_executor_checks_metadata_without_entity(monkeypatch):
 
     assert len(results) == 1
     assert results[0]['status'] == 'passed'
-    assert results[0]['actual'] == 1
-    assert 'EntitySet — 1' in results[0]['message']
+    assert results[0]['business_success'] is None
+    assert results[0]['assertions'][0]['actual'] == {'type': 'boolean', 'value': True}
     assert evidence == []
     assert requests == ['/trade/odata/standard.odata/$metadata']
 
@@ -176,21 +190,24 @@ def test_executor_reports_empty_metadata_without_claiming_data_check(monkeypatch
         return httpx.Response(200, content=metadata)
 
     client = ODataClient(PROFILE, transport=httpx.MockTransport(handler))
-    monkeypatch.setattr(odata, 'ODataClient', lambda profile: client)
+    monkeypatch.setattr(odata, 'ODataClient', lambda profile, **kwargs: client)
     suite = {
         'approval': {'selected_proposals': [0]},
         'suggestion': {'proposals': [{
             'title': 'Доступность OData $metadata', 'engine': 'odata',
-            'cases': [{'check': 'metadata', 'expected': 'HTTP 200 OK'}],
+            'cases': [{'assertions': [{
+                'id': 'metadata', 'scope': 'metadata', 'check': 'metadata_entity',
+                'engine': 'odata', 'operator': 'exists', 'selector': {'entity': 'Catalogs'},
+            }]}],
         }]},
     }
 
     results, evidence = execute_1c(suite, PROFILE)
 
     assert len(results) == 1
-    assert results[0]['status'] == 'passed'
-    assert results[0]['actual'] == 0
-    assert results[0]['message'] == 'Сервис OData доступен, но не публикует ни одной сущности — чтение данных не проверено'
+    assert results[0]['status'] == 'failed'
+    assert results[0]['business_success'] is None
+    assert results[0]['assertions'][0]['actual'] == {'type': 'boolean', 'value': False}
     assert evidence == []
     assert requests == ['/trade/odata/standard.odata/$metadata']
 
@@ -234,3 +251,33 @@ def test_client_does_not_retry_http_error_from_mapped_host(monkeypatch):
     with pytest.raises(NotFoundError):
         client.get_entities('Catalog_Номенклатура', top=5)
     assert hosts == ['host.docker.internal']
+
+
+def test_actual_send_policy_is_not_bypassed_by_injected_transport(monkeypatch):
+    requests = []
+    client = ODataClient(PROFILE, transport=httpx.MockTransport(
+        lambda request: requests.append(request) or httpx.Response(200, json={'value': []}),
+    ))
+    monkeypatch.delenv('TP_TARGET_ALLOWLIST')
+    with pytest.raises(ODataError, match='не входит'):
+        client.get_entities('Catalog_Товары')
+    assert requests == []
+
+
+def test_cancel_before_fallback_prevents_next_actual_send(monkeypatch):
+    import testpilot.integration.probe as probe_module
+    monkeypatch.setattr(probe_module, 'is_containerized', lambda: True)
+    requests = []
+    cancelled = [False]
+
+    def handler(request):
+        requests.append(request.url.host)
+        cancelled[0] = True
+        raise httpx.ConnectError('fixture connection refused', request=request)
+
+    client = ODataClient(Profile(odata_url='http://127.0.0.1:9099/odata'),
+                         transport=httpx.MockTransport(handler),
+                         should_cancel=lambda: cancelled[0])
+    with pytest.raises(ODataError, match='Отменено'):
+        client.get_entities('Catalog_Товары')
+    assert requests == ['host.docker.internal']

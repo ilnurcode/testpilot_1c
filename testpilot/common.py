@@ -5,8 +5,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from testpilot.db import engine
+from testpilot.schema_state import describe as describe_schema, schema_error_message
 
 basic=HTTPBasic()
 roles={'analyst': 'TP_ANALYST_PASSWORD','expert':'TP_EXPERT_PASSWORD','runner':'TP_RUNNER_PASSWORD'}
@@ -79,16 +80,30 @@ def app(title, *, lifespan=None):
         return JSONResponse({'error':{'code':409,'message':'Конфликт уникальности или ссылочной целостности'}},status_code=409)
     @a.get('/health')
     def health():
-        with engine().connect() as c:
-            c.execute(text('SELECT 1'))
-            revision=c.execute(text('SELECT version_num FROM alembic_version')).scalar()
-            if revision not in ('0004', '0005', '0006', '0007', '0008'): raise HTTPException(503,f'Миграции не обновлены: {revision}')
-            with_connection=c.execute(text("SELECT count(*) FROM impact_projects WHERE coalesce(web_url,'')<>'' OR coalesce(odata_url,'')<>''")).scalar()
+        try:
+            with engine().connect() as c:
+                c.execute(text('SELECT 1'))
+                # Обычный запуск схему не меняет: pending/чужая ревизия — отказ, не «ок».
+                schema=describe_schema(c)
+                if schema['state']!='ok': raise HTTPException(503,schema_error_message(schema))
+                with_connection=c.execute(text("SELECT count(*) FROM impact_projects WHERE coalesce(web_url,'')<>'' OR coalesce(odata_url,'')<>''")).scalar()
+                instance_db, instance_marker=c.execute(text(
+                    "SELECT current_database(), shobj_description(oid, 'pg_database') "
+                    "FROM pg_database WHERE datname = current_database()"
+                )).one()
+        except HTTPException:
+            raise
+        except SQLAlchemyError:
+            # Недоступная БД — честный отказ без stacktrace, DSN и секретов.
+            raise HTTPException(503,'База данных недоступна: проверьте, что PostgreSQL запущен. Схема не проверена, сервис не готов.')
+        instance_token=(os.environ.get('TP_INSTANCE_TOKEN') or '').strip()
         env_configured=bool((os.environ.get('TP_1C_ODATA_URL') or '').strip() or (os.environ.get('TP_1C_WEB_URL') or '').strip())
         from testpilot import audit_limit
         return {'status':'ok','executor_1c_env':'configured' if env_configured else 'not_configured',
                 'projects_with_connection':int(with_connection or 0),
-                'audit_max_issues':audit_limit.MAX_ISSUES_KEPT}
+                'audit_max_issues':audit_limit.MAX_ISSUES_KEPT,
+                'instance':{'database':instance_db,
+                            'marker_ok':bool(instance_token) and instance_marker==instance_token}}
     return a
 
 def require(value,detail='Запись не найдена'):

@@ -44,6 +44,24 @@ case "${CI:-}" in 1|true|yes) in_ci=1 ;; esac
 ci_hint=""
 [ "$in_ci" -eq 1 ] && ci_hint=' В CI используйте отдельный проект: `-p testpilot-ci`.'
 
+# Разрушительные операции на одноразовых проектах требуют явной идентичности стенда:
+# имя проекта само по себе (или префикс) не доказывает, что это нужный стенд.
+if { [ "$has_down" -eq 1 ] && [ "$has_volumes" -eq 1 ]; } || [ -n "$volume_sub" ]; then
+  if [ "$project_allowed" -eq 1 ]; then
+    if [ "${TP_DISPOSABLE_IDENTITY:-}" != "$project" ]; then
+      echo "Отказано: разрушительная операция для $project требует TP_DISPOSABLE_IDENTITY=$project (явная идентичность одноразового стенда)." >&2
+      exit 3
+    fi
+    if command -v docker >/dev/null 2>&1; then
+      bad_volumes="$(docker volume ls --filter "label=com.docker.compose.project=$project" --format '{{.Name}}' 2>/dev/null | grep -v "^${project}_" || true)"
+      if [ -n "$bad_volumes" ]; then
+        echo "Отказано: у проекта $project есть тома с чужими именами: $bad_volumes" >&2
+        exit 3
+      fi
+    fi
+  fi
+fi
+
 if [ "$has_down" -eq 1 ] && [ "$has_volumes" -eq 1 ] && [ "$project_allowed" -eq 0 ]; then
   echo "Отказано: \`down -v\` удаляет тома (БД и evidence). На рабочем стенде недопустимо. Используйте \`-p testpilot-ci\` или \`-p testpilot-restore\`, либо \`docker compose down\` без \`-v\`.$ci_hint" >&2
   exit 3

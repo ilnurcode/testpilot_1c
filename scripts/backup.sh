@@ -1,27 +1,22 @@
 #!/usr/bin/env bash
-# Дамп БД TestPilot из запущенного compose-стека.
-# Пишет только файл дампа в .runtime/backups/ и ничего не удаляет.
-# Использование: bash scripts/backup.sh
-# Переменные: POSTGRES_USER/POSTGRES_DB (иначе берутся из контейнера db), BACKUP_DIR.
+# Атомарный backup одноразового стенда: dump + sha256/манифест, без рабочей БД.
 set -euo pipefail
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
-BACKUP_DIR="${BACKUP_DIR:-.runtime/backups}"
-mkdir -p "$BACKUP_DIR"
-
-DB_USER="${POSTGRES_USER:-$("$ROOT/scripts/compose.sh" exec -T db printenv POSTGRES_USER 2>/dev/null | tr -d '\r')}"
-DB_NAME="${POSTGRES_DB:-$("$ROOT/scripts/compose.sh" exec -T db printenv POSTGRES_DB 2>/dev/null | tr -d '\r')}"
-DB_USER="${DB_USER:-testpilot}"
-DB_NAME="${DB_NAME:-testpilot}"
-
-STAMP="$(date +%Y%m%d-%H%M%S)"
-FILE="$BACKUP_DIR/testpilot-$STAMP.sql"
-"$ROOT/scripts/compose.sh" exec -T db pg_dump -U "$DB_USER" "$DB_NAME" > "$FILE"
-
-SIZE="$(wc -c < "$FILE" | tr -d ' ')"
-if [ "${SIZE:-0}" -le 0 ]; then
-  echo "FAIL  дамп пуст: $FILE"
-  exit 1
+: "${TP_BACKUP_PROJECT:?задайте TP_BACKUP_PROJECT (одноразовый compose project)}"
+: "${TP_BACKUP_COMPOSE_FILE:?задайте TP_BACKUP_COMPOSE_FILE}"
+: "${TP_BACKUP_EXPECT_DB:?задайте TP_BACKUP_EXPECT_DB}"
+: "${TP_BACKUP_INSTANCE_TOKEN:?задайте TP_BACKUP_INSTANCE_TOKEN (маркер владельца БД)}"
+: "${TP_BACKUP_DB_USER:?задайте TP_BACKUP_DB_USER}"
+PYTHON_BIN="${TP_PYTHON:-}"
+if [ -z "$PYTHON_BIN" ]; then
+  if [ -x "$ROOT/.venv/Scripts/python.exe" ]; then PYTHON_BIN="$ROOT/.venv/Scripts/python.exe"; else PYTHON_BIN="python3"; fi
 fi
-echo "OK  дамп: $FILE ($SIZE байт)"
+ARGS=(backup --project "$TP_BACKUP_PROJECT" --compose-file "$TP_BACKUP_COMPOSE_FILE"
+      --expect-db "$TP_BACKUP_EXPECT_DB" --instance-token "$TP_BACKUP_INSTANCE_TOKEN"
+      --db-user "$TP_BACKUP_DB_USER" --dump-dir "${BACKUP_DIR:-$ROOT/.runtime/backups}")
+if [ -n "${TP_BACKUP_ENV_FILE:-}" ]; then ARGS+=(--env-file "$TP_BACKUP_ENV_FILE"); fi
+if [ "${TP_BACKUP_MANUAL:-0}" = "1" ]; then
+  : "${TP_BACKUP_CONFIRM_PROJECT:?ручной backup требует TP_BACKUP_CONFIRM_PROJECT}"
+  ARGS+=(--manual --confirm-project "$TP_BACKUP_CONFIRM_PROJECT")
+fi
+exec "$PYTHON_BIN" "$ROOT/scripts/pg_backup.py" "${ARGS[@]}"

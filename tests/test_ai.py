@@ -10,6 +10,11 @@ from testpilot.impact.algorithms import analyze
 from testpilot.web.presentation import sample
 
 
+@pytest.fixture(autouse=True)
+def explicit_fixture_target_policy(monkeypatch):
+    monkeypatch.setenv('TP_TARGET_ALLOWLIST', '1c.example.test')
+
+
 def package():return analyze(sample(1),sample(2),{'edge_types':['calls','uses','belongs_to','subscribes_to'],'direction':'impact','max_depth':10})[1]
 
 def mocked_model_suggestion(p):
@@ -142,42 +147,96 @@ def test_real_projects_cannot_use_demo_executor(clients,monkeypatch):
     assert c.post(f'/api/v1/ai/suites/{sid}/approve',json={'reason':'Unit','selected_proposals':[0]}).status_code==200
     assert c.post(f'/api/v1/ai/suites/{sid}/run-demo').status_code==409
 
-def test_1c_web_run_rejects_authorization_without_web_credentials(clients,monkeypatch):
+def test_1c_web_run_never_uses_environment_credentials(clients, monkeypatch):
+    """Проект без учётных данных: env Authorization/username/password в прогон не попадают.
+
+    Раньше такой прогон отклонялся 422, потому что платформа могла отправить свой Authorization
+    в веб-клиент. Теперь профиль строится только из настроек проекта и поля authorization у него
+    нет вовсе: проверяем сам инвариант, а не сообщение об отказе.
+    """
     from testpilot.contracts import checksum
-    from testpilot.integration import webclient
+    from testpilot.ai import executor as executor_module
 
-    impact,intelligence=clients
-    project=impact.post('/api/v1/projects',json={'name':'Web auth guard'}).json()
-    pid=project['id']
-    connection=impact.put(f'/api/v1/projects/{pid}/connection',json={
-        'web_url':'http://localhost:8088/DemoTrd/',
-        'odata_url':'http://localhost:8088/DemoTrd/odata/standard.odata',
-        'auth_username':None,
-        'auth_password':None,
-    })
-    assert connection.status_code==200
+    impact, intelligence = clients
+    project = impact.post('/api/v1/projects', json={'name': 'Web auth guard'}).json()
+    pid = project['id']
+    assert impact.put(f'/api/v1/projects/{pid}/connection', json={
+        'web_url': 'http://1c.example.test/DemoTrd/',
+        'odata_url': 'https://1c.example.test/odata/standard.odata',
+        'auth_username': None,
+        'auth_password': None,
+    }).status_code == 200
 
-    p=package()
-    suggestion=mocked_model_suggestion(p)
-    p['synthetic']=False
-    p['checksum']=checksum({k:v for k,v in p.items() if k!='checksum'})
-    assert intelligence.post('/api/v1/impact-packages',json=p).status_code==200
-    monkeypatch.setattr(provider,'generate',lambda *a,**kw:(suggestion,'unit-model'))
-    suite=intelligence.post('/api/v1/ai/suites',json={
-        'package_id':p['package_id'],'project_id':pid,'provider':'llm','consent':True,
+    p = package()
+    suggestion = _suite_plan(p, 'playwright', [{
+        'steps': [{'action': 'assert_section', 'target': 'Продажи'}],
+        'assertions': [{'id': 'section', 'scope': 'connectivity', 'check': 'web_section_visible',
+                        'engine': 'playwright', 'operator': 'exists',
+                        'selector': {'section': 'Продажи'},
+                        'expected': {'type': 'boolean', 'value': True}}],
+    }])
+    p['synthetic'] = False
+    p['checksum'] = checksum({k: v for k, v in p.items() if k != 'checksum'})
+    assert intelligence.post('/api/v1/impact-packages', json=p).status_code == 200
+    monkeypatch.setattr(provider, 'generate', lambda *a, **kw: (suggestion, 'unit-model'))
+    suite = intelligence.post('/api/v1/ai/suites', json={
+        'package_id': p['package_id'], 'project_id': pid, 'provider': 'llm', 'consent': True,
     }).json()
-    sid=suite['suite_id']
-    assert intelligence.post(f'/api/v1/ai/suites/{sid}/approve',json={
-        'reason':'Проверка отсутствия веб-аутентификации','selected_proposals':[1],
-    }).status_code==200
+    sid = suite['suite_id']
+    assert intelligence.post(f'/api/v1/ai/suites/{sid}/approve', json={
+        'reason': 'Проверка отсутствия веб-аутентификации', 'selected_proposals': [0],
+    }).status_code == 200
 
-    monkeypatch.delenv('TP_1C_USERNAME',raising=False)
-    monkeypatch.delenv('TP_1C_PASSWORD',raising=False)
-    monkeypatch.setenv('TP_1C_AUTHORIZATION','Bearer test-authorization')
-    monkeypatch.setattr(webclient,'WebClientRunner',lambda *a,**kw:pytest.fail('Браузер не должен запускаться'))
-    response=intelligence.post(f'/api/v1/ai/suites/{sid}/run-1c')
-    assert response.status_code==422
-    assert response.json()['error']['message']=='Для сценариев веб-клиента задайте пользователя и пароль 1С в настройках подключения проекта; Authorization используется только для OData'
+    monkeypatch.delenv('TP_1C_USERNAME', raising=False)
+    monkeypatch.delenv('TP_1C_PASSWORD', raising=False)
+    monkeypatch.setenv('TP_1C_AUTHORIZATION', 'Bearer test-authorization')
+    seen = []
+
+    def fake_execute(target, profile, **kwargs):
+        seen.append(profile)
+        return ([{'proposal_index': 0, 'case_index': 0, 'engine': 'playwright', 'title': 'Проверка',
+                  'status': 'error', 'message': 'Вход в 1С не выполнен: учётные данные проекта не заданы',
+                  'duration_seconds': 0.1, 'started_at': 'unit'}], [])
+
+    monkeypatch.setattr(executor_module, 'execute_1c', fake_execute)
+
+    response = intelligence.post(f'/api/v1/ai/suites/{sid}/run-1c')
+    assert response.status_code == 202, response.text
+    from test_ai_async import _wait
+    _wait(intelligence, sid)
+
+    assert seen, 'прогон должен дойти до исполнителя с проектным профилем'
+    profile = seen[0]
+    assert getattr(profile, 'authorization', None) is None, 'Authorization из env не передаётся в прогон'
+    assert profile.username is None and profile.password is None
+    stored = json.dumps(intelligence.get(f'/api/v1/ai/suites/{sid}').json(), ensure_ascii=False)
+    assert 'test-authorization' not in stored
+
+
+def test_run_1c_login_without_password_is_422_not_500(clients, monkeypatch):
+    """Логин без пароля — отказ до прогона с понятным 422, а не ValueError из Profile."""
+    impact, c, project, p = _project_with_package(clients)
+    assert impact.put(
+        f"/api/v1/projects/{project['id']}/connection",
+        json={'odata_url': 'https://1c.example.test/odata/standard.odata',
+              'web_url': 'http://1c.example.test/DemoTrd',
+              'auth_username': 'Администратор', 'auth_password': None},
+    ).status_code == 200
+    created = _create_demo_suite(c, p, project['id'])
+    assert c.post(f"/api/v1/ai/suites/{created['suite_id']}/approve",
+                  json={'reason': 'Логин без пароля', 'selected_proposals': [0]}).status_code == 200
+
+    from testpilot.ai import executor as executor_module
+    monkeypatch.setattr(executor_module, 'execute_1c',
+                        lambda *a, **kw: pytest.fail('исполнитель не должен запускаться без пароля'))
+
+    response = c.post(f"/api/v1/ai/suites/{created['suite_id']}/run-1c")
+
+    assert response.status_code == 422, response.text
+    assert response.status_code != 500
+    message = response.json()['error']['message']
+    assert 'пароль' in message and 'Basic Auth' in message
+    assert 'Traceback' not in response.text
 
 
 def test_llm_settings_api(clients, monkeypatch, tmp_path):
@@ -315,7 +374,47 @@ def _project_with_package(clients):
 def _create_demo_suite(c, p, project_id):
     response = c.post('/api/v1/ai/suites', json={'package_id': p['package_id'], 'project_id': project_id, 'provider': 'demo'})
     assert response.status_code == 200, response.text
-    return response.json()
+    _prepare_draft_assertions(response.json()['suite_id'])
+    return c.get(f"/api/v1/ai/suites/{response.json()['suite_id']}").json()
+
+
+def _prepare_draft_assertions(sid):
+    """Prepare explicit probe inputs before approval; never rewrite consent to run a test."""
+    from copy import deepcopy
+    from testpilot.db import AISuiteRow, _factory
+    with _factory() as session:
+        row = session.get(AISuiteRow, sid)
+        assert row.status == 'draft'
+        payload = deepcopy(row.payload)
+        for index, proposal in enumerate(payload['suggestion']['proposals']):
+            for case in proposal.get('cases') or []:
+                if case.get('assertions'):
+                    continue
+                if proposal['engine'] == 'manual':
+                    assertion = {'id': f'manual-{index}', 'scope': 'manual', 'check': 'manual',
+                                 'engine': 'manual', 'operator': 'manual',
+                                 'requirement': 'Fixture manual check', 'source_ref': 'ТЗ'}
+                elif proposal['engine'] == 'odata':
+                    assertion = {'id': f'metadata-{index}', 'scope': 'metadata',
+                                 'check': 'metadata_entity', 'engine': 'odata', 'operator': 'exists',
+                                 'selector': {'entity': 'Catalog_Test'}}
+                else:
+                    assertion = {'id': f'web-{index}', 'scope': 'connectivity',
+                                 'check': 'web_section_visible', 'engine': 'playwright',
+                                 'operator': 'exists', 'selector': {'section': 'Продажи'},
+                                 'expected': {'type': 'boolean', 'value': True}}
+                case['assertions'] = [assertion]
+        row.payload = payload
+        session.commit()
+
+
+def _run_suite(c, sid, params=None):
+    from test_ai_async import _wait
+    response = c.post(f"/api/v1/ai/suites/{sid}/run-1c", params=params or {})
+    if response.status_code != 202:
+        return response
+    _wait(c, sid)
+    return c.get(f"/api/v1/ai/suites/{sid}")
 
 
 def test_suite_history_is_empty_for_new_project(clients):
@@ -384,21 +483,38 @@ def test_suite_history_reports_approval_count(clients):
     assert row['approved_count'] == 2
 
 
-def _approved_suite_for_rerun(clients, monkeypatch, *, fail=None):
+def _demote_demo_plan(sid):
+    """Снять demo-признак плана: rerun учебного demo-плана отклоняется (см. тест отказа)."""
+    from testpilot.db import AISuiteRow, _factory
+    with _factory() as session:
+        row = session.get(AISuiteRow, sid)
+        row.payload = {**row.payload, 'synthetic': False, 'configuration_id': 'trade-real'}
+        session.commit()
+
+
+def _approved_suite(clients, *, demo=True):
+    """Утверждённый план с настроенным подключением проекта."""
     impact, c, project, p = _project_with_package(clients)
     assert impact.put(
         f"/api/v1/projects/{project['id']}/connection",
-        json={'odata_url': 'https://1c.example.test/odata/standard.odata', 'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': 'Администратор', 'auth_password': ''},
+        json={'odata_url': 'https://1c.example.test/odata/standard.odata', 'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': None, 'auth_password': None},
     ).status_code == 200
     created = _create_demo_suite(c, p, project['id'])
+    if not demo:
+        _demote_demo_plan(created['suite_id'])
     assert c.post(
         f"/api/v1/ai/suites/{created['suite_id']}/approve",
         json={'reason': 'Повторный прогон', 'selected_proposals': [0]},
     ).status_code == 200
+    return impact, c, project, created
+
+
+def _approved_suite_for_rerun(clients, monkeypatch, *, fail=None):
+    impact, c, project, created = _approved_suite(clients, demo=False)
 
     from testpilot.ai import executor as executor_module
 
-    def fake_execute(suite, profile):
+    def fake_execute(suite, profile, should_cancel=None, on_progress=None):
         if fail:
             raise RuntimeError(fail)
         return ([{
@@ -420,8 +536,10 @@ def test_rerun_creates_new_suite_with_copied_plan(clients, monkeypatch):
     before = c.get(f"/api/v1/ai/suites/{source['suite_id']}").json()
 
     response = c.post(f"/api/v1/ai/suites/{source['suite_id']}/rerun")
-    assert response.status_code == 200, response.text
-    new = response.json()
+    assert response.status_code == 202, response.text
+    from test_ai_async import _wait
+    _wait(c, response.json()['suite_id'])
+    new = c.get(f"/api/v1/ai/suites/{response.json()['suite_id']}").json()
 
     assert new['suite_id'] != source['suite_id']
     assert new['suggestion'] == before['suggestion']
@@ -436,7 +554,7 @@ def test_rerun_creates_new_suite_with_copied_plan(clients, monkeypatch):
 def test_rerun_does_not_modify_source_suite(clients, monkeypatch):
     impact, c, project, source = _approved_suite_for_rerun(clients, monkeypatch)
     before = c.get(f"/api/v1/ai/suites/{source['suite_id']}").json()
-    assert c.post(f"/api/v1/ai/suites/{source['suite_id']}/rerun").status_code == 200
+    assert c.post(f"/api/v1/ai/suites/{source['suite_id']}/rerun").status_code == 202
 
     after = c.get(f"/api/v1/ai/suites/{source['suite_id']}").json()
     assert after == before
@@ -459,9 +577,70 @@ def test_rerun_unknown_suite_is_404(clients):
     assert c.post('/api/v1/ai/suites/00000000-0000-0000-0000-000000000000/rerun').status_code == 404
 
 
+def test_rerun_demo_plan_is_refused_with_explicit_409(clients):
+    """Demo-план не должен попадать в execute_claim с пустым профилем реальной 1С."""
+    impact, c, project, source = _approved_suite(clients)
+    response = c.post(f"/api/v1/ai/suites/{source['suite_id']}/rerun")
+
+    assert response.status_code == 409, response.text
+    message = response.json()['error']['message']
+    assert 'учебном стенде' in message
+    assert 'demo' in message
+    assert len(c.get('/api/v1/ai/suites', params={'project_id': project['id']}).json()) == 1
+
+
+def _run_with_fake_result(clients, monkeypatch, extra):
+    impact, c, project, suite = _approved_suite(clients)
+    from testpilot.ai import executor as executor_module
+
+    def fake_execute(payload, profile, should_cancel=None, on_progress=None):
+        return ([{'proposal_index': payload['approval']['selected_proposals'][0],
+                  'case_index': 0, 'engine': 'odata', 'title': 'Проверка', 'status': 'passed',
+                  'message': 'Выполнено', 'started_at': 'unit', **extra}], [])
+
+    monkeypatch.setattr(executor_module, 'execute_1c', fake_execute)
+    response = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c")
+    assert response.status_code == 202, response.text
+    from test_ai_async import _wait
+    assert _wait(c, suite['suite_id'])['status'] == 'completed'
+    return c, suite['suite_id']
+
+
+def test_business_success_true_when_all_business_checks_passed(clients, monkeypatch):
+    c, sid = _run_with_fake_result(clients, monkeypatch,
+                                   {'business_checked': True, 'business_success': True})
+
+    state = c.get(f'/api/v1/ai/suites/{sid}/status').json()
+    assert state['business_success'] is True
+    body = c.get(f'/api/v1/ai/suites/{sid}/report', params={'format': 'md'}).text
+    assert 'Бизнес-результат: подтверждён' in body
+
+
+def test_business_success_is_none_without_business_checks(clients, monkeypatch):
+    c, sid = _run_with_fake_result(clients, monkeypatch, {'business_checked': False})
+
+    state = c.get(f'/api/v1/ai/suites/{sid}/status').json()
+    assert state['business_success'] is None
+    body = c.get(f'/api/v1/ai/suites/{sid}/report', params={'format': 'md'}).text
+    assert 'Бизнес-результат: не проверен / не доказан' in body
+
+
+def test_ui_hides_rerun_for_demo_plan():
+    """Кнопка «Прогнать снова» не рендерится для demoSuite: она ушла бы в реальную 1С."""
+    from pathlib import Path
+    source = (Path(__file__).resolve().parent.parent / 'testpilot' / 'web' / 'static' / 'ai.js').read_text(encoding='utf-8')
+    guard = "if(demoSuite(s))$('#suiteActions')"
+    assert guard in source, 'rerun должен быть под явной проверкой demoSuite'
+    demo_line, rest = source.split(guard, 1)[1].split('\n', 1)
+    assert "'Прогнать снова'" not in demo_line
+    assert rest.lstrip().startswith("else addButton('#suiteActions','Прогнать снова'")
+
+
 def test_rerun_appears_first_in_project_history(clients, monkeypatch):
     impact, c, project, source = _approved_suite_for_rerun(clients, monkeypatch)
     new = c.post(f"/api/v1/ai/suites/{source['suite_id']}/rerun").json()
+    from test_ai_async import _wait
+    _wait(c, new['suite_id'])
 
     rows = c.get('/api/v1/ai/suites', params={'project_id': project['id']}).json()
     assert [row['suite_id'] for row in rows] == [new['suite_id'], source['suite_id']]
@@ -473,8 +652,10 @@ def test_rerun_infrastructure_failure_marks_new_suite_error(clients, monkeypatch
     before = c.get(f"/api/v1/ai/suites/{source['suite_id']}").json()
 
     response = c.post(f"/api/v1/ai/suites/{source['suite_id']}/rerun")
-    assert response.status_code == 200, response.text
-    failed = response.json()
+    assert response.status_code == 202, response.text
+    from test_ai_async import _wait
+    _wait(c, response.json()['suite_id'])
+    failed = c.get(f"/api/v1/ai/suites/{response.json()['suite_id']}").json()
 
     assert failed['suite_id'] != source['suite_id']
     assert failed['status'] == 'error'
@@ -490,7 +671,7 @@ def _executed_suite(clients, monkeypatch):
     impact, c, project, p = _project_with_package(clients)
     assert impact.put(
         f"/api/v1/projects/{project['id']}/connection",
-        json={'odata_url': 'https://1c.example.test/odata/standard.odata', 'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': 'Администратор', 'auth_password': ''},
+        json={'odata_url': 'https://1c.example.test/odata/standard.odata', 'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': None, 'auth_password': None},
     ).status_code == 200
     created = _create_demo_suite(c, p, project['id'])
     assert c.post(
@@ -500,7 +681,7 @@ def _executed_suite(clients, monkeypatch):
 
     from testpilot.ai import executor as executor_module
 
-    def fake_execute(suite, profile):
+    def fake_execute(suite, profile, should_cancel=None, on_progress=None):
         return ([
             {'proposal_index': 0, 'case_index': 0, 'engine': 'playwright', 'title': 'Проверка интерфейса',
              'status': 'passed', 'message': 'Раздел «Продажи» подтверждён', 'duration_seconds': 1.25,
@@ -511,7 +692,7 @@ def _executed_suite(clients, monkeypatch):
         ], [(0, b'\x89PNG-unit')])
 
     monkeypatch.setattr(executor_module, 'execute_1c', fake_execute)
-    run = c.post(f"/api/v1/ai/suites/{created['suite_id']}/run-1c")
+    run = _run_suite(c, created['suite_id'])
     assert run.status_code == 200, run.text
     return c, project, run.json()
 
@@ -540,14 +721,29 @@ def test_run_report_csv_has_header_and_row_per_result(clients, monkeypatch):
 
     assert response.status_code == 200, response.text
     assert response.headers['content-type'].startswith('text/csv')
-    assert response.content.startswith(
-        'Предложение;Case;Движок;Проверка;Статус;Сообщение;Длительность, мс;Evidence'.encode('utf-8'))
+    from testpilot.web.run_report import RUN_CSV_HEADER
+    assert response.content.startswith(RUN_CSV_HEADER.encode('utf-8'))
     rows = list(csv.reader(io.StringIO(response.content.decode('utf-8'), newline=''), delimiter=';'))
-    assert rows[0] == ['Предложение', 'Case', 'Движок', 'Проверка', 'Статус', 'Сообщение', 'Длительность, мс', 'Evidence']
-    assert len(rows) == len(run['results']) + 1 == 3
-    assert rows[1][1] == '1' and rows[1][4] == 'passed' and rows[1][7] == run['results'][0]['evidence_id']
-    assert rows[1][6] == '1250'
-    assert rows[2][4] == 'failed' and 'HTTP 404' in rows[2][5]
+    assert rows[0] == RUN_CSV_HEADER.split(';')
+    proposals = run['suggestion']['proposals']
+    planned = {(index, case_index)
+               for index in run['approval']['selected_proposals']
+               for case_index, _ in enumerate(proposals[index].get('cases') or [{}])}
+    completed = {(result['proposal_index'], result['case_index']) for result in run['results']}
+    assert len(rows) == len(planned) + 1
+    data = list(csv.DictReader(io.StringIO(response.content.decode('utf-8')), delimiter=';'))
+    executed = [row for row in data if row['Статус'] != 'not_performed']
+    pending = [row for row in data if row['Статус'] == 'not_performed']
+    assert len(executed) == len(run['results']) == 2
+    assert executed[0]['Case'] == '1' and executed[0]['Статус'] == 'passed'
+    assert executed[0]['Evidence'] == run['results'][0]['evidence_id']
+    assert executed[0]['Длительность, мс'] == '1250'
+    assert executed[1]['Статус'] == 'failed' and 'HTTP 404' in executed[1]['Сообщение']
+    assert {(row['Предложение'], row['Case']) for row in pending} == {
+        (proposals[index]['title'], str(case_index + 1))
+        for index, case_index in planned - completed
+    }
+    assert all(row['Сообщение'] == 'не выполнено: результата нет' for row in pending)
 
 
 def test_run_report_rejects_unknown_format(clients, monkeypatch):
@@ -574,8 +770,12 @@ def test_run_report_without_run_marks_no_results(clients):
 
     csv_response = c.get(f"/api/v1/ai/suites/{created['suite_id']}/report", params={'format': 'csv'})
     rows = list(csv.reader(io.StringIO(csv_response.content.decode('utf-8'), newline=''), delimiter=';'))
-    assert len(rows) == 2
-    assert rows[1][1] == '—' and rows[1][4] == '—' and rows[1][5] == 'результата нет'
+    cases = c.get(f"/api/v1/ai/suites/{created['suite_id']}").json()['suggestion']['proposals'][0]['cases']
+    assert len(cases) > 1, 'в утверждённом предложении должно быть несколько кейсов'
+    assert len(rows) == len(cases) + 1, 'одна строка csv — один кейс'
+    assert [row[1] for row in rows[1:]] == [str(index + 1) for index in range(len(cases))]
+    for row in rows[1:]:
+        assert row[4] == 'not_performed' and row[5] == 'не выполнено: результата нет'
 
 
 def test_run_report_and_audit_report_share_render_primitives(clients, monkeypatch):
@@ -607,7 +807,7 @@ def _suite_with_two_cases(clients, monkeypatch):
     impact, c, project, p = _project_with_package(clients)
     assert impact.put(
         f"/api/v1/projects/{project['id']}/connection",
-        json={'odata_url': 'https://1c.example.test/odata/standard.odata', 'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': 'Администратор', 'auth_password': ''},
+        json={'odata_url': 'https://1c.example.test/odata/standard.odata', 'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': None, 'auth_password': None},
     ).status_code == 200
     created = _create_demo_suite(c, p, project['id'])
     assert c.post(
@@ -617,7 +817,7 @@ def _suite_with_two_cases(clients, monkeypatch):
 
     from testpilot.ai import executor as executor_module
 
-    def fake_execute(suite, profile):
+    def fake_execute(suite, profile, should_cancel=None, on_progress=None):
         return ([
             {'proposal_index': 0, 'case_index': 0, 'engine': 'odata', 'title': 'Первый кейс',
              'status': 'passed', 'message': 'Коллекция прочитана', 'duration_seconds': 0.25, 'started_at': 'unit'},
@@ -627,7 +827,7 @@ def _suite_with_two_cases(clients, monkeypatch):
         ], [(0, b'\x89PNG-unit')])
 
     monkeypatch.setattr(executor_module, 'execute_1c', fake_execute)
-    run = c.post(f"/api/v1/ai/suites/{created['suite_id']}/run-1c")
+    run = _run_suite(c, created['suite_id'])
     assert run.status_code == 200, run.text
     return c, project, run.json()
 
@@ -674,9 +874,13 @@ def _mutating_suite(clients, monkeypatch, steps, *, called=None):
     project = impact.post('/api/v1/projects', json={'name': 'Изменяющие шаги', 'description': ''}).json()
     assert impact.put(
         f"/api/v1/projects/{project['id']}/connection",
-        json={'odata_url': 'https://1c.example.test/odata/standard.odata', 'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': 'Администратор', 'auth_password': ''},
+        json={'odata_url': 'https://1c.example.test/odata/standard.odata', 'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': None, 'auth_password': None},
     ).status_code == 200
-    suggestion = _suite_plan(p, 'playwright', [{'steps': steps}])
+    suggestion = _suite_plan(p, 'playwright', [{'steps': steps, 'assertions': [{
+        'id': 'section', 'scope': 'connectivity', 'check': 'web_section_visible',
+        'engine': 'playwright', 'operator': 'exists', 'selector': {'section': 'Продажи'},
+        'expected': {'type': 'boolean', 'value': True},
+    }]}])
     monkeypatch.setattr(provider, 'generate', lambda *a, **kw: (suggestion, 'mock-model'))
     response = c.post('/api/v1/ai/suites', json={
         'package_id': p['package_id'],
@@ -686,6 +890,7 @@ def _mutating_suite(clients, monkeypatch, steps, *, called=None):
     })
     assert response.status_code == 200, response.text
     suite = response.json()
+    _demote_demo_plan(suite['suite_id'])
     assert c.post(
         f"/api/v1/ai/suites/{suite['suite_id']}/approve",
         json={'reason': 'Изменяющие шаги', 'selected_proposals': [0]},
@@ -693,7 +898,7 @@ def _mutating_suite(clients, monkeypatch, steps, *, called=None):
 
     from testpilot.ai import executor as executor_module
 
-    def fake_execute(target_suite, profile):
+    def fake_execute(target_suite, profile, should_cancel=None, on_progress=None):
         if called is not None:
             called.append(target_suite['suite_id'])
         return ([{'proposal_index': 0, 'case_index': 0, 'engine': 'playwright', 'title': 'Проверка',
@@ -709,7 +914,7 @@ def test_run_allows_plan_without_mutating_steps(clients, monkeypatch):
     c, project, suite = _mutating_suite(
         clients, monkeypatch, [{'action': 'click', 'target': 'Продажи'}], called=called)
 
-    response = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c")
+    response = _run_suite(c, suite['suite_id'])
     assert response.status_code == 200, response.text
     assert response.json()['status'] == 'completed'
     assert response.json()['allow_mutations'] is False
@@ -722,7 +927,7 @@ def test_run_blocks_mutating_click_without_consent(clients, monkeypatch):
         clients, monkeypatch, [{'action': 'assert_text', 'target': 'Заказы'},
                                {'action': 'click', 'target': 'Записать'}], called=called)
 
-    response = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c")
+    response = _run_suite(c, suite['suite_id'])
     assert response.status_code == 422, response.text
     message = response.json()['error']['message']
     assert "Предложение 1: шаг 2 'Записать' потенциально изменяет данные" in message
@@ -735,7 +940,7 @@ def test_run_with_allow_mutations_executes_and_records_consent(clients, monkeypa
     c, project, suite = _mutating_suite(
         clients, monkeypatch, [{'action': 'click', 'target': 'Провести'}], called=called)
 
-    response = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c", params={'allow_mutations': 'true'})
+    response = _run_suite(c, suite['suite_id'], params={'allow_mutations': 'true'})
     assert response.status_code == 200, response.text
     body = response.json()
     assert body['status'] == 'completed'
@@ -749,7 +954,7 @@ def test_fill_step_requires_consent(clients, monkeypatch):
     c, project, suite = _mutating_suite(
         clients, monkeypatch, [{'action': 'fill', 'target': '#quantity', 'value': '5'}], called=called)
 
-    response = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c")
+    response = _run_suite(c, suite['suite_id'])
     assert response.status_code == 422, response.text
     assert "шаг 1 '#quantity' потенциально изменяет данные" in response.json()['error']['message']
     assert called == []
@@ -759,7 +964,7 @@ def test_rerun_respects_mutation_consent(clients, monkeypatch):
     called = []
     c, project, suite = _mutating_suite(
         clients, monkeypatch, [{'action': 'click', 'target': 'Удалить'}], called=called)
-    run = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c", params={'allow_mutations': 'true'})
+    run = _run_suite(c, suite['suite_id'], params={'allow_mutations': 'true'})
     assert run.status_code == 200, run.text
     called.clear()
 
@@ -769,10 +974,14 @@ def test_rerun_respects_mutation_consent(clients, monkeypatch):
     assert called == []
 
     allowed = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/rerun", params={'allow_mutations': 'true'})
-    assert allowed.status_code == 200, allowed.text
-    assert allowed.json()['suite_id'] != suite['suite_id']
-    assert allowed.json()['allow_mutations'] is True
-    assert called == [allowed.json()['suite_id']]
+    assert allowed.status_code == 202, allowed.text
+    new_id = allowed.json()['suite_id']
+    assert new_id != suite['suite_id']
+    assert allowed.json()['status'] == 'queued'
+    from test_ai_async import _wait
+    _wait(c, new_id)
+    assert c.get(f'/api/v1/ai/suites/{new_id}').json()['allow_mutations'] is True
+    assert called == [new_id]
 
 
 def test_plan_marks_mutating_proposals(clients, monkeypatch):
@@ -809,7 +1018,7 @@ def test_strict_mode_blocks_click_on_navigation_plan(clients, monkeypatch):
     c, project, suite = _mutating_suite(
         clients, monkeypatch, [{'action': 'click', 'target': 'Продажи'}], called=called)
 
-    response = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c", params={'strict_read_only': 'true'})
+    response = _run_suite(c, suite['suite_id'], params={'strict_read_only': 'true'})
     assert response.status_code == 422, response.text
     message = response.json()['error']['message']
     assert 'Предложение 1: шаг 1' in message
@@ -825,7 +1034,7 @@ def test_strict_mode_allows_read_only_plan(clients, monkeypatch):
         [{'action': 'assert_text', 'target': 'Продажи'}, {'action': 'wait', 'value': 1000}],
         called=called)
 
-    response = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c", params={'strict_read_only': 'true'})
+    response = _run_suite(c, suite['suite_id'], params={'strict_read_only': 'true'})
     assert response.status_code == 200, response.text
     body = response.json()
     assert body['status'] == 'completed'
@@ -962,9 +1171,10 @@ def test_generate_without_key_returns_503_before_network(monkeypatch):
         provider_module.generate(package(), [], {})
 
     assert failure.value.status_code == 503
-    assert failure.value.detail == (
-        'Ключ нейросети не задан. Укажите TP_LLM_API_KEY в .env и перезапустите стек либо выберите встроенный генератор.'
-    )
+    assert failure.value.detail == {
+        'message': 'Ключ нейросети не задан. Укажите TP_LLM_API_KEY в .env и перезапустите стек либо выберите встроенный генератор.',
+        'code': 'missing_key',
+    }
     assert created == []
 
 
@@ -990,9 +1200,12 @@ def test_llm_suite_without_key_returns_503(clients, monkeypatch):
     })
 
     assert response.status_code == 503, response.text
-    assert response.json()['error']['message'] == (
-        'Ключ нейросети не задан. Укажите TP_LLM_API_KEY в .env и перезапустите стек либо выберите встроенный генератор.'
-    )
+    error = response.json()['error']
+    assert error['code'] == 503
+    assert error['message'] == {
+        'message': 'Ключ нейросети не задан. Укажите TP_LLM_API_KEY в .env и перезапустите стек либо выберите встроенный генератор.',
+        'code': 'missing_key',
+    }
 
 
 def test_local_provider_generates_plan_without_llm_key(clients, monkeypatch):
@@ -1092,13 +1305,13 @@ def test_run_error_attaches_evidence_screenshot(clients, monkeypatch):
     from testpilot.ai import executor as executor_module
 
     png = b'\x89PNG\r\n\x1a\nunit-error'
-    monkeypatch.setattr(executor_module, 'execute_1c', lambda target_suite, profile: ([
+    monkeypatch.setattr(executor_module, 'execute_1c', lambda target_suite, profile, should_cancel=None, on_progress=None: ([
         {'proposal_index': 0, 'case_index': 0, 'engine': 'playwright', 'title': 'Вход',
          'status': 'error', 'message': 'Вход в 1С не выполнен: форма логина осталась на экране',
          'duration_seconds': 3.0, 'started_at': 'unit'},
     ], [(0, png)]))
 
-    run = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c")
+    run = _run_suite(c, suite['suite_id'])
     assert run.status_code == 200, run.text
     result = run.json()['results'][0]
     assert result['status'] == 'error'

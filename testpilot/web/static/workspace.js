@@ -30,8 +30,29 @@ async function workspaceOverview(){
  const projects=Array.isArray(projectPage)?projectPage:(projectPage.items||[]);
  const projectsTotal=Number(projectPage?.total ?? projects.length);
  const uploads=projects.reduce((n,p)=>n+p.upload_count,0);
- $('#content').innerHTML=`<div class="page-heading"><div><div class="eyebrow">ВАШИ РАЗРАБОТКИ 1С</div><h1>Что изменилось и что проверить</h1><p class="page-description">Храните версии разработок в одном месте. Сравнивайте изменения и находите затронутые объекты.</p></div><div class="actions"><button id="overviewCreate" class="secondary">＋ Новый проект</button></div></div><div class="stats"><div><span class="stat-icon">${lineIcon(1)}</span><strong>${projectsTotal}</strong><span class="stat-label">Проектов в рабочей области</span></div><div><span class="stat-icon">${lineIcon(4)}</span><strong>${uploads}</strong><span class="stat-label">Сохранённых файлов</span></div><div><span class="stat-icon">${lineIcon(3)}</span><strong>${analyses.filter(a=>a.has_package).length}</strong><span class="stat-label">Анализов влияния</span></div></div><div class="section-heading"><div><h2>Мои проекты</h2><p>Продолжите работу с загруженной разработкой</p></div><button id="allProjects" class="text-button">Все проекты →</button></div>${projects.length?`<div class="project-grid">${projects.slice(0,3).map(projectCard).join('')}</div>`:`<div class="empty-state"><span class="empty-icon">▧</span><h2>Начните с первого проекта</h2><p>Создайте проект для своей разработки. Все загруженные файлы и предыдущие версии будут сохраняться в его истории.</p><button id="firstProject">Создать проект</button></div>`}${processStrip()}<div class="section-heading"><div><h2>Последние тест-планы</h2><p>Сохранённые расчёты и экспертные решения</p></div><span class="caption">${plans.length} планов</span></div><div class="card">${plans.length?planTable(plans.slice(0,5)):'<p class="caption">Пока нет тест-планов. После анализа модели можно подобрать проверки из каталога.</p>'}</div>`;
- wireProjectCards();wireTask('#overviewCreate',async()=>{await show(1);openProjectDialog()});wireTask('#firstProject',async()=>{await show(1);openProjectDialog()});wireTask('#allProjects',()=>show(1));
+ $('#content').innerHTML=`<div class="page-heading"><div><div class="eyebrow">ВАШИ РАЗРАБОТКИ 1С</div><h1>Что изменилось и что проверить</h1><p class="page-description">Храните версии разработок в одном месте. Сравнивайте изменения и находите затронутые объекты.</p></div><div class="actions"><button id="presentationStart">Открыть демонстрацию</button><button id="overviewCreate" class="secondary">＋ Новый проект</button></div></div><div id="presentationResult"></div><div class="stats"><div><span class="stat-icon">${lineIcon(1)}</span><strong>${projectsTotal}</strong><span class="stat-label">Проектов в рабочей области</span></div><div><span class="stat-icon">${lineIcon(4)}</span><strong>${uploads}</strong><span class="stat-label">Сохранённых файлов</span></div><div><span class="stat-icon">${lineIcon(3)}</span><strong>${analyses.filter(a=>a.has_package).length}</strong><span class="stat-label">Анализов влияния</span></div></div><div class="section-heading"><div><h2>Мои проекты</h2><p>Продолжите работу с загруженной разработкой</p></div><button id="allProjects" class="text-button">Все проекты →</button></div>${projects.length?`<div class="project-grid">${projects.slice(0,3).map(projectCard).join('')}</div>`:`<div class="empty-state"><span class="empty-icon">▧</span><h2>Начните с первого проекта</h2><p>Создайте проект для своей разработки. Все загруженные файлы и предыдущие версии будут сохраняться в его истории.</p><button id="firstProject">Создать проект</button></div>`}${processStrip()}<div class="section-heading"><div><h2>Последние тест-планы</h2><p>Сохранённые расчёты и экспертные решения</p></div><span class="caption">${plans.length} планов</span></div><div class="card">${plans.length?planTable(plans.slice(0,5)):'<p class="caption">Пока нет тест-планов. После анализа модели можно подобрать проверки из каталога.</p>'}</div>`;
+ wireProjectCards();wireTask('#overviewCreate',async()=>{await show(1);openProjectDialog()});wireTask('#firstProject',async()=>{await show(1);openProjectDialog()});wireTask('#allProjects',()=>show(1));wireTask('#presentationStart',openPresentation);
+}
+function presentationFailure(status,data){
+ const detail=responseError(data);
+ if(status===401)return 'Сервер отклонил учётные данные: войдите заново. '+detail;
+ if(status===403)return 'Демонстрацию открывает только роль «Эксперт». Войдите как эксперт и повторите. '+detail;
+ if(status===409)return 'Демонстрация уже выполняется или данные проекта заняты. Повторите через минуту. '+detail;
+ if(status>=500)return 'Сервер демонстрации вернул ошибку. Учебный стенд мог остаться без изменений; обновите список проектов и повторите. '+detail;
+ return 'Не удалось открыть демонстрацию. '+detail;
+}
+async function openPresentation(){
+ const host=$('#presentationResult');if(!host)return;
+ host.innerHTML='<p class="info-note">Готовим учебный стенд: проект, две учебные версии и анализ влияния. Это занимает несколько секунд.</p>';
+ let response;
+ try{response=await fetch('/api/presentation',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})}
+ catch{host.innerHTML='<p class="warning">Сервер демонстрации недоступен: проверьте соединение и повторите попытку. Ничего не изменено.</p>';return}
+ const data=await response.json().catch(()=>null);
+ if(!response.ok){host.innerHTML=`<p class="warning">${E(presentationFailure(response.status,data))}</p>`;return}
+ const analysis=data.analysis||{},pkg=analysis.package||{};
+ host.innerHTML=`<div class="card"><div class="history-header"><h2>Учебная демонстрация готова</h2><span class="badge ready">${data.created_project?'Проект создан':'Проект уже существовал'}</span></div><p class="caption">Проект: <code>${E(data.project_id)}</code> · анализ: <code>${E(analysis.analysis_id||'—')}</code> · объектов в области влияния: ${E((pkg.affected_objects||[]).length)}</p><p class="info-note">Учебные синтетические данные, не реальная 1С. Повторный запуск не создаёт второй проект, но добавляет новый анализ.</p><div class="actions" id="presentationActions"></div></div>`;
+ addButton('#presentationActions','Подготовить проверки →',async()=>{await openProject(data.project_id);renderUploadReport(analysis,data.project_id)});
+ addButton('#presentationActions','История файлов проекта →',()=>openProject(data.project_id),true);
 }
 function projectDialog(){return `<dialog id="projectDialog" aria-labelledby="projectDialogTitle"><form id="projectForm"><h2 id="projectDialogTitle">Новый проект</h2><p>Объедините файлы одной разработки, её версии и результаты анализа.</p><label>Название проекта<input id="projectName" name="name" maxlength="120" required placeholder="Например, Продажи — расширение УТ" autocomplete="off"></label><label>Описание <span class="caption">Необязательно</span><textarea id="projectDescription" class="prose" maxlength="3000" placeholder="Что разрабатываете и какую конфигурацию используете"></textarea></label><div class="actions"><button type="button" class="secondary" id="cancelProject">Отмена</button><button type="submit">Создать проект</button></div></form></dialog>`}
 function deleteProjectDialog(p){return `<dialog id="deleteProjectDialog" aria-labelledby="deleteProjectTitle"><form id="deleteProjectForm"><h2 id="deleteProjectTitle">Удалить проект</h2><p>Будут удалены загрузки, анализы, пакеты проверок, прогоны и скриншоты проекта. Действие необратимо.</p><label>Введите идентификатор проекта<input id="deleteProjectConfirm" autocomplete="off" placeholder="${E(p.id)}"></label><div id="deleteProjectFeedback"></div><div class="row"><button type="button" id="cancelDeleteProject" class="secondary">Отмена</button><button type="submit" class="primary">Удалить проект</button></div></form></dialog>`}
@@ -40,9 +61,9 @@ function lastRunLine(p){
  if(!run||!run.suite_id)return `<p class="caption">прогонов не было${p&&p.has_draft_plan?' · есть черновик плана':''}</p>`;
  const counts=run.counts||{};
  const passed=counts.passed||0,failed=counts.failed||0,errors=counts.error||0;
- const accent=(errors>0||run.status==='error')?'error':failed>0?'warning':'';
+ const accent=(errors>0||run.status==='error')?'error':(failed>0||['cancelled','interrupted','failed'].includes(run.status))?'warning':'';
  const link=`<a href="#ai/${encodeURIComponent(run.suite_id)}">открыть прогон</a>`;
- return `<p class="caption ${accent}">Последний прогон: ${E(dateText(run.created_at))} · ${passed} пройдено / ${failed} расхождений / ${errors} ошибок · ${link}</p>`;
+ return `<p class="caption ${accent}">Последний прогон: ${E(projectRunStatus(run.status))} · ${E(dateText(run.created_at))} · ${E(passed)} проверок пройдено / ${E(failed)} расхождений / ${E(errors)} ошибок / ${E(counts.skipped||0)} не выполнено · ${link}</p>`;
 }
 function openProjectDialog(){const d=$('#projectDialog');if(!d)return;d.showModal();$('#projectName').focus()}
 async function projectsPage(){
@@ -163,7 +184,7 @@ async function loadProjectRuns(projectId){
 }
 function projectRunRow(r){
  const counts=r.counts||{};
- return `<tr><td>${E(dateText(r.created_at))}</td><td>${E(projectRunModel(r))}</td><td><span class="badge ${r.status==='completed'?'ready':'pending'}">${E(projectRunStatus(r.status))}</span></td><td>${counts.passed||0} / ${counts.failed||0} / ${counts.error||0} / ${counts.skipped||0}</td><td>${r.mutating_count?`<span class="badge warning">изменяет</span>`:'—'}</td><td><a class="secondary" href="#ai/${encodeURIComponent(r.suite_id)}">Открыть прогон</a> <button type="button" class="text-button delete-run" data-run="${E(r.suite_id)}" data-run-label="${E(dateText(r.created_at))}">Удалить прогон</button></td></tr>`
+ return `<tr><td>${E(dateText(r.created_at))}</td><td>${E(projectRunModel(r))}</td><td><span class="badge ${r.status==='completed'?'blue':'pending'}">${E(projectRunStatus(r.status))}</span></td><td>${E(counts.passed||0)} / ${E(counts.failed||0)} / ${E(counts.error||0)} / ${E(counts.skipped||0)}</td><td>${r.mutating_count?`<span class="badge warning">изменяет</span>`:'—'}</td><td><a class="secondary" href="#ai/${encodeURIComponent(r.suite_id)}">Открыть прогон</a> <button type="button" class="text-button delete-run" data-run="${E(r.suite_id)}" data-run-label="${E(dateText(r.created_at))}">Удалить прогон</button></td></tr>`
 }
 function deleteRunDialog(){return `<dialog id="deleteRunDialog" aria-labelledby="deleteRunTitle"><form id="deleteRunForm"><h2 id="deleteRunTitle">Удалить прогон</h2><p>Будут удалены сохранённый план, его evidence и связанные строки прогона. Пакет и загрузки проекта останутся.</p><label>Введите идентификатор прогона<input id="deleteRunConfirm" autocomplete="off"></label><div id="deleteRunFeedback"></div><div class="row"><button type="button" id="cancelDeleteRun" class="secondary">Отмена</button><button type="submit" class="primary">Удалить прогон</button></div></form></dialog>`}
 let deleteRunTarget=null;
@@ -175,7 +196,7 @@ function wireDeleteRunDialog(){const d=$('#deleteRunDialog');if(!d||d.dataset.wi
     $('#deleteRunFeedback').innerHTML=`<p class="warning">${E(err.message)}</p>`}})};
 }
 function projectRunModel(r){return r.model||({demo:'Учебные правила',local:'Встроенный генератор',codex:'Codex CLI',llm:'Нейросеть через API'}[r.provider]||r.provider||'—')}
-function projectRunStatus(s){return {draft:'Ожидает проверки',approved:'Подтверждён',completed:'Проверки завершены'}[s]||s}
+function projectRunStatus(s){return {draft:'Ожидает проверки',approved:'Подтверждён',queued:'В очереди',running:'Выполняется',completed:'Выполнение завершено',error:'Ошибка прогона',cancelled:'Отменён',interrupted:'Прерван',failed:'Расхождение'}[s]||s}
 async function refreshProjectRuns(){if($('#projectRuns')&&currentProject)await loadProjectRuns(currentProject.id)}
 function chooseFile(file){
  if(file.size===0){msg('Выбран пустой файл.',true);return}if(file.size>64*1024*1024){msg('Файл превышает 64 МиБ.',true);return}

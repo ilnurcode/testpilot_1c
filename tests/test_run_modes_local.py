@@ -21,8 +21,9 @@ DESKTOP_PAGE = """<!DOCTYPE html>
 <body>
   <main>
     <div id="funcPanel">Главное</div>
-    <div id="sales">Продажи</div>
+    <div id="sales" aria-current="page">Продажи</div>
     <button id="save" onclick="fetch('/saved', {method: 'POST'});">Записать</button>
+    <button onclick="document.getElementById('sales').textContent='Заказы'">Сменить раздел</button>
   </main>
 </body></html>"""
 
@@ -74,7 +75,7 @@ def publication():
         thread.join()
 
 
-def _suite_with_steps(clients, monkeypatch, steps: list[dict], port: int) -> tuple:
+def _suite_with_steps(clients, monkeypatch, steps: list[dict], port: int, *, section: str = 'Продажи') -> tuple:
     impact, c = clients
     p = package()
     assert c.post('/api/v1/impact-packages', json=p).status_code == 200
@@ -84,8 +85,8 @@ def _suite_with_steps(clients, monkeypatch, steps: list[dict], port: int) -> tup
         json={
             'odata_url': f'http://127.0.0.1:{port}/odata/standard.odata',
             'web_url': f'http://127.0.0.1:{port}/',
-            'auth_username': 'Тест',
-            'auth_password': '',
+            'auth_username': None,
+            'auth_password': None,
         },
     )
     assert connection.status_code == 200, connection.text
@@ -100,7 +101,7 @@ def _suite_with_steps(clients, monkeypatch, steps: list[dict], port: int) -> tup
             'object_ids': [p['affected_objects'][0]],
             'steps': ['Проверить поведение кнопки'],
             'expected_result': 'Счётчик POST /saved совпадает',
-            'cases': [{'steps': steps}],
+            'cases': [{'steps': steps, 'assertions': [{'id': 'probe', 'scope': 'connectivity', 'check': 'web_section_visible', 'engine': 'playwright', 'operator': 'exists', 'selector': {'section': section}, 'expected': {'type': 'boolean', 'value': True}}]}],
         }],
         'warnings': [],
     })
@@ -126,6 +127,20 @@ def _saved(port: int) -> int:
         return int(response.read().decode('utf-8'))
 
 
+def _run_local(c, sid, params=None):
+    import time
+    response = c.post(f"/api/v1/ai/suites/{sid}/run-1c", params=params or {})
+    if response.status_code not in (200, 202):
+        return response
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        state = c.get(f"/api/v1/ai/suites/{sid}/status").json()
+        if state['status'] not in ('queued', 'running'):
+            return c.get(f"/api/v1/ai/suites/{sid}")
+        time.sleep(0.05)
+    raise AssertionError(state)
+
+
 MUTATING_STEPS = [{'action': 'click', 'target': 'Записать'}, {'action': 'wait', 'value': 500}]
 
 
@@ -145,10 +160,7 @@ def test_run_with_allow_mutations_really_clicks(clients, monkeypatch, publicatio
     state, port = publication
     c, suite = _suite_with_steps(clients, monkeypatch, MUTATING_STEPS, port)
 
-    response = c.post(
-        f"/api/v1/ai/suites/{suite['suite_id']}/run-1c",
-        params={'allow_mutations': 'true'},
-    )
+    response = _run_local(c, suite['suite_id'], params={'allow_mutations': 'true'})
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -164,10 +176,7 @@ def test_strict_read_only_blocks_click_before_browser(clients, monkeypatch, publ
     state, port = publication
     c, suite = _suite_with_steps(clients, monkeypatch, MUTATING_STEPS, port)
 
-    response = c.post(
-        f"/api/v1/ai/suites/{suite['suite_id']}/run-1c",
-        params={'strict_read_only': 'true'},
-    )
+    response = _run_local(c, suite['suite_id'], params={'strict_read_only': 'true'})
 
     assert response.status_code == 422, response.text
     assert 'strict_read_only' in response.json()['error']['message']
@@ -183,10 +192,7 @@ def test_strict_read_only_runs_assert_text_without_posts(clients, monkeypatch, p
         port,
     )
 
-    response = c.post(
-        f"/api/v1/ai/suites/{suite['suite_id']}/run-1c",
-        params={'strict_read_only': 'true'},
-    )
+    response = _run_local(c, suite['suite_id'], params={'strict_read_only': 'true'})
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -194,4 +200,26 @@ def test_strict_read_only_runs_assert_text_without_posts(clients, monkeypatch, p
     assert body['allow_mutations'] is False
     assert body['results'][0]['status'] == 'passed', body['results'][0]
     assert state['page_hits'] >= 1, 'браузер в строгом режиме должен открыть страницу'
+    assert state['saved'] == 0
+
+
+def test_action_and_typed_assertion_share_live_context_and_checkpoint(clients, monkeypatch, publication):
+    state, port = publication
+    c, suite = _suite_with_steps(
+        clients, monkeypatch, [{'action': 'click', 'target': 'Сменить раздел'}], port,
+        section='Заказы',
+    )
+    response = _run_local(c, suite['suite_id'])
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['status'] == 'completed'
+    assert body['results'][0]['status'] == 'passed', body['results'][0]
+    assert body['results'][0]['business_success'] is None
+    assert body['results'][0]['assertions'][0]['actual'] == {'type': 'boolean', 'value': True}
+    assert len(body['step_results']) == 1
+    step = body['step_results'][0]
+    assert (step['proposal_index'], step['case_index'], step['step_index']) == (0, 0, 1)
+    assert step['status'] == 'passed'
+    assert step['started_at'] and step['finished_at']
+    assert c.get(f"/api/v1/ai/evidence/{step['evidence_id']}").status_code == 200
     assert state['saved'] == 0

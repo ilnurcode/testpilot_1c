@@ -9,6 +9,18 @@ from testpilot.integration.webclient import ScenarioReport, StepResult
 
 PNG = b'\x89PNG\r\n\x1a\n' + b'screenshot-payload' * 10  # >100 байт, как настоящий снимок
 
+# Прогон сценариев без typed assertion запрещён гейтом запуска (api._validate_run_assertions),
+# поэтому кейс описывается так же, как его описывает план: шаги + connectivity assertion.
+WEB_ASSERTION = {
+    'id': 'web',
+    'scope': 'connectivity',
+    'check': 'web_section_visible',
+    'engine': 'playwright',
+    'operator': 'exists',
+    'selector': {'section': 'Продажи'},
+    'expected': {'type': 'boolean', 'value': True},
+}
+
 
 def _suite() -> dict:
     return {
@@ -20,7 +32,8 @@ def _suite() -> dict:
                 'object_ids': ['document.заказклиента'],
                 'steps': ['открыть раздел'],
                 'expected_result': 'Раздел открыт',
-                'cases': [{'steps': [{'action': 'click', 'target': 'Продажи'}]}],
+                'cases': [{'steps': [{'action': 'click', 'target': 'Продажи'}],
+                           'assertions': [dict(WEB_ASSERTION)]}],
             }],
         },
     }
@@ -39,7 +52,8 @@ def _patch_runner(monkeypatch, report: ScenarioReport, diagnostics: dict | None 
             self.profile = profile
             self.last_login_diagnostics = diagnostics
 
-        def run_scenario(self, title, steps):
+        def run_scenario(self, title, steps, playwright_instance=None, assertions=None,
+                         should_cancel=None, on_step=None):
             return report
 
     monkeypatch.setattr(webclient_module, 'WebClientRunner', FakeRunner)
@@ -56,7 +70,11 @@ def test_step_failure_keeps_screenshot_evidence(monkeypatch):
 
     results, evidence = executor.execute_1c(_suite(), _Profile())
 
-    assert results[0]['status'] == 'failed'
+    # Сбой шага — ошибка исполнения: бизнес-проверка не выполнялась, расхождения нет.
+    assert results[0]['status'] == 'error'
+    assert results[0]['business_checked'] is False
+    assert results[0]['assertions'] == []
+    assert 'элемент не найден' in results[0]['message']
     assert evidence == [(0, PNG)], 'скриншот ошибки шага должен попасть в evidence'
     assert 'screenshot_unavailable' not in results[0]
 
@@ -144,7 +162,8 @@ def test_both_post_and_pre_submit_empty_marks_unavailable(monkeypatch):
 def test_successful_run_saves_one_evidence_only(monkeypatch):
     first = b'\x89PNG\r\n\x1a\n' + b'open-url' * 20
     last = b'\x89PNG\r\n\x1a\n' + b'final-step' * 20
-    report = ScenarioReport(title='Веб-клиент 1С', status='passed', screenshots=[first, last])
+    report = ScenarioReport(title='Веб-клиент 1С', status='passed', screenshots=[first, last],
+                            assertions={'web': {'value': True}})
     _patch_runner(monkeypatch, report, {'stage': 'after_click', 'user_filled': True,
                                         'password_filled': False, 'clicked': True,
                                         'form_visible_after': False})
@@ -256,3 +275,99 @@ def test_step_failure_stage_has_no_post_click_bytes(monkeypatch):
     assert result['evidence_provenance'] == 'step'
     assert result['post_click_screenshot_bytes'] == 0
     assert evidence == [(0, step)]
+
+
+def test_second_case_navigation_failure_has_no_stale_pre_submit(monkeypatch):
+    """Раннер один на весь suite: снимок формы входа кейса N−1 не должен достаться кейсу N.
+
+    Кейс N падает на первом navigate, до handle_login: снимок прошлой попытки входа
+    не имеет отношения к его evidence и не должен выдаваться за pre_submit.
+    """
+    import testpilot.integration.webclient as webclient_module
+
+    pre = b'\x89PNG\r\n\x1a\n' + b'login-form-of-previous-case' * 4
+
+    class FakeLocator:
+        def inner_text(self):
+            return 'Рабочий стол'
+
+    class FakePage:
+        def set_default_timeout(self, *args, **kwargs):
+            pass
+
+        def locator(self, selector):
+            return FakeLocator()
+
+        def close(self, *args, **kwargs):
+            pass
+
+    class FakeContext:
+        def route(self, *args, **kwargs):
+            pass
+
+        def new_page(self):
+            return FakePage()
+
+    class FakeBrowser:
+        def new_context(self, **kwargs):
+            return FakeContext()
+
+        def close(self):
+            pass
+
+    class FakeChromium:
+        def launch(self, **kwargs):
+            return FakeBrowser()
+
+    class FakePlaywright:
+        chromium = FakeChromium()
+
+    class FakePlaywrightManager:
+        def __enter__(self):
+            return FakePlaywright()
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr('playwright.sync_api.sync_playwright', lambda: FakePlaywrightManager())
+    monkeypatch.setenv('TP_CHROMIUM_PATH', str(webclient_module.__file__))
+    monkeypatch.setattr(webclient_module, '_safe_screenshot', lambda context, page: b'')
+
+    navigations = []
+
+    def fake_navigate(page, url, addresses=None, timeout=45000):
+        navigations.append(url)
+        if len(navigations) > 1:
+            raise RuntimeError('net::ERR_CONNECTION_REFUSED: стенд недоступен')
+        return url
+
+    monkeypatch.setattr(webclient_module, 'navigate', fake_navigate)
+    monkeypatch.setattr(webclient_module, 'assert_section',
+                        lambda page, target, baseline, timeout: 'Раздел открыт')
+
+    def fake_login(self, page):
+        # Первый кейс доходит до входа и оставляет снимок формы в состоянии раннера.
+        self.last_login_presubmit_shot = pre
+
+    monkeypatch.setattr(webclient_module.WebClientRunner, 'handle_login', fake_login)
+    monkeypatch.setattr(webclient_module.WebClientRunner, 'wait_for_1c', lambda self, page: None)
+
+    two_cases = {
+        'approval': {'selected_proposals': [0]},
+        'suggestion': {'proposals': [{
+            'title': 'Веб-клиент 1С',
+            'engine': 'playwright',
+            'object_ids': ['document.заказклиента'],
+            'steps': ['открыть раздел'],
+            'cases': [{'steps': [], 'assertions': [dict(WEB_ASSERTION)]},
+                      {'steps': [], 'assertions': [dict(WEB_ASSERTION)]}],
+        }]},
+    }
+
+    results, evidence = executor.execute_1c(two_cases, _Profile())
+
+    assert results[0]['status'] == 'passed'
+    assert results[1]['status'] == 'error'
+    assert results[1]['pre_submit_screenshot_bytes'] == 0, 'снимок формы предыдущего кейса не должен прилипнуть'
+    assert results[1]['evidence_provenance'] != 'pre_submit'
+    assert (1, pre) not in evidence

@@ -26,6 +26,15 @@ def _text_fingerprint(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _file_fingerprint(path: Path) -> str:
+    """sha256 байтов файла: отпечаток не зависит от декодирования и перевода строк.
+
+    read_text на Windows нормализует CRLF→LF, поэтому sha256 текста не совпадал с sha256 файла.
+    """
+    with path.open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
 def _directory_fingerprint(directory: Path) -> str:
     """Отпечаток проверенного каталога: sha256 манифеста «относительный путь + sha256(содержимое файла)».
 
@@ -36,7 +45,7 @@ def _directory_fingerprint(directory: Path) -> str:
     for path in sorted(_engine.source_files(directory), key=lambda item: item.relative_to(directory).as_posix()):
         relative = path.relative_to(directory).as_posix()
         try:
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            digest = _file_fingerprint(path)
         except OSError:
             digest = "unreadable"
         entries.append(f"{relative}\0{digest}")
@@ -179,7 +188,7 @@ async def scan_endpoint(
         source_name = p.name
         if p.is_file():
             issues = _engine.scan_file(p)
-            fingerprint = _text_fingerprint(p.read_text(encoding="utf-8-sig", errors="replace"))
+            fingerprint = _file_fingerprint(p)
             result = _summarize(issues, 1, sources_checked=1)
         elif p.is_dir():
             summary = _engine.scan_directory(p, min_severity=min_sev)

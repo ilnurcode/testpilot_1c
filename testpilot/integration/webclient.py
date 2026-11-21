@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit
 from testpilot.ai.executor import browser_path
 from testpilot.config import choice_env, int_env
+from testpilot.contracts import now
 from testpilot.integration.probe import Profile, container_access_url, container_access_urls
 
 
@@ -111,6 +112,7 @@ class ScenarioReport:
     pre_submit_screenshot: bytes = b''
     # Стадия каждого снимка из screenshots: pre_submit | post_click | step_failure | step_ok.
     screenshot_stages: list[str] = field(default_factory=list)
+    assertions: dict[str, dict] = field(default_factory=dict)
 
 
 def _safe_screenshot(context, page) -> bytes:
@@ -138,6 +140,29 @@ def _workspace_lines(page) -> list[str]:
         except Exception:
             continue
     return lines
+
+
+WORKSPACE_ROOT_SCRIPT = """() => {
+  const visible = element => !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+  return !!(document.querySelector('#funcPanel') ||
+    [...document.querySelectorAll('main,[role="main"],[role="application"],#workspace,.workspace,.frameMain,.frameWork,.frameContent')]
+      .filter(visible).length);
+}"""
+
+
+def workspace_root_present(page) -> bool:
+    """Открыта ли рабочая область 1С: есть корень, в котором assert_section ищет раздел.
+
+    Нужна там, где отсутствие раздела трактуется как негативный факт: без корня (страница
+    ошибки, форма входа, ответ 401/403/404) отсутствие раздела — сбой прогона, а не факт.
+    """
+    for frame in page.frames:
+        try:
+            if frame.evaluate(WORKSPACE_ROOT_SCRIPT):
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def assert_section(
@@ -584,36 +609,65 @@ class WebClientRunner:
         except Exception:
             pass
 
-    def run_scenario(self, title: str, steps: list[dict], playwright_instance=None) -> ScenarioReport:
+    def run_scenario(self, title: str, steps: list[dict], playwright_instance=None, assertions: list[dict] | None = None, should_cancel=None, on_step=None) -> ScenarioReport:
         """Выполнение последовательности шагов сценария."""
         from playwright.sync_api import sync_playwright
         from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
         report = ScenarioReport(title=title, status='passed')
         start_time = time.perf_counter()
+        # Раннер переиспользуется на весь suite: снимок формы входа и диагностика прошлого
+        # кейса не должны достаться текущему, если он упадёт до handle_login (первый navigate).
+        self.last_login_presubmit_shot = b''
+        self.last_login_diagnostics = None
 
         def _run(p):
             path = browser_path(p)
             if not path:
                 raise RuntimeError("Chromium не найден для запуска веб-клиента 1С")
 
+            # Имена привязываются заранее: сбой до new_page/new_context не должен превращаться
+            # в UnboundLocalError в обработчике и в finally и скрывать настоящую причину.
+            browser = context = page = None
+            presubmit = b''
             browser = p.chromium.launch(executable_path=path, headless=self.headless, args=['--no-sandbox', '--disable-dev-shm-usage'])
             try:
                 context = browser.new_context(
                     viewport={'width': 1280, 'height': 800},
                     locale='ru-RU',
-                    ignore_https_errors=True
+                    ignore_https_errors=True,
+                    service_workers='block',
                 )
+                allowed_origins = {_origin(url) for url in container_access_urls(self.raw_web_url)}
+                route_state = {'blocked': 0, 'blocked_non_get': 0, 'non_get_allowed': 0,
+                               'blocked_origins': [], 'blocked_main': False}
+                context.route('**/*', probe_route_guard(allowed_origins, route_state, allow_same_origin_writes=True))
                 page = context.new_page()
                 page.set_default_timeout(self.default_timeout)
 
+                if should_cancel and should_cancel():
+                    report.status = 'cancelled'
+                    report.error = 'Отменено до открытия веб-клиента'
+                    return
                 # Шаг 0: Открытие URL веб-клиента
                 step_start = time.perf_counter()
                 page_url = navigate(page, self.raw_web_url)
                 self.last_web_url = page_url
                 report.url = page_url
-                self.handle_login(page)
-                report.pre_submit_screenshot = self.last_login_presubmit_shot or b''
+                if route_state.get('blocked_main'):
+                    raise RuntimeError(f"Запрос на сторонний origin отклонён: {route_state['blocked_origins'][0] if route_state['blocked_origins'] else 'unknown'}")
+                if should_cancel and should_cancel():
+                    report.status = 'cancelled'
+                    report.error = 'Отменено до входа в 1С'
+                    return
+                try:
+                    self.handle_login(page)
+                finally:
+                    # Падение входа не отменяет снимок формы, снятый этим же запуском:
+                    # поле сброшено в начале run_scenario (и в handle_login), поэтому здесь
+                    # только снимок текущего запуска — снимок прошлого кейса сюда не попадает.
+                    presubmit = self.last_login_presubmit_shot or b''
+                report.pre_submit_screenshot = presubmit
                 if report.pre_submit_screenshot:
                     report.steps.append(StepResult(
                         step_number=0, action='login', target='вход: скриншот формы до отправки', value=None,
@@ -652,7 +706,12 @@ class WebClientRunner:
                 # Выполнение переданных шагов
                 section_baseline = None
                 for idx, step in enumerate(steps, 1):
+                    if should_cancel and should_cancel():
+                        report.status = 'cancelled'
+                        report.error = 'Отменено до следующего шага; выполненные шаги сохранены'
+                        break
                     s_start = time.perf_counter()
+                    step_started_at = now()
                     action = step.get('action')
                     target = step.get('target', '')
                     val = step.get('value')
@@ -728,6 +787,16 @@ class WebClientRunner:
                         ))
                         report.screenshots.append(shot)
                         report.screenshot_stages.append('step_ok')
+                        if on_step:
+                            keep_going = on_step({'step_index': idx, 'action': action, 'target': target,
+                                                  'status': 'passed', 'started_at': step_started_at,
+                                                  'finished_at': now(),
+                                                  'duration_seconds': s_duration,
+                                                  'message': step_message}, [shot] if shot else [])
+                            if keep_going is False:
+                                report.status = 'cancelled'
+                                report.error = 'Остановлено после шага: lease/attempt потерян'
+                                break
 
                     except Exception as step_exc:
                         s_duration = round(time.perf_counter() - s_start, 3)
@@ -744,14 +813,51 @@ class WebClientRunner:
                         ))
                         report.screenshots.append(shot)
                         report.screenshot_stages.append('step_failure')
+                        if on_step:
+                            on_step({'step_index': idx, 'action': action, 'target': target,
+                                     'status': 'failed', 'started_at': step_started_at, 'finished_at': now(),
+                                     'duration_seconds': s_duration, 'message': str(step_exc)},
+                                    [shot] if shot else [])
                         report.status = 'failed'
                         report.error = f"Ошибка на шаге {idx} ({action} {target}): {step_exc}"
                         break
 
+                if assertions and report.status == 'passed':
+                    for raw in assertions:
+                        if should_cancel and should_cancel():
+                            report.status = 'cancelled'
+                            report.error = 'Отменено до следующего assertion'
+                            break
+                        if raw.get('check') != 'web_section_visible':
+                            continue
+                        aid = raw.get('id') or 'web'
+                        selector = raw.get('selector') or {}
+                        target = selector.get('section') or ((selector.get('path') or [''])[-1])
+                        actual = False
+                        error = ''
+                        try:
+                            assert_section(page, target, section_baseline, self.default_timeout)
+                            actual = True
+                        except AssertionError as exc:
+                            if not workspace_root_present(page):
+                                # Рабочей области нет (ответ 401/403/404, уход на форму входа,
+                                # таймаут сеанса): «раздела нет» не подтверждено, иначе негативное
+                                # expected=false выдавало бы сбой за успех.
+                                report.assertions[aid] = {
+                                    'status': 'error', 'value': None,
+                                    'error': f'рабочая область 1С не открыта, раздел не проверен: {exc}',
+                                }
+                                continue
+                            error = str(exc)
+                        except Exception as exc:
+                            report.assertions[aid] = {'status': 'error', 'value': None, 'error': str(exc)}
+                            continue
+                        report.assertions[aid] = {'type': 'boolean', 'value': actual, 'error': error}
+
             except Exception as error:
                 # Ошибка до шагов (навигация, вход): снимок делаем до закрытия страницы, иначе evidence теряется.
-                report.pre_submit_screenshot = getattr(self, 'last_login_presubmit_shot', b'') or b''
-                shot = _safe_screenshot(context, page)
+                report.pre_submit_screenshot = presubmit
+                shot = _safe_screenshot(context, page) if page is not None else b''
                 if shot:
                     report.steps.append(StepResult(
                         step_number=0, action='open_url', target=report.url or self.raw_web_url, value=None,
@@ -764,12 +870,14 @@ class WebClientRunner:
                     report.screenshot_stages.append('post_click' if submitted else 'step_failure')
                 raise
             finally:
-                try:
-                    page.close(run_before_unload=True)
-                    time.sleep(0.5)
-                except Exception:
-                    pass
-                browser.close()
+                if page is not None:
+                    try:
+                        page.close(run_before_unload=True)
+                        time.sleep(0.5)
+                    except Exception:
+                        pass
+                if browser is not None:
+                    browser.close()
 
         try:
             if playwright_instance:
@@ -905,7 +1013,7 @@ def _login_probe_open_error(reason) -> RuntimeError:
     return RuntimeError(f'Не удалось открыть веб-клиент проекта: {reason}')
 
 
-def probe_route_guard(allowed, state, boot: bool = False):
+def probe_route_guard(allowed, state, boot: bool = False, allow_same_origin_writes: bool = False):
     """Фильтр: чужой origin блокируется всегда; non-GET разрешён только same-origin и только в режиме boot."""
     def guard(route):
         request = route.request
@@ -913,10 +1021,21 @@ def probe_route_guard(allowed, state, boot: bool = False):
         url = getattr(request, 'url', '') or ''
         origin = _origin(url)
         if origin in allowed:
+            if allow_same_origin_writes:
+                from testpilot.target_policy import check_target, TargetDenied
+                try:
+                    check_target(url, purpose='webclient request')
+                except TargetDenied:
+                    state['blocked'] += 1
+                    state['blocked_origins'].append(_origin_text(url))
+                    if getattr(request, 'resource_type', '') == 'document':
+                        state['blocked_main'] = True
+                    route.abort()
+                    return
             if method in ('GET', 'HEAD'):
                 route.continue_()
                 return
-            if boot:
+            if boot or allow_same_origin_writes:
                 state['non_get_allowed'] = state.get('non_get_allowed', 0) + 1
                 route.continue_()
                 return

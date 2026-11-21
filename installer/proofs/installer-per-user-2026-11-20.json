@@ -1,0 +1,205 @@
+{
+  "scope": "per-user installer fix for installer/testpilot.iss: build, silent install, upgrade-over-install, silent uninstall, no administrative artifacts",
+  "generated_at_local": "2026-11-20T20:05:00+07:00",
+  "machine": {
+    "os": "Windows 10.0.26300 / x64",
+    "user": "Ilnur",
+    "session_elevated": false,
+    "elevation_check": "net session -> access denied (non-elevated session)",
+    "inno_setup": {
+      "version": "6.7.3",
+      "iscc": "C:\\Users\\Ilnur\\AppData\\Local\\Programs\\Inno Setup 6\\ISCC.exe"
+    }
+  },
+  "diagnosis_previous_admin_install": {
+    "observed_before_fix": {
+      "hklm_uninstall_key": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{6E2F5B7C-8F4A-4F1B-9C6D-2B3E7A1D9F42}_is1 existed, InstallLocation=C:\\Users\\Ilnur\\AppData\\Local\\Temp\\a3-installer.EoeZ7EeG\\installed (deleted since)",
+      "start_menu_folder": "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\TestPilot 1C (2 .lnk)",
+      "public_desktop_link": "C:\\Users\\Public\\Desktop\\TestPilot 1C.lnk",
+      "uninstaller_verysilent_exit": 1,
+      "uninstaller_help_argument": "/ ? hung ~90 s, no output",
+      "temp_leftover": "%TEMP%\\is-XA0V7S7X9N-uninstall.tmp (empty, from the failed uninstaller run)"
+    },
+    "why_admin_was_required": [
+      "installer/testpilot.iss had no PrivilegesRequired, so Inno defaulted to admin",
+      "DefaultDirName={autopf} resolved to C:\\Program Files for that mode",
+      "[Icons] used {group} and {autodesktop}, which in admin mode are ProgramData Start Menu and C:\\Users\\Public\\Desktop",
+      "Inno writes the uninstall key to HKLM in admin mode"
+    ],
+    "why_uninstaller_returned_1": {
+      "observed": "unins000.exe /VERYSILENT exited 1 and left an is-*.tmp directory in %TEMP%",
+      "conclusion": "an administrative install produces an uninstaller that requires the same elevation; the silent run could not initialize without it (Inno exit code 1 = setup failed to initialize)",
+      "help_argument_hang": "the uninstaller has no /? switch: it ignores unknown arguments and shows the modal confirmation dialog, which a -Wait host sees as a hang",
+      "side_effect": "HKLM key and shared shortcuts cannot be removed without elevation, so residue stays"
+    }
+  },
+  "changes": {
+    "installer/testpilot.iss": [
+      "PrivilegesRequired=lowest added",
+      "DefaultDirName={localappdata}\\Programs\\TestPilot1C (was {autopf}\\TestPilot1C)",
+      "[Icons] now use {userprograms}\\TestPilot 1C\\... and {userdesktop}\\TestPilot 1C.lnk (were {group} and {autodesktop})",
+      "comments document the per-user layout and the separate %LOCALAPPDATA%\\TestPilot1C data directory",
+      "AppId, UsePreviousAppDir, [Files] source list, [Tasks], [Run] and version generation unchanged"
+    ],
+    "installer/README.md": [
+      "added section 'Установка только для текущего пользователя' with the artifact table, silent commands and the failure explanation",
+      "release gate 1 updated: ISCC build/install/upgrade/uninstall verified non-elevated; clean-VM still pending",
+      "corrected two stale statements ([Run] presence, Program Files target)"
+    ],
+    "docs/windows.md": [
+      "installer package path documented as %LOCALAPPDATA%\\Programs\\TestPilot1C, no administrator needed"
+    ],
+    "tests/test_installer_package.py": [
+      "added test_installer_is_per_user_and_creates_no_global_artifacts: pins PrivilegesRequired=lowest, {localappdata} install dir, user-only icon destinations, absence of {autopf}/{autodesktop}/{group}/[Registry]"
+    ]
+  },
+  "build": {
+    "staging_verify_before": {"exit": 1, "reason": "source_drift: migrations/versions/0010_connection_secret.py, scripts/start-docker.ps1 changed after staging"},
+    "staging_rebuild": {"command": "python installer/stage.py", "exit": 0, "version": "0.1.0", "file_count": 100, "total_bytes": 821454, "composition_rules_changed": false},
+    "staging_verify_after": {"command": "python installer/stage.py --verify installer/staging", "exit": 0},
+    "iscc": {
+      "command": "ISCC.exe /O\"%TEMP%\\tp-percaller-work\\out\" installer\\testpilot.iss",
+      "exit": 0,
+      "warnings": ["Architecture identifier \"x64\" is deprecated, substituted with x64os (pre-existing)"],
+      "artifact": {"name": "TestPilot_Setup.exe", "bytes": 2275037, "sha256": "41962406343ec7aa54a41b76b0a6170f392977b9457cfdd3835690647c22782f"},
+      "iss_sha256": "9cb848902dd84af8659e5b25b410210b5d673ffcfddf162fbaf3091e154f3a1a",
+      "embedded_manifest": {"requestedExecutionLevel": "asInvoker", "requireAdministrator_occurrences": 0}
+    }
+  },
+  "install_cycle_final_build": {
+    "command": "Start-Process -Wait TestPilot_Setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'",
+    "exit": 0,
+    "uac_prompt": "none (asInvoker manifest)",
+    "app_dir": "C:\\Users\\Ilnur\\AppData\\Local\\Programs\\TestPilot1C",
+    "manifest_files_expected": 100,
+    "manifest_files_sha256_match": 100,
+    "manifest_problems": [],
+    "extra_files_in_app_dir": ["manifest.json", "unins000.dat", "unins000.exe"],
+    "log_evidence": [
+      "19:57:08.315 Dest filename: C:\\Users\\Ilnur\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\TestPilot 1C\\TestPilot 1C.lnk",
+      "19:57:08.379 Dest filename: ...\\TestPilot 1C\\Остановить TestPilot 1C.lnk",
+      "19:57:08.436 Dest filename: C:\\Users\\Ilnur\\Desktop\\TestPilot 1C.lnk",
+      "19:57:08.455 Creating new uninstall key: HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{6E2F5B7C-8F4A-4F1B-9C6D-2B3E7A1D9F42}_is1",
+      "19:57:08.457 Installation process succeeded."
+    ],
+    "created": {
+      "paths": [
+        "C:\\Users\\Ilnur\\AppData\\Local\\Programs\\TestPilot1C\\ (103 files: 100 package + manifest.json + unins000.dat + unins000.exe)",
+        "C:\\Users\\Ilnur\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\TestPilot 1C\\TestPilot 1C.lnk",
+        "C:\\Users\\Ilnur\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\TestPilot 1C\\Остановить TestPilot 1C.lnk",
+        "C:\\Users\\Ilnur\\Desktop\\TestPilot 1C.lnk"
+      ],
+      "registry": [
+        "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{6E2F5B7C-8F4A-4F1B-9C6D-2B3E7A1D9F42}_is1"
+      ]
+    },
+    "hkcu_key_values": {
+      "DisplayName": "TestPilot 1C version 0.1.0 (Current user)",
+      "DisplayVersion": "0.1.0",
+      "InstallLocation": "C:\\Users\\Ilnur\\AppData\\Local\\Programs\\TestPilot1C\\",
+      "UninstallString": "\"C:\\Users\\Ilnur\\AppData\\Local\\Programs\\TestPilot1C\\unins000.exe\"",
+      "QuietUninstallString": "\"C:\\Users\\Ilnur\\AppData\\Local\\Programs\\TestPilot1C\\unins000.exe\" /SILENT"
+    },
+    "note_display_name": "Inno detected the legacy administrative install of the same AppId and appended '(Current user)' so the two entries are not shown as duplicates"
+  },
+  "upgrade_cycle": {
+    "corruption": {"path": "pyproject.toml", "package_sha256": "8f1bda475bc0a66224f837c5857d3fe18386bba483abcdb0a8b6f9a7de7f356c", "after_append_sha256": "2a1ba8f0b229559b9a9a6a256897af1438de52e0b3bceb2ce588319dbd40ae85"},
+    "stray_file_added": "C:\\Users\\Ilnur\\AppData\\Local\\Programs\\TestPilot1C\\stray-leftover.txt (deleted by the test before uninstall)",
+    "command": "same silent install run against the existing installation",
+    "exit": 0,
+    "result": {
+      "manifest_files_sha256_match": 100,
+      "corrupted_file_restored": true,
+      "app_dir_location_unchanged": true,
+      "hkcu_uninstall_keys_for_appid": 1,
+      "start_menu_entries": ["TestPilot 1C.lnk", "Остановить TestPilot 1C.lnk"],
+      "desktop_shortcuts": 1,
+      "uninstaller_files": ["unins000.dat", "unins000.exe"],
+      "unowned_stray_file_left_in_place": true,
+      "note": "Inno does not delete files it does not own; this is expected, not installer residue"
+    }
+  },
+  "uninstall_cycle": {
+    "command": "Start-Process -Wait %LOCALAPPDATA%\\Programs\\TestPilot1C\\unins000.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'",
+    "exit": 0,
+    "uac_prompt": "none",
+    "processes_after": "no unins*/_iu* processes",
+    "removed": {
+      "paths": [
+        "C:\\Users\\Ilnur\\AppData\\Local\\Programs\\TestPilot1C\\ (whole directory)",
+        "C:\\Users\\Ilnur\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\TestPilot 1C\\ (whole group folder, both links)",
+        "C:\\Users\\Ilnur\\Desktop\\TestPilot 1C.lnk"
+      ],
+      "registry": ["HKCU\\...\\Uninstall\\{6E2F5B7C-8F4A-4F1B-9C6D-2B3E7A1D9F42}_is1 (key absent after uninstall)"]
+    },
+    "verified_absent_after": ["app dir", "user start menu group", "desktop link", "HKCU key", "unins processes"],
+    "data_dir_never_created": "C:\\Users\\Ilnur\\AppData\\Local\\TestPilot1C does not exist: first-run.ps1 was never run (silent install does not start it)"
+  },
+  "global_artifacts_proof": {
+    "claim": "no install, upgrade or uninstall run wrote to HKLM, ProgramData or the Public Desktop",
+    "hklm": {
+      "baseline": "HKLM key {6E2F5B7C-...}_is1 exported with 'reg query /s' before the cycles",
+      "after": "identical text (diff exit 0, no differences)",
+      "hklm_wow6432node": "absent before and after",
+      "interpretation": "the surviving HKLM key is the pre-existing legacy entry, unchanged by this work"
+    },
+    "programdata_start_menu": {
+      "legacy_folder_mtime_before": "2026-11-20 16:28:30.0460166 +0700",
+      "legacy_folder_mtime_after_cycles": "2026-11-20 16:28:30.0460166 +0700",
+      "created_by_this_run": false
+    },
+    "public_desktop": {
+      "legacy_link_mtime_before": "2026-11-20 16:28:30.0627802 +0700",
+      "legacy_link_mtime_after_cycles": "2026-11-20 16:28:30.0627802 +0700",
+      "created_by_this_run": false
+    },
+    "other_users_files_untouched": "C:\\Users\\Public\\Desktop still lists only the 6 pre-existing third-party shortcuts; ProgramData Start Menu Programs still has its 37 entries"
+  },
+  "legacy_residue": {
+    "removed_without_elevation": [
+      {"path": "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\TestPilot 1C", "command": "rm -rf \"C:/ProgramData/Microsoft/Windows/Start Menu/Programs/TestPilot 1C\"", "exit": 0, "verified": "directory absent"},
+      {"path": "C:\\Users\\Public\\Desktop\\TestPilot 1C.lnk", "command": "rm -f \"C:/Users/Public/Desktop/TestPilot 1C.lnk\"", "exit": 0, "verified": "file absent"}
+    ],
+    "removed_with_one_elevated_attempt": "none: the single elevation request was cancelled by the user",
+    "requires_elevation": {
+      "key": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{6E2F5B7C-8F4A-4F1B-9C6D-2B3E7A1D9F42}_is1",
+      "non_elevated_attempt": {"command": "reg delete \"HKLM\\...\\{6E2F5B7C-8F4A-4F1B-9C6D-2B3E7A1D9F42}_is1\" /f", "exit": 1, "stderr": "ERROR: Access is denied."},
+      "elevated_attempt": {"command": "Start-Process reg.exe -ArgumentList @('delete', $key, '/f') -Verb RunAs -Wait -PassThru", "result": "This command cannot be run due to the error: The operation was canceled by the user.", "uac_declined": true, "retried": false},
+      "status": "STILL PRESENT (dead entry: its UninstallString points to a deleted %TEMP% directory)",
+      "manual_command_admin_powershell": "reg delete \"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{6E2F5B7C-8F4A-4F1B-9C6D-2B3E7A1D9F42}_is1\" /f",
+      "manual_verification": "reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{6E2F5B7C-8F4A-4F1B-9C6D-2B3E7A1D9F42}_is1\"",
+      "gui_alternative": "Параметры → Приложения → Установленные приложения → TestPilot 1C version 0.1.0 → Удалить (запись без файлов, удаление требует повышения)"
+    }
+  },
+  "tests": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_installer_package.py -q",
+    "result": "14 passed",
+    "added": "test_installer_is_per_user_and_creates_no_global_artifacts"
+  },
+  "preliminary_cycle_first_build": {
+    "note": "first built revision used {userprograms} as the icon root, which put two loose .lnk files in the Start Menu Programs root; fixed to {userprograms}\\TestPilot 1C\\ and the full cycle was repeated on the rebuilt setup",
+    "install_exit": 0,
+    "manifest_files_sha256_match": "100/100",
+    "uninstall_exit": 0,
+    "removed": ["app dir", "both loose .lnk", "desktop link", "HKCU key"]
+  },
+  "untested": [
+    "clean Windows VM / clean user profile installation",
+    "upgrade between different versions (only same-version upgrade-over-install was exercised)",
+    "database migrations on upgrade (the installer never starts the app; first-run.ps1 was not run)",
+    "GUI (non-silent) wizard path and the postinstall first-run launch",
+    "launcher executable packaging: TestPilot.exe is excluded because installer/launcher-build.json is absent"
+  ],
+  "artifacts": {
+    "build_output_kept_out_of_repo": "%TEMP%\\tp-percaller-work\\out\\TestPilot_Setup.exe (ISCC /O override; no dist_setup\\ written)",
+    "logs": [
+      "%TEMP%\\tp-percaller-work\\install_final_1.log",
+      "%TEMP%\\tp-percaller-work\\install_final_2_upgrade.log"
+    ],
+    "verify_snapshots": [
+      "%TEMP%\\tp-percaller-work\\verify_install_final_1.json",
+      "%TEMP%\\tp-percaller-work\\verify_after_upgrade.json",
+      "%TEMP%\\tp-percaller-work\\verify_after_uninstall_final.json"
+    ]
+  }
+}

@@ -14,9 +14,9 @@ def test_compose_is_self_contained_and_host_ports_are_loopback_only():
     assert 'TestPilotLocal123!' in compose
     assert 'TestPilot_Db_Local_Only_2026' in compose
     assert 'WEB_URL: http://web:8000' in compose
-    assert '127.0.0.1:8000:8000' in compose
-    assert '127.0.0.1:8001:8001' in compose
-    assert '127.0.0.1:8002:8002' in compose
+    assert '127.0.0.1:${TP_WEB_HOST_PORT:-8000}:8000' in compose
+    assert '127.0.0.1:${TP_IMPACT_HOST_PORT:-8001}:8001' in compose
+    assert '127.0.0.1:${TP_INTEL_HOST_PORT:-8002}:8002' in compose
     assert 'pgdata:/var/lib/postgresql/data' in compose
 
 

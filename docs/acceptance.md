@@ -2,10 +2,15 @@
 
 После `docker compose up -d --build --wait`.
 
+- A1 (2026-11-17): два одноразовых tmpfs-PostgreSQL стенда с уникальными nonce/project/DB/портами прошли smoke PASS; оба на alembic 0008, DB-маркер владельца подтверждён, wrong-identity отклонена, migration head/drift tests прошли, cleanup без `-v` удалил только свои контейнеры/сеть, leftovers 0. Рабочий project `testpilot` не затрагивался.
+- A2 (2026-11-17): fixture backup/restore на двух tmpfs-стендах PASS; dump 36 598 байт + manifest опубликованы единой директорией; restore сохранил counts, payload projects/suites и sha256 evidence; манифест без payload/evidence и с неверными counts отклонён до/внутри restore-транзакции, target остался пустым с marker; непустой target/обрезанный dump/без manifest отклонены; leftovers 0; рабочая БД не затрагивалась.
+
 Приёмка вызывает compose только через предохранители `scripts/compose.sh`/`compose.ps1`: они отказывают (код 3) на `down -v`, `volume rm` и `volume prune` рабочего проекта; разрешены только `-p testpilot-ci`/`-p testpilot-restore`.
 В `pyproject.toml` в `addopts` нет `-q`: приёмка парсит строку «N passed», а `-qq` (addopts + вызов) её подавляет — `-q` передаёт вызывающая сторона.
 
 Флаги: `--llm`/`-IncludeLLM`, `--live-1c`/`-IncludeLive1C`, `--probe-login`/`-ProbeLogin`, `--cfe`, `--no-build`/`-NoBuild`, `--keep`/`-Keep`, `--help`/`-Help`; `--live-1c` и `--llm` независимы. Для `--live-1c` обязателен `TP_ACCEPTANCE_PROJECT_ID` — проект с настроенным подключением (`web_url`/`odata_url`/пользователь): без него или без `web_url` шаг даёт FAIL, а не SKIP. Живой прогон идёт на этом проекте, временный демо-проект приёмки остаётся только для аудита/скана и удаляется; проект из `TP_ACCEPTANCE_PROJECT_ID` не удаляется. При этом запуск создаёт в указанном проекте новый suite, сохраняет evidence (PNG) и сдвигает `last_run`: для демонстрационного проекта это нормально, для «чистого» учитывайте это или используйте отдельный демонстрационный проект.
+
+Идентичность цели обязательна: `TP_ACCEPTANCE_PROJECT` (compose project) и `TP_ACCEPTANCE_EXPECT_DB`; адреса берутся из портов этого проекта, без fallback на 127.0.0.1:8000. Для одноразового стенда задайте `TP_ACCEPTANCE_DISPOSABLE=1` — тогда пароль читается только из окружения, не из `.env`; compose-файл и env-файл задаются явно (`TP_ACCEPTANCE_COMPOSE_FILE`, `TP_ACCEPTANCE_ENV_FILE`).
 
 **Автоматический прогон:** `scripts/acceptance.ps1` (PowerShell 5.1+) или `scripts/acceptance.sh` (bash) — одна команда, PASS/FAIL/SKIP по шагам и код возврата 1 при любом FAIL. По умолчанию выполняются только локальные проверки: стек, `/health`, миграции, демо-ZIP, журнал аудита с отчётами, `pytest`. Внешние шаги включаются явно и независимо: `-IncludeLLM`/`--llm` — генерация плана у внешнего провайдера (пустой `TP_LLM_API_KEY` даёт FAIL с текстом про ключ), `-IncludeLive1C`/`--live-1c` — approve навигационного предложения и `run-1c` на базе 1С; без `--llm` план для живого прогона строится `provider=local`, ключ LLM не нужен. Без обоих флагов раздел даёт SKIP и сетевых вызовов не делает. Живой шаг запускает владелец: он обращается к реальной публикации. Фактическое число тестов печатает `scripts/acceptance.sh` и `pytest tests/ -q`; в документации числа не дублируются.
 
@@ -13,6 +18,13 @@ UI smoke: `tests/test_ui_smoke.py` (маркер `ui`) обходит `#overview
 
 Прочее: `-CfePath <file>`/`--cfe <file>` (или `CFE_PATH`; без файла шаг .cfe пропускается), `-NoBuild`/`--no-build`, `EXPECT_DEMO_ISSUES` (по умолчанию 12), `TP_EXPERT_PASSWORD` (иначе из `.env` или из окружения контейнера). Read-only зонд формы входа включается флагом `-ProbeLogin`/`--probe-login` и требует `TP_ACCEPTANCE_PROJECT_ID` (id проекта с настроенным `web_url`): зонд только открывает страницу и читает разметку, без ввода учётных данных, кликов и approve; без флага печатается `SKIP probe-login: флаг не передан`. Созданный прогоном проект удаляется в конце (в том числе при провале проверки) через `DELETE /api/v1/projects/{id}?confirm={id}`; `-Keep`/`--keep` оставляет его. Записи журнала аудита кода к проекту не привязаны и не удаляются — в сводке печатается их текущее число. Подробности: [README](../README.md), контракты API: [api.md](api.md), ограничения: [limitations.md](limitations.md), ручной живой прогон на DemoTrd: [live-run.md](live-run.md).
 Креды по умолчанию: `expert` / `$TP_EXPERT_PASSWORD` (`TestPilotLocal123!` в compose).
+
+
+- A1 actual app (2026-11-18): isolated nonce tmpfs PG + 3 local uvicorn; /health database+marker ok all services; POST /api/demo 200; report md/csv 200 through gateway; C1 UI final pass owned by Interface on own 900s harness.
+
+- CI acceptance (2026-11-18): `.github/workflows/tests.yml` поднимает только db, ставит marker на disposable `testpilot_ci`, затем явно `--profile init run --rm migrate python scripts/schema_actions.py --init` и `schema_state.py --require-head`; приложения стартуют без скрытого migrate. YAML проверен локальным парсером; remote CI не запускался.
+
+- A3 CLI actual (2026-11-18): own temp staged copy/nonce 692cdc61b477, existing image + RO mount, tmpfs PG; uninitialized -> explicit init -> health+receipt 0010; repeat no migrate (0010/0010); incompatible 9999_future -> exit 3 without Ready/receipt; cleanup own 4 containers/network, 0 leftovers; owner stack untouched. Stale image/RO mount limitation: built-image clean install not verified.
 
 ## Стек
 

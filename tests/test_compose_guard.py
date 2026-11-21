@@ -50,11 +50,14 @@ def fake_docker(tmp_path):
     return bin_dir, args_file
 
 
-def _run(args, fake_docker, ci=None, compose_project=None):
+def _run(args, fake_docker, ci=None, compose_project=None, identity=''):
     bin_dir, args_file = fake_docker
     env = {**os.environ, 'PATH': f'{_posix(bin_dir)}:/usr/bin:/bin'}
     env.pop('CI', None)
     env.pop('COMPOSE_PROJECT_NAME', None)
+    env.pop('TP_DISPOSABLE_IDENTITY', None)
+    if identity:
+        env['TP_DISPOSABLE_IDENTITY'] = identity
     if ci is not None:
         env['CI'] = ci
     if compose_project is not None:
@@ -73,8 +76,17 @@ def test_down_with_volumes_on_work_project_is_refused(fake_docker):
     assert called == []
 
 
-def test_down_with_volumes_is_allowed_for_isolated_project(fake_docker):
+def test_down_with_volumes_is_refused_without_explicit_disposable_identity(fake_docker):
+    # Имя проекта само по себе не доказывает, что стенд одноразовый (A1).
     result, called = _run(['-p', 'testpilot-ci', 'down', '-v'], fake_docker)
+
+    assert result.returncode == 3
+    assert 'TP_DISPOSABLE_IDENTITY=testpilot-ci' in result.stderr
+    assert called == []
+
+
+def test_down_with_volumes_is_allowed_for_isolated_project(fake_docker):
+    result, called = _run(['-p', 'testpilot-ci', 'down', '-v'], fake_docker, identity='testpilot-ci')
 
     assert result.returncode == 0, result.stderr
     assert called == ['compose', '-p', 'testpilot-ci', 'down', '-v']
@@ -132,14 +144,14 @@ def test_project_from_environment_is_refused(fake_docker):
 
 
 def test_project_from_environment_whitelist_allows(fake_docker):
-    result, called = _run(['down', '-v'], fake_docker, compose_project='testpilot-ci')
+    result, called = _run(['down', '-v'], fake_docker, compose_project='testpilot-ci', identity='testpilot-ci')
 
     assert result.returncode == 0, result.stderr
     assert called == ['compose', 'down', '-v']
 
 
 def test_long_volumes_flag_is_allowed_for_restore_project(fake_docker):
-    result, called = _run(['--project', 'testpilot-restore', 'down', '--volumes'], fake_docker)
+    result, called = _run(['--project', 'testpilot-restore', 'down', '--volumes'], fake_docker, identity='testpilot-restore')
 
-    assert result.returncode == 0
+    assert result.returncode == 0, result.stderr
     assert called == ['compose', '--project', 'testpilot-restore', 'down', '--volumes']

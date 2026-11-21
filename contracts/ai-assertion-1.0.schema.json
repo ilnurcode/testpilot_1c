@@ -1,0 +1,222 @@
+{
+  "$defs": {
+    "AssertionSelector": {
+      "additionalProperties": false,
+      "properties": {
+        "entity": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "minLength": 1,
+              "pattern": "^[\\w.:-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entity"
+        },
+        "key": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key"
+        },
+        "field": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Field"
+        },
+        "section": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section"
+        },
+        "path": {
+          "items": {
+            "maxLength": 300,
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f]+$",
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Path",
+          "type": "array"
+        }
+      },
+      "title": "AssertionSelector",
+      "type": "object"
+    },
+    "ExpectedValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "string",
+            "integer",
+            "number",
+            "boolean",
+            "date",
+            "null"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ExpectedValue",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[\\w.:-]+$",
+      "title": "Id",
+      "type": "string"
+    },
+    "scope": {
+      "enum": [
+        "business",
+        "connectivity",
+        "metadata",
+        "manual"
+      ],
+      "title": "Scope",
+      "type": "string"
+    },
+    "check": {
+      "enum": [
+        "odata_field_equals",
+        "odata_record_count",
+        "odata_posted_state",
+        "metadata_entity",
+        "web_section_visible",
+        "manual"
+      ],
+      "title": "Check",
+      "type": "string"
+    },
+    "engine": {
+      "enum": [
+        "odata",
+        "playwright",
+        "manual"
+      ],
+      "title": "Engine",
+      "type": "string"
+    },
+    "operator": {
+      "enum": [
+        "equals",
+        "contains",
+        "count_equals",
+        "exists",
+        "posted",
+        "manual"
+      ],
+      "title": "Operator",
+      "type": "string"
+    },
+    "selector": {
+      "$ref": "#/$defs/AssertionSelector"
+    },
+    "expected": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExpectedValue"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "source_ref": {
+      "anyOf": [
+        {
+          "maxLength": 300,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f]+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Ref"
+    },
+    "requirement": {
+      "anyOf": [
+        {
+          "maxLength": 300,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f]+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Requirement"
+    },
+    "required": {
+      "default": true,
+      "title": "Required",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "scope",
+    "check",
+    "engine",
+    "operator"
+  ],
+  "title": "ai-assertion-1.0",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://testpilot.local/contracts/ai-assertion-1.0.schema.json",
+  "description": "Canonical typed assertion for TestPilot AI plans; business success requires expected/actual."
+}

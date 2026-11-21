@@ -41,14 +41,15 @@ async def prepare(request:Request,actor=Depends(expert)):
     async with httpx.AsyncClient(timeout=60,headers={'Authorization':request.headers['authorization']}) as c:
         projects=await c.get(base+'/projects');projects.raise_for_status()
         project=next((p for p in projects.json()['items'] if p['configuration_id']=='presentation-sales'),None)
-        if not project:
+        created_project=not project
+        if created_project:
             r=await c.post(base+'/projects',json={'name':'Продажи — презентационный стенд','description':'Учебная разработка: версии, зависимости, сценарии и реальные проверки на синтетическом стенде. Не реальная 1С.'});r.raise_for_status();project=r.json()
         uploads=[]
         for version in (1,2):
             raw=json.dumps(sample(version),ensure_ascii=False).encode()
             r=await c.post(base+f'/projects/{project["id"]}/uploads',params={'filename':f'Учебная-разработка-v{version}.json','label':f'{version}.0','kind':'extension','component':'Расширение продаж'},content=raw);r.raise_for_status();uploads.append(r.json())
         r=await c.post(base+f'/projects/{project["id"]}/uploads/{uploads[1]["id"]}/analyze',json={'baseline_id':uploads[0]['id']});r.raise_for_status()
-        return {'project_id':project['id'],'analysis':r.json(),'synthetic':True}
+        return {'project_id':project['id'],'created_project':created_project,'analysis':r.json(),'synthetic':True}
 
 @router.post('/api/sandbox/orders')
 def create_order(q:Order,actor=Depends(analyst),s=Depends(session,scope='function')):

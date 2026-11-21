@@ -29,6 +29,10 @@ def _mock_runner(monkeypatch):
         def new_page(self):
             return page
 
+        def route(self, pattern, handler):
+            # Исполнитель ставит сетевой guard на context: мок обязан его принимать.
+            self.route_calls = getattr(self, 'route_calls', 0) + 1
+
     context = Context()
 
     class Browser:

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import hashlib
+from urllib.parse import urlsplit
 from sqlalchemy import select
 
 from testpilot.config import int_env
@@ -18,6 +20,25 @@ MAX_FAILURES = int_env('TP_1C_LOGIN_MAX_FAILURES', 3, 1, 10)
 LOGIN_FAILURE_STAGES = ('after_click', 'submit')
 LOGIN_FAILED_TEXT = 'Вход в 1С не выполнен'
 
+
+def cooldown_key(s, project, suite: dict | None = None) -> str:
+    """Public target identity + normalized principal; no project prefix/revision/password."""
+    from testpilot.impact.projects import connection_public_identity
+    from testpilot.contracts import checksum
+    public = connection_public_identity(s, project)
+    from testpilot.target_policy import effective_port
+
+    def target(url):
+        if not url:
+            return None
+        parts = urlsplit(url)
+        return {'scheme': parts.scheme.lower(), 'host': (parts.hostname or '').lower(),
+                'port': effective_port(parts), 'path': parts.path.rstrip('/')}
+
+    return checksum({
+        'targets': {'odata_url': target(public.get('odata_url')), 'web_url': target(public.get('web_url'))},
+        'principal': public.get('auth_username'),
+    })
 
 def has_login_playwright(suite: dict) -> bool:
     """В плане есть playwright-предложение: исполнитель всегда выполняет вход перед шагами."""
@@ -37,17 +58,17 @@ def _result_login_succeeded(result: dict) -> bool:
     return (result.get('status') or '') == 'passed' and login.get('form_visible_after') is False
 
 
-def recent_login_failures(s, project_id: str, *, now: datetime | None = None) -> int:
+def recent_login_failures(s, project_id: str | None = None, *, now: datetime | None = None, login_key: str | None = None) -> int:
     """Число неудачных попыток входа в окне; новая успешная попытка обнуляет серию."""
     moment = now or datetime.now(timezone.utc)
     cutoff = (moment - timedelta(minutes=COOLDOWN_MINUTES)).strftime('%Y-%m-%dT%H:%M:%S')
-    rows = s.execute(
-        select(AISuiteRow.payload, AISuiteRow.created_at).where(AISuiteRow.project_id == project_id)
-    ).all()
+    rows = s.execute(select(AISuiteRow.payload, AISuiteRow.created_at)).all()
     entries = []
     for payload, created_at in rows:
         payload = payload or {}
-        stamp = str(payload.get('created_at') or created_at or '')
+        if login_key is not None and payload.get('cooldown_key') != login_key:
+            continue
+        stamp = str(payload.get('finished_at') or payload.get('created_at') or created_at or '')
         if stamp < cutoff:
             continue
         results = payload.get('results') or []
@@ -64,13 +85,13 @@ def recent_login_failures(s, project_id: str, *, now: datetime | None = None) ->
     return failures
 
 
-def ensure_login_allowed(s, suite: dict, project_id: str) -> None:
+def ensure_login_allowed(s, suite: dict, project_id: str, login_key: str | None = None) -> None:
     """429 до запуска браузера, если серия неудачных входов исчерпала лимит."""
     from fastapi import HTTPException
 
     if not has_login_playwright(suite):
         return
-    failures = recent_login_failures(s, project_id)
+    failures = recent_login_failures(s, project_id, login_key=login_key)
     if failures >= MAX_FAILURES:
         raise HTTPException(
             429,

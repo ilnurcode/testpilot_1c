@@ -1,31 +1,21 @@
 <#
 .SYNOPSIS
-    Дамп БД TestPilot из запущенного compose-стека.
-.DESCRIPTION
-    Пишет только файл дампа в .runtime\backups\ и ничего не удаляет.
-    Запуск: powershell -ExecutionPolicy Bypass -File scripts\backup.ps1
-    Переменные: POSTGRES_USER/POSTGRES_DB (иначе берутся из контейнера db), BACKUP_DIR.
+    Атомарный backup одноразового стенда (dump + sha256/манифест).
 #>
 $ErrorActionPreference = 'Stop'
-# Compose-вызовы идут через предохранитель scripts/compose.ps1; исключение — pg_dump с редиректом через cmd
-# (там нет down -v и удаления томов).
-function DC { & (Join-Path $PSScriptRoot 'compose.ps1') @args }
-$root = Split-Path -Parent $PSScriptRoot
-Set-Location $root
-$backupDir = if ($env:BACKUP_DIR) { $env:BACKUP_DIR } else { '.runtime\backups' }
-New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
-
-$dbUser = if ($env:POSTGRES_USER) { $env:POSTGRES_USER } else { (DC exec -T db printenv POSTGRES_USER 2>$null | Out-String).Trim() }
-$dbName = if ($env:POSTGRES_DB) { $env:POSTGRES_DB } else { (DC exec -T db printenv POSTGRES_DB 2>$null | Out-String).Trim() }
-if (-not $dbUser) { $dbUser = 'testpilot' }
-if (-not $dbName) { $dbName = 'testpilot' }
-
-$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$file = Join-Path $backupDir "testpilot-$stamp.sql"
-# Редирект через cmd, чтобы дамп не прошёл через кодировку PowerShell.
-& cmd /c "docker compose exec -T db pg_dump -U $dbUser $dbName > `"$file`""
-if ($LASTEXITCODE -ne 0) { Write-Host "FAIL  pg_dump вернул код $LASTEXITCODE"; exit 1 }
-
-$size = (Get-Item $file).Length
-if ($size -le 0) { Write-Host "FAIL  дамп пуст: $file"; exit 1 }
-Write-Host "OK  дамп: $file ($size байт)"
+$Root = Split-Path -Parent $PSScriptRoot
+foreach ($name in 'TP_BACKUP_PROJECT','TP_BACKUP_COMPOSE_FILE','TP_BACKUP_EXPECT_DB','TP_BACKUP_INSTANCE_TOKEN','TP_BACKUP_DB_USER') {
+    if (-not [Environment]::GetEnvironmentVariable($name)) { Write-Host "Отказ: задайте $name"; exit 2 }
+}
+$Python = Join-Path $Root '.venv\Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $Python)) { $Python = 'python' }
+$args = @('backup','--project',$env:TP_BACKUP_PROJECT,'--compose-file',$env:TP_BACKUP_COMPOSE_FILE,
+          '--expect-db',$env:TP_BACKUP_EXPECT_DB,'--instance-token',$env:TP_BACKUP_INSTANCE_TOKEN,
+          '--db-user',$env:TP_BACKUP_DB_USER,'--dump-dir',$(if ($env:BACKUP_DIR) { $env:BACKUP_DIR } else { Join-Path $Root '.runtime\backups' }))
+if ($env:TP_BACKUP_ENV_FILE) { $args += @('--env-file',$env:TP_BACKUP_ENV_FILE) }
+if ($env:TP_BACKUP_MANUAL -eq '1') {
+    if (-not $env:TP_BACKUP_CONFIRM_PROJECT) { Write-Host 'Отказ: ручной backup требует TP_BACKUP_CONFIRM_PROJECT'; exit 2 }
+    $args += @('--manual','--confirm-project',$env:TP_BACKUP_CONFIRM_PROJECT)
+}
+& $Python (Join-Path $Root 'scripts\pg_backup.py') @args
+exit $LASTEXITCODE

@@ -65,10 +65,12 @@
 | GET | ai/suites/{id}/preflight | Read-only preflight плана: `would_run`, `approved_indices`, `engines` (engine, mutating, steps_count, blocked_reason), `settings` (web_url/odata_url/пользователь/пароль), `runtime` (grace/login_wait/login_submit/audit_max_issues/предохранитель/режимы), `warnings`; браузер не запускается, в БД не пишется |
 | DELETE | ai/suites/{id}?confirm={id} | Адресное удаление прогона (expert): без/неверный `confirm` — 409, неизвестный id — 404; каскад `evidence`, тестов `ai-<id>-*` с `coverage`/`priorities`, прогона `ai-run-<id>` с `results`/`defects` и самой строки suite; пакет и планы не удаляются; ответ `{suite_id, deleted:{…}}` |
 | POST | ai/suites/{id}/approve | Подтверждение выбранных предложений (expert) |
-| POST | ai/suites/{id}/run-1c | Прогон на базе 1С по настройкам проекта; флаги `allow_mutations`, `strict_read_only` |
-| POST | ai/suites/{id}/rerun | Повтор сохранённого плана новой записью suite (исходная не меняется) |
-| GET | ai/suites/{id}/report?format=md/csv | Отчёт о прогоне: md по кейсам, csv — одна строка на результат |
-| POST | ai/suites/{id}/run-demo | Прогон на синтетическом стенде presentation-sales |
+| POST | ai/suites/{id}/run-1c | HTTP 202: постановка в очередь, ответ RunState (не полный suite); флаги `allow_mutations`, `strict_read_only` |
+| GET | ai/suites/{id}/status | Лёгкий RunState для polling, без results/evidence |
+| POST | ai/suites/{id}/cancel | Очередь: `cancelled`; выполняющийся прогон: `cancel_requested=true` до остановки; terminal: 409 |
+| POST | ai/suites/{id}/rerun | HTTP 202: новая запись suite в очереди, новый `suite_id`; исходная история не меняется |
+| GET | ai/suites/{id}/report?format=md/csv | Сохранённые кейсы и typed assertions; каждый результат и каждый отсутствующий кейс утверждённого плана представлены отдельно |
+| POST | ai/suites/{id}/run-demo | Прогон на синтетическом стенде presentation-sales; принимает только план `provider=demo` — у утверждённых автоматических кейсов должны быть `quantity/price/discount/expected_total`, иначе 409 с причиной (typed-план исполняется в 1С через run-1c) |
 | GET | ai/status, ai/settings/llm, ai/codex/status | Состояние провайдеров и Codex |
 | PUT | ai/settings/llm | `base_url`/`model`/`api_key` — только в памяти процесса; `persist=true` требует `TP_ALLOW_ENV_WRITE=1` и пишет в файл `TP_ENV_FILE` (по умолчанию `.env`) |
 | POST / GET | ai/codex/login, ai/codex/logout | Вход и выход Codex (expert) |
@@ -168,3 +170,93 @@
 Эвристика по умолчанию опирается на текст кнопки и неполна. Она **не** блокирует: кнопки с другими подписями («ОК», «Подтвердить», «Да», «Готово», пользовательские), клики по строкам, ячейкам и иконкам без текста-маркера, ввод в поля, не отправляющие данные (локальная фильтрация), автоматические действия платформы (автозаполнение, пересчёт), а также любые сценарии, которые меняют данные без клика по кнопке. Полное отсутствие побочных эффектов гарантирует только `strict_read_only=true`.
 
 Пометка `mutating` у предложения плана (`GET /api/v1/ai/suites/{id}` и ответ `POST /api/v1/ai/suites`) считается той же эвристикой и только информирует: подтверждение плана (`approve`) она не блокирует. Сводка истории (`GET /api/v1/ai/suites`) содержит `mutating_count` — число предложений плана с потенциально изменяющими шагами.
+
+### Очередь и отображение результата (C1)
+
+`RunState`: `suite_id`, `status`, `attempt_id`, `attempt_version`, `lease_expires_at`,
+`cancel_requested`, `started_at`, `finished_at`, `plan_revision`,
+`counts: {passed, failed, error, skipped}`, `business_success: bool|null`, `message`.
+Поля `total` нет. Статусы очереди — `queued` / `running`; terminal — `completed`,
+`error`, `cancelled`, `interrupted`. `completed` означает окончание выполнения,
+а не успешность всех бизнес-требований.
+
+UI читает полный план через `GET ai/suites/{id}`, после HTTP 202 начинает polling
+`/status` и получает сохранённые results/evidence через полный GET на terminal.
+Открытие ссылки `#ai/{id}` и reload возобновляют наблюдение за queued/running.
+Переход на другой план/страницу, закрытие страницы, terminal и отказ polling
+(включая 401) останавливают старый таймер; ошибка связи видна как неизвестное
+состояние, не как завершение. Кнопка «Обновить состояние» повторно читает suite.
+Отмена не откатывает уже выполненные действия в 1С.
+
+Кейс содержит `assertions: [{assertion_id, scope, status, expected, actual, message}]`,
+где `scope` — `business|connectivity|metadata|manual`, значения expected/actual —
+типизированные `{type,value}` либо `null`. UI и отчёт сохраняют это различие:
+connectivity/metadata passed не подтверждают business, manual skipped не считается
+выполненной бизнес-проверкой. `business_success=null` или отсутствие этого поля
+в полном GET suite показывается как «не проверен / не доказан», а не как ошибка
+или бизнес-успех. Поля evidence provenance, причина отсутствия снимка и сохранённый
+источник ошибки не подменяются утверждением о наличии evidence.
+
+CSV сохраняет первые восемь колонок прежнего формата; далее идут
+«Статус прогона; Бизнес-результат; Assertions; Ожидалось; Получено; Источник evidence;
+Причина отсутствия снимка; Источник ошибки; Сообщение прогона».
+Assertions/expected/actual передаются JSON в корректно процитированных CSV-ячейках.
+У отсутствующего сохранённого результата кейса статус отчёта `not_performed`,
+сообщение «не выполнено: результата нет» — это не выдуманный passed/skipped.
+Markdown экранирует HTML/ссылочную разметку из текста модели и 1С;
+CSV нейтрализует начальные символы формул при открытии в электронной таблице.
+
+Проверка подготовки C1: 16 DB-free unit-тестов отчётов; Chromium на реальных статических
+файлах с ephemeral in-memory HTTP API проверил очередь, reload, отмену, terminal,
+401/503, смену плана/страницы, новую запись rerun и безопасное отображение HTML.
+Дополнительно на actual disposable app (PostgreSQL tmpfs, head 0010, проверенные
+database/owner marker, три host uvicorn, только локальная GET-only OData fixture)
+пройден путь project → ZIP import → audit → impact → local plan → approve metadata/manual
+→ preflight 200 → enqueue 202 → polling → сохранённые typed assertions → MD/CSV download.
+Проверка метаданных прошла, manual остался skipped; бизнес-успех не заявлялся.
+На отдельном actual app также проверены reload/history и metadata failed (true → false).
+Отдельный bounded continuation ниже проверил actual cancel/error/interrupted.
+Реальная 1С/LLM, изменяющие действия и evidence веб-клиента не проверялись;
+полная готовность C1 и выпуск D1/D2 этими результатами не подтверждаются.
+
+Normal-flow evidence сохранён в `%TEMP%\testpilot-c1-own-9036cb9a61b8-55tik_wf`:
+`probe.json`, `probe.md`, `probe.csv`, `probe.png`, `summary.json` и журналы сервисов.
+Project `7681ec6f-12b0-4a80-9f33-80f9fdd0e75b`, suite
+`693fa040-7f62-4ee8-a6a6-38186537002f`: completed, counts `1/0/0/1`,
+metadata assertion boolean `true → true`, manual skipped, бизнес-успех не доказан.
+В `summary.json` общий harness помечен failed из-за его собственного KeyError
+при обращении к необязательному suite-полю `business_success` уже после сохранения
+отчётов. Это не ошибка продукта и не доказательство отсутствующих edge-сценариев.
+PostgreSQL и три процесса этого собственного nonce были очищены; proof-файлы сохранены.
+
+После DIRECT Advisor SOURCE STABLE выполнен **один** bounded continuation:
+`%TEMP%\testpilot-c1-missing-7419c40334fa-0myicsk_`, exit 0 за 345,89 с,
+13 semantic checks true. Prerequisites создавались через actual API; normal UI flow
+не повторялся. Новый собственный nonce `7419c40334fa877d`, PostgreSQL tmpfs/head 0010,
+проверенные database/marker, три host uvicorn и localhost GET-only fixture.
+
+- Cancel: UI queued → running → cancel_requested → cancelled; после текущего
+  `$metadata` не отправлен следующий GET — всего один запрос. Reload сохранил статус.
+- HTTP 500 от fixture: suite completed с counts `0/0/1/1`, кейс error и manual skipped;
+  infrastructure error показана явно, бизнес-успех не заявлен.
+- Остановлен только собственный intelligence во время delayed OData. UI показал 503
+  и неизвестное состояние, не ложное завершение. После **реального** TTL300 intelligence
+  перезапущен с той же PostgreSQL; reaper сохранил interrupted, повторного GET не было.
+  Reload/history и MD/CSV по фактическим сохранённым кейсам проверены.
+- В этом UI recovery нет предшествующего checkpoint. Отдельные PG/API-доказательства
+  durable checkpoint не засчитываются как UI-проверка. JS errors: 0.
+
+IDs и детали находятся в `summary.json`/`resources.json`; screenshots — `running.png`,
+`cancelled.png`, `error.png`, `dependency-unavailable.png`, `interrupted.png`, `history.png`.
+Результаты и MD/CSV сохранены для cancelled/error/interrupted. Собственный container
+CREATE ID `43fa9e6e78d0` удалён после проверки ownership/marker, три процесса и fixture
+остановлены, записанные порты закрыты, собственные stack temp files удалены;
+`cleanup-proof.json` сохранён рядом с evidence. Чужие ресурсы не затрагивались.
+
+Captured UI выявил два consumer-дефекта: stale payload.status=queued затирал
+RunState.status=running после cancel, а cancelled-кейс показывался по-английски.
+В `ai.js` исправлены приоритет RunState при merge и локализация terminal case status.
+Отдельный DB-free browser smoke на actual static files подтвердил обе правки
+(`ui-fix-local-proof.json`); повторный actual backend pass после них не выполнялся.
+
+

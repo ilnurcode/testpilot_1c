@@ -1,20 +1,28 @@
+# Обычный запуск: миграции не выполняются, чужие контейнеры и порты не освобождаются.
+# Схема БД только проверяется; создать/обновить её можно явно: scripts\init.ps1 / scripts\update.ps1.
 . (Join-Path $PSScriptRoot 'windows-common.ps1')
 Assert-Windows
 Push-Location $script:ProjectRoot
 $started = @()
 try {
     if (-not (Test-Path -LiteralPath $script:PythonExe)) { throw 'Run scripts/install.ps1 first.' }
+    Assert-DataDirWritable
     Import-LocalEnv
     # This entrypoint serves only the local host publication.
     $env:IMPACT_URL = 'http://127.0.0.1:8001'
     $env:INTELLIGENCE_URL = 'http://127.0.0.1:8002'
     $env:WEB_URL = 'http://127.0.0.1:8000'
     Assert-Docker
+    $runningStack = Get-RunningComposeServices
+    if ($runningStack.Count -gt 0) {
+        throw ("Docker-стек этого проекта уже запущен ({0}). Обычный запуск не останавливает чужие контейнеры. " +
+            'Остановите Docker-стек: Остановить_в_Docker.cmd, затем повторите scripts\start.ps1.') -f ($runningStack -join ', ')
+    }
     Invoke-Checked $script:PythonExe @('-c', "from playwright.sync_api import sync_playwright; from testpilot.ai.executor import browser_path; path=browser_path(); assert path, 'Install Chromium or fix TP_CHROMIUM_PATH'; p=sync_playwright().start(); b=p.chromium.launch(executable_path=path, headless=True); b.close(); p.stop(); print('Chromium: OK')")
     # No image rebuild or browser installation is required on an ordinary restart.
     Invoke-Checked docker @('compose', 'up', '-d', '--wait', 'db')
-    Invoke-Checked $script:PythonExe @('-m', 'alembic', 'upgrade', 'head')
-    Invoke-Checked docker @('compose', 'stop', 'impact', 'intelligence', 'web')
+    # Схему создаёт/меняет только явное действие; здесь — проверка и понятный отказ.
+    Invoke-Checked $script:PythonExe @('scripts/schema_state.py', '--require-head')
     Stop-OwnedServices
     foreach ($port in @(8001, 8002, 8000)) { Assert-FreePort $port }
     New-Item -ItemType Directory -Path $script:RuntimeDir -Force | Out-Null
@@ -36,6 +44,8 @@ try {
     foreach ($service in @('impact', 'intelligence', 'web')) {
         if ($null -eq (Get-OwnedService $service)) { throw "$service exited. Check .runtime logs." }
     }
+    # Квитанция: версия приложения, ревизия БД, идентичность БД и health всех сервисов.
+    Invoke-Checked $script:PythonExe @('scripts/instance_status.py', '--require-ready', '--write-receipt', (Get-ReceiptPath))
     Write-Host 'Ready: http://localhost:8000 (login: expert; password: local .env)'
     Write-Host 'Demo: Overview -> Open demonstration. Stop: .\scripts\stop.ps1'
 } catch {

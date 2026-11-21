@@ -38,6 +38,20 @@ $projectAllowed = $allowed -contains $project
 $inCi = $env:CI -in @('1', 'true', 'yes')
 $ciHint = if ($inCi) { ' В CI используйте отдельный проект: `-p testpilot-ci`.' } else { '' }
 
+$destructive = ($hasDown -and $hasVolumes) -or [bool]$volumeSub
+if ($destructive -and $projectAllowed) {
+    if ($env:TP_DISPOSABLE_IDENTITY -ne $project) {
+        Write-Host "Отказано: разрушительная операция для $project требует TP_DISPOSABLE_IDENTITY=$project (явная идентичность одноразового стенда)." -ForegroundColor Red
+        exit 3
+    }
+    $badVolumes = @(& docker volume ls --filter "label=com.docker.compose.project=$project" --format '{{.Name}}' 2>$null |
+        Where-Object { $_ -and -not $_.StartsWith("${project}_") })
+    if ($badVolumes.Count -gt 0) {
+        Write-Host "Отказано: у проекта $project есть тома с чужими именами: $($badVolumes -join ', ')" -ForegroundColor Red
+        exit 3
+    }
+}
+
 if ($hasDown -and $hasVolumes -and -not $projectAllowed) {
     Write-Host "Отказано: ``down -v`` удаляет тома (БД и evidence). На рабочем стенде недопустимо. Используйте ``-p testpilot-ci`` или ``-p testpilot-restore``, либо ``docker compose down`` без ``-v``.$ciHint" -ForegroundColor Red
     exit 3

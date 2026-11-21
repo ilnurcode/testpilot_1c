@@ -120,3 +120,54 @@ def test_explicit_host_is_not_rewritten_in_container(monkeypatch):
     result = probe(Profile('https://odata.example.test/base/odata/standard.odata'), httpx.MockTransport(respond))
     assert seen == ['odata.example.test']
     assert result['odata']['status'] == 'connection_error'
+
+
+def test_web_only_project_probe_uses_local_fixture_and_not_environment(clients, monkeypatch):
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append((self.path, self.headers.get('Authorization')))
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(b'<html>Local probe fixture</html>')
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setenv('TP_ALLOW_LOCAL_TARGETS', '1')
+        monkeypatch.setenv('TP_1C_ODATA_URL', 'https://never-contact.example.test/odata')
+        monkeypatch.setenv('TP_1C_AUTHORIZATION', 'Bearer must-not-be-forwarded')
+        url = f'http://127.0.0.1:{server.server_port}/web'
+        result = probe(Profile(odata_url='', web_url=url))
+        assert result['odata'] == {'status': 'not_configured'}
+        assert result['web']['status'] == 'reachable'
+        assert result['web']['login_verified'] is False
+        assert result['tests_executed'] == 0
+        impact, _ = clients
+        response = impact.post('/api/v1/projects', json={'name': 'Web-only probe', 'description': ''})
+        assert response.status_code == 200, response.text
+        project = response.json()['id']
+        response = impact.put(f'/api/v1/projects/{project}/connection', json={'web_url': url})
+        assert response.status_code == 200, response.text
+        response = impact.post(f'/api/v1/projects/{project}/connection/probe')
+        assert response.status_code == 200, response.text
+        assert response.json()['odata'] == {'status': 'not_configured'}
+        assert response.json()['web']['status'] == 'reachable'
+        assert requests == [('/web', None), ('/web', None)]
+        assert impact.put(f'/api/v1/projects/{project}/connection', json={}).status_code == 200
+        assert impact.post(f'/api/v1/projects/{project}/connection/probe').status_code == 422
+        with pytest.raises(ValueError, match='odata_url или web_url'):
+            Profile(odata_url='', web_url=None)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()

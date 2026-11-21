@@ -1,39 +1,120 @@
 {
   "$defs": {
     "Case": {
-      "additionalProperties": false,
+      "additionalProperties": true,
       "properties": {
         "quantity": {
-          "maximum": 1000,
-          "minimum": 1,
-          "title": "Quantity",
-          "type": "integer"
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantity"
         },
         "price": {
-          "maximum": 1000000,
-          "minimum": 0,
-          "title": "Price",
-          "type": "number"
+          "anyOf": [
+            {
+              "maximum": 1000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Price"
         },
         "discount": {
-          "maximum": 100,
-          "minimum": 0,
-          "title": "Discount",
-          "type": "number"
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Discount"
         },
         "expected_total": {
-          "maximum": 1000000000,
-          "minimum": 0,
-          "title": "Expected Total",
-          "type": "number"
+          "anyOf": [
+            {
+              "maximum": 1000000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Total"
+        },
+        "entity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entity"
+        },
+        "fields": {
+          "additionalProperties": true,
+          "title": "Fields",
+          "type": "object"
+        },
+        "expected": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected"
+        },
+        "steps": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Steps",
+          "type": "array"
+        },
+        "assertions": {
+          "items": {
+            "$ref": "ai-assertion-1.0.schema.json"
+          },
+          "maxItems": 12,
+          "title": "Assertions",
+          "type": "array"
         }
       },
-      "required": [
-        "quantity",
-        "price",
-        "discount",
-        "expected_total"
-      ],
       "title": "Case",
       "type": "object"
     },
@@ -55,11 +136,6 @@
           "type": "string"
         },
         "engine": {
-          "enum": [
-            "odata",
-            "playwright",
-            "manual"
-          ],
           "title": "Engine",
           "type": "string"
         },
@@ -160,6 +236,8 @@
     "summary",
     "proposals"
   ],
-  "title": "Suggestion",
-  "type": "object"
+  "title": "Suggestion (план проверок 1С)",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai-suggestion-1.0.schema.json"
 }

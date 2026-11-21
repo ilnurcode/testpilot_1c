@@ -12,6 +12,12 @@ from testpilot.impact.algorithms import analyze
 from testpilot.web.presentation import sample
 
 
+@pytest.fixture(autouse=True)
+def explicit_fixture_target_policy(monkeypatch):
+    """Подключение проекта задаёт внешний хост: он разрешён только явным allowlist."""
+    monkeypatch.setenv('TP_TARGET_ALLOWLIST', '1c.example.test')
+
+
 def _package():
     return analyze(sample(1), sample(2), {'edge_types': ['calls', 'uses', 'belongs_to', 'subscribes_to'],
                                           'direction': 'impact', 'max_depth': 10})[1]
@@ -20,17 +26,22 @@ def _package():
 def _project_and_suite(clients):
     impact, c = clients
     project = impact.post('/api/v1/projects', json={'name': 'Лимит входов', 'description': ''}).json()
+    # Подключение без учётных данных: проверяется предохранитель проекта, а не Basic Auth.
     assert impact.put(f"/api/v1/projects/{project['id']}/connection", json={
-        'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': 'Администратор', 'auth_password': '',
+        'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': None, 'auth_password': None,
         'odata_url': 'https://1c.example.test/odata/standard.odata',
     }).status_code == 200
     pkg = _package()
     assert c.post('/api/v1/impact-packages', json=pkg).status_code == 200
     created = c.post('/api/v1/ai/suites', json={
         'package_id': pkg['package_id'], 'project_id': project['id'], 'provider': 'local',
+        # Раздел веб-клиента в улике: без него web-проба не строится, и предохранителю нечего проверять.
+        'object_names': {'order': 'Документ.ЗаказКлиента.Продажи'},
     })
     assert created.status_code == 200, created.text
     suite = created.json()
+    assert [item['engine'] for item in suite['suggestion']['proposals']][0] == 'playwright', \
+        'предохранитель входа применяется только к плану с web-сценарием'
     assert c.post(f"/api/v1/ai/suites/{suite['suite_id']}/approve",
                   json={'reason': 'Проверка лимита', 'selected_proposals': [0]}).status_code == 200
     return project, suite, pkg['package_id']
@@ -55,6 +66,9 @@ def _seed(project_id: str, package_id: str, minutes_ago: int, success: bool = Fa
     payload = {'suite_id': suite_id, 'created_at': _stamp(minutes_ago), 'status': 'completed',
                'results': results, 'counts': {'passed': int(success), 'failed': 0, 'error': int(not success), 'skipped': 0}}
     with db._factory() as s:
+        # Предохранитель считает только прогоны той же публичной цели и того же principal.
+        from testpilot.ai.login_guard import cooldown_key
+        payload['cooldown_key'] = cooldown_key(s, s.get(db.ProjectRow, project_id))
         s.add(db.AISuiteRow(id=suite_id, package_id=package_id, project_id=project_id,
                             status='completed', payload=payload))
         s.commit()
@@ -65,13 +79,16 @@ def _run(clients, suite, monkeypatch):
     from testpilot.ai import executor as executor_module
 
     calls = []
-    monkeypatch.setattr(executor_module, 'execute_1c', lambda target, profile: (
+    monkeypatch.setattr(executor_module, 'execute_1c', lambda target, profile, **kwargs: (
         calls.append(target['suite_id']) or ([{'proposal_index': 0, 'case_index': 0, 'engine': 'playwright',
                                                'title': 'Вход', 'status': 'passed', 'message': 'Ок',
                                                'duration_seconds': 0.1, 'started_at': 'unit'}], [])
     ))
     _, c = clients
     response = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c")
+    if response.status_code == 202:
+        from test_ai_async import _wait
+        _wait(c, suite['suite_id'])
     return response, calls
 
 
@@ -96,7 +113,8 @@ def test_two_failures_allow_run(clients, monkeypatch):
 
     response, calls = _run(clients, suite, monkeypatch)
 
-    assert response.status_code == 200, response.text
+    assert response.status_code == 202, response.text
+    assert response.json()['status'] == 'queued'
     assert calls == [suite['suite_id']]
 
 
@@ -107,7 +125,8 @@ def test_old_failures_outside_window_allow_run(clients, monkeypatch):
 
     response, calls = _run(clients, suite, monkeypatch)
 
-    assert response.status_code == 200, response.text
+    assert response.status_code == 202, response.text
+    assert response.json()['status'] == 'queued'
     assert calls == [suite['suite_id']]
 
 
@@ -119,7 +138,8 @@ def test_successful_login_resets_failure_series(clients, monkeypatch):
 
     response, calls = _run(clients, suite, monkeypatch)
 
-    assert response.status_code == 200, response.text
+    assert response.status_code == 202, response.text
+    assert response.json()['status'] == 'queued'
     assert calls == [suite['suite_id']]
 
 

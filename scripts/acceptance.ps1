@@ -31,14 +31,63 @@ if ($Help) {
 
 $ErrorActionPreference = 'Stop'
 # Все compose-вызовы идут через предохранитель scripts/compose.ps1 (запрет down -v на рабочем проекте).
-function DC { & (Join-Path $PSScriptRoot 'compose.ps1') @args }
+function DC {
+    $list = @('-f', $script:ComposeFile)
+    if ($script:AcceptEnvFile) { $list += @('--env-file', $script:AcceptEnvFile) }
+    & (Join-Path $PSScriptRoot 'compose.ps1') @list @args
+}
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
+$script:ComposeFile = if ($env:TP_ACCEPTANCE_COMPOSE_FILE) { $env:TP_ACCEPTANCE_COMPOSE_FILE } else { Join-Path $Root 'compose.yaml' }
+$script:AcceptEnvFile = $env:TP_ACCEPTANCE_ENV_FILE
 
-$Web = 'http://127.0.0.1:8000'
-$Impact = 'http://127.0.0.1:8001'
-$Intel = 'http://127.0.0.1:8002'
+$Web = ''
+$Impact = ''
+$Intel = ''
+$StackProject = $env:TP_ACCEPTANCE_PROJECT
+$ExpectDb = $env:TP_ACCEPTANCE_EXPECT_DB
+if (-not $StackProject -or -not $ExpectDb) {
+    Write-Host 'FAIL  target identity: задайте TP_ACCEPTANCE_PROJECT и TP_ACCEPTANCE_EXPECT_DB (без fallback на рабочий стек)'
+    exit 2
+}
+$Python = Join-Path $Root '.venv\Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $Python)) { $Python = 'python' }
+$identityArgs = @('--project', $StackProject, '--expect-db', $ExpectDb, '--compose-file', $script:ComposeFile)
+if ($script:AcceptEnvFile) { $identityArgs += @('--env-file', $script:AcceptEnvFile) }
+$identityRaw = & $Python (Join-Path $Root 'scripts' 'target_identity.py') @identityArgs --json
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "FAIL  target identity: стенд $StackProject не подтверждён; записи не выполнялись"
+    exit 2
+}
+$identity = $identityRaw | ConvertFrom-Json
+$Web = [string]$identity.web_url
+$Impact = [string]$identity.impact_url
+$Intel = [string]$identity.intelligence_url
+if (-not $Web -or -not $Impact -or -not $Intel) {
+    Write-Host "FAIL  target identity: не получены адреса стенда $StackProject"
+    exit 2
+}
+$InstanceToken = $env:TP_ACCEPTANCE_INSTANCE_TOKEN
+if (-not $InstanceToken) {
+    Write-Host 'FAIL  target identity: задайте TP_ACCEPTANCE_INSTANCE_TOKEN (positive marker одноразовой БД)'
+    exit 2
+}
+foreach ($pair in @(@('web', $Web), @('impact', $Impact), @('intelligence', $Intel))) {
+    try {
+        $health = Invoke-RestMethod -Uri "$($pair[1])/health" -Method Get -TimeoutSec 30
+    } catch {
+        Write-Host "FAIL  target identity: $($pair[0]) не отвечает на /health"
+        exit 2
+    }
+    $actualDb = [string]$health.instance.database
+    $markerOk = [bool]$health.instance.marker_ok
+    if ($actualDb -ne $ExpectDb -or -not $MarkerOk) {
+        Write-Host "FAIL  target identity: $($pair[0]) сообщает database=$actualDb marker_ok=$markerOk, ожидалось $ExpectDb/True; записи не выполнялись"
+        exit 2
+    }
+}
+$env:COMPOSE_PROJECT_NAME = $StackProject
 $ExpectIssues = if ($env:EXPECT_DEMO_ISSUES) { [int]$env:EXPECT_DEMO_ISSUES } else { 12 }
 
 $script:Passed = 0; $script:Failed = 0; $script:Skipped = 0
@@ -55,12 +104,14 @@ function Read-DotEnv([string]$key) {
 }
 
 $User = if ($env:TP_EXPERT_USER) { $env:TP_EXPERT_USER } else { 'expert' }
-$Password = if ($env:TP_EXPERT_PASSWORD) { $env:TP_EXPERT_PASSWORD } else { Read-DotEnv 'TP_EXPERT_PASSWORD' }
-if (-not $Password) {
+$Disposable = $env:TP_ACCEPTANCE_DISPOSABLE -eq '1'
+$Password = $env:TP_EXPERT_PASSWORD
+if (-not $Password -and -not $Disposable) { $Password = Read-DotEnv 'TP_EXPERT_PASSWORD' }
+if (-not $Password -and -not $Disposable) {
     $Password = (DC exec -T intelligence printenv TP_EXPERT_PASSWORD 2>$null | Out-String).Trim()
 }
 if (-not $Password) {
-    Write-Host 'FAIL  не найден TP_EXPERT_PASSWORD ни в .env, ни в окружении контейнера'
+    Write-Host 'FAIL  не найден TP_EXPERT_PASSWORD (для disposable-стенда пароль передаётся только окружением)'
     exit 1
 }
 $AuthValue = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${User}:${Password}"))
@@ -260,7 +311,16 @@ if (-not $IncludeLLM -and -not $IncludeLive1C) {
                 Skip 'прогон на 1С отключён: добавьте -IncludeLive1C'
             } else {
             try {
-                $run = Post-Json "$Intel/api/v1/ai/suites/$($suite.suite_id)/run-1c" @{}
+                $accepted = Post-Json "$Intel/api/v1/ai/suites/$($suite.suite_id)/run-1c" @{}
+                $runState = 'queued'
+                for ($i = 0; $i -lt 120; $i++) {
+                    $status = Invoke-RestMethod -Uri "$Intel/api/v1/ai/suites/$($suite.suite_id)/status" -Headers $Headers -Method Get
+                    $runState = $status.status
+                    if ($runState -notin @('queued', 'running')) { break }
+                    Start-Sleep -Seconds 2
+                }
+                if ($runState -eq 'completed') { Pass 'прогон: completed' } else { Fail "прогон: status=$runState" }
+                $run = Invoke-RestMethod -Uri "$Intel/api/v1/ai/suites/$($suite.suite_id)" -Headers $Headers -Method Get
                 $passedCount = [int]$run.counts.passed
                 if ($passedCount -ge 1) { Pass "прогон: passed=$passedCount" } else { Fail "прогон: passed=$passedCount" }
                 $evidence = @($run.results | Where-Object { $_.evidence_id } | Select-Object -First 1)

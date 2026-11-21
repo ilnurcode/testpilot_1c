@@ -6,8 +6,14 @@ from datetime import datetime, timezone
 from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
+import pytest
 
 from testpilot.contracts import ImpactPackage, checksum
+
+
+@pytest.fixture(autouse=True)
+def explicit_fixture_target_policy(monkeypatch):
+    monkeypatch.setenv('TP_TARGET_ALLOWLIST', '1c.example.test')
 
 DELETED_KEYS = {
     'evidence',
@@ -63,6 +69,16 @@ def _package(suffix: str) -> dict:
     package = {**data, 'checksum': checksum(data)}
     ImpactPackage.model_validate(package)
     return package
+
+
+def _rerun_contract(c, sid):
+    from test_ai_async import _wait
+    response = c.post(f"/api/v1/ai/suites/{sid}/rerun")
+    assert response.status_code == 202, response.text
+    new_id = response.json()['suite_id']
+    assert new_id != sid
+    _wait(c, new_id)
+    return c.get(f"/api/v1/ai/suites/{new_id}")
 
 
 def _project(impact, name='Мусорный проект') -> dict:
@@ -283,6 +299,8 @@ def test_delete_leaves_no_orphans_in_referencing_tables(clients):
 
 
 def _run_count(client, url):
+    import threading
+
     from sqlalchemy import event
 
     from testpilot import db
@@ -290,6 +308,10 @@ def _run_count(client, url):
     statements = []
 
     def counter(conn, cursor, statement, parameters, context, executemany):
+        # Фоновый воркер прогонов опрашивает ti_ai_suites в своём потоке на том же engine:
+        # его SQL не относится к запросу страницы и считаться не должен.
+        if threading.current_thread().name == 'ai-run-worker':
+            return
         statements.append(statement)
 
     event.listen(db._engine, 'before_cursor_execute', counter)
@@ -309,8 +331,8 @@ def test_projects_list_reports_last_run_null_and_after_execution(clients, monkey
     assert impact.put(f"/api/v1/projects/{project['id']}/connection", json={
         'web_url': 'http://1c.example.test/DemoTrd',
         'odata_url': 'https://1c.example.test/odata/standard.odata',
-        'auth_username': 'Администратор',
-        'auth_password': '',
+        'auth_username': None,
+        'auth_password': None,
     }).status_code == 200
     rows = impact.get('/api/v1/projects', params={'limit': 200}).json()['items']
     mine = next(row for row in rows if row['id'] == project['id'])
@@ -322,7 +344,7 @@ def test_projects_list_reports_last_run_null_and_after_execution(clients, monkey
     assert c.post('/api/v1/impact-packages', json=p).status_code == 200
     suite = c.post('/api/v1/ai/suites', json={'package_id': p['package_id'], 'project_id': project['id'], 'provider': 'local'})
     assert suite.status_code == 200, suite.text
-    monkeypatch.setattr(executor_module, 'execute_1c', lambda suite, profile: ([
+    monkeypatch.setattr(executor_module, 'execute_1c', lambda suite, profile, **kwargs: ([
         {'proposal_index': 0, 'case_index': 0, 'engine': 'playwright', 'title': 'Навигация',
          'status': 'failed', 'message': 'Расхождение на стенде', 'duration_seconds': 0.4, 'started_at': 'unit'},
         {'proposal_index': 0, 'case_index': 1, 'engine': 'playwright', 'title': 'Навигация',
@@ -330,7 +352,8 @@ def test_projects_list_reports_last_run_null_and_after_execution(clients, monkey
     ], []))
     assert c.post(f"/api/v1/ai/suites/{suite.json()['suite_id']}/approve",
                   json={'reason': 'Приёмка last_run', 'selected_proposals': [0]}).status_code == 200
-    run = c.post(f"/api/v1/ai/suites/{suite.json()['suite_id']}/run-1c")
+    from test_ai import _run_suite
+    run = _run_suite(c, suite.json()['suite_id'])
     assert run.status_code == 200, run.text
 
     mine = next(row for row in impact.get('/api/v1/projects', params={'limit': 200}).json()['items'] if row['id'] == project['id'])
@@ -349,20 +372,21 @@ def test_projects_list_shows_newest_run_as_last_run(clients, monkeypatch):
     assert impact.put(f"/api/v1/projects/{project['id']}/connection", json={
         'web_url': 'http://1c.example.test/DemoTrd',
         'odata_url': 'https://1c.example.test/odata/standard.odata',
-        'auth_username': 'Администратор',
-        'auth_password': '',
+        'auth_username': None,
+        'auth_password': None,
     }).status_code == 200
     p = _package('rerun')
     assert c.post('/api/v1/impact-packages', json=p).status_code == 200
     suite = c.post('/api/v1/ai/suites', json={'package_id': p['package_id'], 'project_id': project['id'], 'provider': 'local'}).json()
     assert c.post(f"/api/v1/ai/suites/{suite['suite_id']}/approve",
                   json={'reason': 'Повтор', 'selected_proposals': [0]}).status_code == 200
-    monkeypatch.setattr(executor_module, 'execute_1c', lambda s, profile: ([
+    monkeypatch.setattr(executor_module, 'execute_1c', lambda s, profile, **kwargs: ([
         {'proposal_index': 0, 'case_index': 0, 'engine': 'playwright', 'title': 'Навигация',
          'status': 'passed', 'message': 'Ок', 'duration_seconds': 0.1, 'started_at': 'unit'},
     ], []))
-    assert c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c").status_code == 200
-    rerun = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/rerun")
+    from test_ai import _run_suite
+    assert _run_suite(c, suite['suite_id']).status_code == 200
+    rerun = _rerun_contract(c, suite['suite_id'])
     assert rerun.status_code == 200, rerun.text
 
     rows = impact.get('/api/v1/projects', params={'limit': 200}).json()['items']
@@ -418,7 +442,7 @@ def _project_with_run(impact, c, monkeypatch, name, statuses):
 
     project = _project(impact, name)
     assert impact.put(f"/api/v1/projects/{project['id']}/connection", json={
-        'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': 'Администратор', 'auth_password': '',
+        'web_url': 'http://1c.example.test/DemoTrd', 'auth_username': None, 'auth_password': None,
         'odata_url': 'https://1c.example.test/odata/standard.odata',
     }).status_code == 200
     import uuid
@@ -430,12 +454,13 @@ def _project_with_run(impact, c, monkeypatch, name, statuses):
     suite_id = suite.json()['suite_id']
     assert c.post(f'/api/v1/ai/suites/{suite_id}/approve',
                   json={'reason': 'Фильтры', 'selected_proposals': [0]}).status_code == 200
-    monkeypatch.setattr(executor_module, 'execute_1c', lambda s, profile: ([
+    monkeypatch.setattr(executor_module, 'execute_1c', lambda s, profile, **kwargs: ([
         {'proposal_index': 0, 'case_index': index, 'engine': 'playwright', 'title': 'Шаг',
          'status': status, 'message': status, 'duration_seconds': 0.1, 'started_at': 'unit'}
         for index, status in enumerate(statuses)
     ], []))
-    assert c.post(f'/api/v1/ai/suites/{suite_id}/run-1c').status_code == 200
+    from test_ai import _run_suite
+    assert _run_suite(c, suite_id).status_code == 200
     return project
 
 
@@ -516,8 +541,8 @@ def test_projects_only_with_issues_uses_latest_run_only(clients, monkeypatch):
     assert impact.put(f"/api/v1/projects/{project['id']}/connection", json={
         'web_url': 'http://1c.example.test/DemoTrd',
         'odata_url': 'https://1c.example.test/odata/standard.odata',
-        'auth_username': 'Администратор',
-        'auth_password': '',
+        'auth_username': None,
+        'auth_password': None,
     }).status_code == 200
     pkg = _package('latest-only')
     assert c.post('/api/v1/impact-packages', json=pkg).status_code == 200
@@ -529,12 +554,13 @@ def test_projects_only_with_issues_uses_latest_run_only(clients, monkeypatch):
         return ([{'proposal_index': 0, 'case_index': 0, 'engine': 'playwright', 'title': 'Шаг',
                   'status': status, 'message': status, 'duration_seconds': 0.1, 'started_at': 'unit'}], [])
 
-    monkeypatch.setattr(executor_module, 'execute_1c', lambda s, profile: result('failed'))
-    first = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/run-1c")
+    from test_ai import _run_suite
+    monkeypatch.setattr(executor_module, 'execute_1c', lambda s, profile, **kwargs: result('failed'))
+    first = _run_suite(c, suite['suite_id'])
     assert first.status_code == 200 and first.json()['counts']['failed'] == 1
 
-    monkeypatch.setattr(executor_module, 'execute_1c', lambda s, profile: result('passed'))
-    rerun = c.post(f"/api/v1/ai/suites/{suite['suite_id']}/rerun")
+    monkeypatch.setattr(executor_module, 'execute_1c', lambda s, profile, **kwargs: result('passed'))
+    rerun = _rerun_contract(c, suite['suite_id'])
     assert rerun.status_code == 200 and rerun.json()['counts']['passed'] == 1
 
     mine = next(row for row in _items(impact, limit=200)['items'] if row['id'] == project['id'])

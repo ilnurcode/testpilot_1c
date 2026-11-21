@@ -9,13 +9,22 @@
 # --probe-login: read-only зонд формы входа 1С для проекта из TP_ACCEPTANCE_PROJECT_ID (без ввода и кликов).
 # --help: эта справка.
 # Переменные окружения: EXPECT_DEMO_ISSUES (по умолчанию 12), CFE_PATH, TP_EXPERT_PASSWORD, TP_EXPERT_USER.
+# Обязательная идентичность цели: TP_ACCEPTANCE_PROJECT (compose project) и TP_ACCEPTANCE_EXPECT_DB.
+# При TP_ACCEPTANCE_DISPOSABLE=1 пароль берётся только из окружения (без чтения рабочего .env).
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
-WEB=http://127.0.0.1:8000
-IMPACT=http://127.0.0.1:8001
-INTEL=http://127.0.0.1:8002
+COMPOSE_FILE="${TP_ACCEPTANCE_COMPOSE_FILE:-$ROOT/compose.yaml}"
+ENV_FILE="${TP_ACCEPTANCE_ENV_FILE:-}"
+dc() {
+  local extra=()
+  if [ -n "$ENV_FILE" ]; then extra+=(--env-file "$ENV_FILE"); fi
+  "$ROOT/scripts/compose.sh" -f "$COMPOSE_FILE" "${extra[@]}" "$@"
+}
+WEB=""
+IMPACT=""
+INTEL=""
 EXPECT_ISSUES="${EXPECT_DEMO_ISSUES:-12}"
 CFE_FILE="${CFE_PATH:-}"
 BUILD=1
@@ -43,23 +52,70 @@ pass() { PASSED=$((PASSED+1)); echo "PASS  $*"; }
 fail() { FAILED=$((FAILED+1)); echo "FAIL  $*"; }
 skip() { SKIPPED=$((SKIPPED+1)); echo "SKIP  $*"; }
 
+PYTHON_BIN="${TP_PYTHON:-}"
+if [ -z "$PYTHON_BIN" ]; then
+  if [ -x "$ROOT/.venv/Scripts/python.exe" ]; then PYTHON_BIN="$ROOT/.venv/Scripts/python.exe"; else PYTHON_BIN="python3"; fi
+fi
+STACK_PROJECT="${TP_ACCEPTANCE_PROJECT:-}"
+EXPECT_DB="${TP_ACCEPTANCE_EXPECT_DB:-}"
+if [ -z "$STACK_PROJECT" ] || [ -z "$EXPECT_DB" ]; then
+  echo "FAIL  target identity: задайте TP_ACCEPTANCE_PROJECT и TP_ACCEPTANCE_EXPECT_DB (без fallback на рабочий стек)" >&2
+  exit 2
+fi
+IDENTITY_ARGS=(--project "$STACK_PROJECT" --expect-db "$EXPECT_DB" --compose-file "$COMPOSE_FILE")
+if [ -n "$ENV_FILE" ]; then IDENTITY_ARGS+=(--env-file "$ENV_FILE"); fi
+IDENTITY="$("$PYTHON_BIN" "$ROOT/scripts/target_identity.py" "${IDENTITY_ARGS[@]}")" || {
+  echo "FAIL  target identity: стенд $STACK_PROJECT не подтверждён; записи не выполнялись" >&2
+  exit 2
+}
+while IFS='=' read -r key value; do
+  case "$key" in
+    WEB) WEB="$value" ;;
+    IMPACT) IMPACT="$value" ;;
+    INTEL) INTEL="$value" ;;
+  esac
+done <<< "$IDENTITY"
+if [ -z "$WEB" ] || [ -z "$IMPACT" ] || [ -z "$INTEL" ]; then
+  echo "FAIL  target identity: не получены адреса стенда $STACK_PROJECT" >&2
+  exit 2
+fi
+export COMPOSE_PROJECT_NAME="$STACK_PROJECT"
+
 USER_NAME="${TP_EXPERT_USER:-expert}"
 read_env() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r'; }
-PASSWORD="${TP_EXPERT_PASSWORD:-$(read_env TP_EXPERT_PASSWORD)}"
-if [ -z "$PASSWORD" ]; then
-  PASSWORD="$("$ROOT/scripts/compose.sh" exec -T intelligence printenv TP_EXPERT_PASSWORD 2>/dev/null | tr -d '\r')"
+PASSWORD="${TP_EXPERT_PASSWORD:-}"
+if [ -z "$PASSWORD" ] && [ "${TP_ACCEPTANCE_DISPOSABLE:-0}" != "1" ]; then
+  PASSWORD="$(read_env TP_EXPERT_PASSWORD)"
+fi
+if [ -z "$PASSWORD" ] && [ "${TP_ACCEPTANCE_DISPOSABLE:-0}" != "1" ]; then
+  PASSWORD="$(dc exec -T intelligence printenv TP_EXPERT_PASSWORD 2>/dev/null | tr -d '\r')"
 fi
 if [ -z "$PASSWORD" ]; then
-  echo "FAIL  не найден TP_EXPERT_PASSWORD ни в .env, ни в окружении контейнера"
+  echo "FAIL  не найден TP_EXPERT_PASSWORD (для disposable-стенда пароль передаётся только окружением)"
   exit 1
 fi
 AUTH="$USER_NAME:$PASSWORD"
 
 jget() { # jget <python-выражение над d>; JSON читается со stdin
-  "$ROOT/scripts/compose.sh" exec -T intelligence python -c "import json,sys
+  dc exec -T intelligence python -c "import json,sys
 d=json.load(sys.stdin)
 print(eval(sys.argv[1]))" "$1"
 }
+INSTANCE_TOKEN="${TP_ACCEPTANCE_INSTANCE_TOKEN:-}"
+if [ -z "$INSTANCE_TOKEN" ]; then
+  echo "FAIL  target identity: задайте TP_ACCEPTANCE_INSTANCE_TOKEN (positive marker одноразовой БД)" >&2
+  exit 2
+fi
+for pair in "web:$WEB" "impact:$IMPACT" "intelligence:$INTEL"; do
+  name="${pair%%:*}"; base="${pair#*:}"
+  body="$(curl -s "$base/health")"
+  actual_db="$(printf '%s' "$body" | jget "d.get('instance',{}).get('database') or ''")"
+  marker_ok="$(printf '%s' "$body" | jget "bool(d.get('instance',{}).get('marker_ok'))")"
+  if [ "$actual_db" != "$EXPECT_DB" ] || [ "$marker_ok" != "True" ]; then
+    echo "FAIL  target identity: $name сообщает database=$actual_db marker_ok=$marker_ok, ожидалось $EXPECT_DB/True; записи не выполнялись" >&2
+    exit 2
+  fi
+done
 api() { # api <base> <method> <path> [json-body]
   if [ $# -ge 4 ]; then
     curl -s -u "$AUTH" -X "$2" -H 'Content-Type: application/json' -d "$4" "$1$3"
@@ -72,7 +128,7 @@ code_of() { curl -s -o /dev/null -w '%{http_code}' -u "$AUTH" "$1"; }
 PROJECT=""
 SCAN_ID=""
 journal_count() {
-  "$ROOT/scripts/compose.sh" exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -t -A -c "select count(*) from code_audit"' 2>/dev/null | tr -d '\r' || true
+  dc exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -t -A -c "select count(*) from code_audit"' 2>/dev/null | tr -d '\r' || true
 }
 cleanup() {
   local rc=$?
@@ -102,19 +158,19 @@ trap cleanup EXIT
 echo "=== 1. Стек ==="
 echo "ПРЕДУПРЕЖДЕНИЕ: не выполнять 'docker compose down -v' на стенде с данными — это уничтожает БД и evidence. Для чистого старта: отдельный проект (-p testpilot-ci) или CI-раннер."
 if [ "$BUILD" = "1" ]; then
-  if "$ROOT/scripts/compose.sh" up -d --build --wait >/tmp/tp_acceptance_up.log 2>&1; then
-    pass ""$ROOT/scripts/compose.sh" up -d --build --wait"
+  if dc up -d --build --wait >/tmp/tp_acceptance_up.log 2>&1; then
+    pass "dc up -d --build --wait"
   else
-    fail ""$ROOT/scripts/compose.sh" up -d --build --wait (см. /tmp/tp_acceptance_up.log)"
+    fail "dc up -d --build --wait (см. /tmp/tp_acceptance_up.log)"
     echo "ИТОГО: passed=$PASSED failed=$FAILED skipped=$SKIPPED"; exit 1
   fi
 else
-  skip ""$ROOT/scripts/compose.sh" up (--no-build)"
+  skip "dc up (--no-build)"
 fi
 HEALTH="$(api "$WEB" GET /health)"
 STATUS="$(printf '%s' "$HEALTH" | jget "d.get('status')" 2>/dev/null)"
 if [ "$STATUS" = "ok" ]; then pass "GET /health status=ok"; else fail "GET /health status=${STATUS:-нет ответа}"; fi
-REVISION="$("$ROOT/scripts/compose.sh" exec -T intelligence alembic current 2>/dev/null | tr -d '\r' | tail -1)"
+REVISION="$(dc exec -T intelligence alembic current 2>/dev/null | tr -d '\r' | tail -1)"
 # Не сверяем с конкретной ревизией: любая голова допустима, важно, что схема на актуальной миграции.
 case "$REVISION" in
   *"(head)"*) pass "alembic current: $REVISION" ;;
@@ -168,7 +224,7 @@ CODE='Процедура Тест()
 	Объект = Новый COMОбъект("Excel.Application");
 КонецПроцедуры
 '
-SCAN_BODY="$("$ROOT/scripts/compose.sh" exec -T -e TP_CODE="$CODE" intelligence python -c 'import json,os;print(json.dumps({"code":os.environ["TP_CODE"]}))')"
+SCAN_BODY="$(dc exec -T -e TP_CODE="$CODE" intelligence python -c 'import json,os;print(json.dumps({"code":os.environ["TP_CODE"]}))')"
 SCAN="$(api "$WEB" POST /api/v1/audit/scan "$SCAN_BODY")"
 SCAN_ID="$(printf '%s' "$SCAN" | jget "d.get('scan_id')" 2>/dev/null)"
 RULES="$(printf '%s' "$SCAN" | jget "sorted(i['rule_id'] for i in d.get('issues') or [])" 2>/dev/null)"
@@ -181,7 +237,7 @@ if [ "$MD_CODE" = "200" ] && [ "$MD_SIZE" -gt 0 ]; then pass "отчёт md: 200
 if [ "$CSV_CODE" = "200" ] && [ "$CSV_SIZE" -gt 0 ]; then pass "отчёт csv: 200, $CSV_SIZE байт"; else fail "отчёт csv: код $CSV_CODE, $CSV_SIZE байт"; fi
 
 echo "=== 5. ИИ: план и прогон ==="
-LLM_KEY="$("$ROOT/scripts/compose.sh" exec -T intelligence sh -c 'printf "%s" "${TP_LLM_API_KEY:-}"' 2>/dev/null | tr -d '\r')"
+LLM_KEY="$(dc exec -T intelligence sh -c 'printf "%s" "${TP_LLM_API_KEY:-}"' 2>/dev/null | tr -d '\r')"
 if [ "$INCLUDE_LLM" = "0" ] && [ "$INCLUDE_LIVE_1C" = "0" ]; then
   skip "генерация плана и прогон отключены: добавьте --llm (внешний провайдер) и/или --live-1c (прогон на 1С)"
 else
@@ -233,7 +289,7 @@ else
   if [ -n "${SUITE:-}" ]; then
   SUITE_ID="$(printf '%s' "$SUITE" | jget "d.get('suite_id') or ''" 2>/dev/null)"
   # jget использует eval(), а eval не принимает def/присваивания: скрипт передаём как -c (exec-режим).
-  INDEX="$(printf '%s' "$SUITE" | "$ROOT/scripts/compose.sh" exec -T intelligence python -c "$(cat <<'PY'
+  INDEX="$(printf '%s' "$SUITE" | dc exec -T intelligence python -c "$(cat <<'PY'
 import json, sys
 markers = ('записать','провести','создать','удалить','отменить проведение','пометить на удаление','скопировать','изменить')
 def clean(p):
@@ -262,7 +318,16 @@ PY
     if [ "$INCLUDE_LIVE_1C" = "0" ]; then
       skip "прогон на 1С отключён: добавьте --live-1c"
     else
-    RUN="$(api "$INTEL" POST "/api/v1/ai/suites/$SUITE_ID/run-1c")"
+    RUN_ACCEPTED="$(api "$INTEL" POST "/api/v1/ai/suites/$SUITE_ID/run-1c")"
+    RUN_STATE="queued"
+    for _ in $(seq 1 120); do
+      RUN_STATUS_JSON="$(api "$INTEL" GET "/api/v1/ai/suites/$SUITE_ID/status")"
+      RUN_STATE="$(printf '%s' "$RUN_STATUS_JSON" | jget "d.get('status')" 2>/dev/null)"
+      [ "$RUN_STATE" = "queued" ] || [ "$RUN_STATE" = "running" ] || break
+      sleep 2
+    done
+    if [ "$RUN_STATE" = "completed" ]; then pass "прогон: completed"; else fail "прогон: status=${RUN_STATE:-нет ответа}"; fi
+    RUN="$(api "$INTEL" GET "/api/v1/ai/suites/$SUITE_ID")"
     PASSED_N="$(printf '%s' "$RUN" | jget "(d.get('counts') or {}).get('passed', 0)" 2>/dev/null)"
     EVIDENCE="$(printf '%s' "$RUN" | jget "next((r.get('evidence_id') for r in d.get('results') or [] if r.get('evidence_id')), '')" 2>/dev/null)"
     if [ -n "${PASSED_N:-}" ]; then
@@ -301,7 +366,7 @@ export TP_UI_BASE_URL="${TP_UI_BASE_URL:-http://web:8000}"
 export TP_EXPERT_PASSWORD="${TP_EXPERT_PASSWORD:-TestPilotLocal123!}"
 # В приёмке интерфейс обязателен: недоступный UI — FAIL, а не SKIP.
 export TP_UI_REQUIRED=1
-UI_OUT="$("$ROOT/scripts/compose.sh" exec -T -e TP_UI_BASE_URL="$TP_UI_BASE_URL" -e TP_EXPERT_PASSWORD="$TP_EXPERT_PASSWORD" -e TP_UI_REQUIRED=1 intelligence python -m pytest tests/test_ui_smoke.py -q 2>&1)"
+UI_OUT="$(dc exec -T -e TP_UI_BASE_URL="$TP_UI_BASE_URL" -e TP_EXPERT_PASSWORD="$TP_EXPERT_PASSWORD" -e TP_UI_REQUIRED=1 intelligence python -m pytest tests/test_ui_smoke.py -q 2>&1)"
 UI_RC=$?
 UI_SKIPPED="$(printf '%s' "$UI_OUT" | grep -E '[0-9]+ skipped' | tail -1)"
 UI_SUMMARY="$(printf '%s' "$UI_OUT" | grep -E '[0-9]+ passed' | tail -1)"
@@ -315,7 +380,7 @@ else
   FAILED=$((FAILED+1))
   echo "FAIL  UI smoke: $(printf '%s' "$UI_OUT" | grep -E 'раздел #|AssertionError' | head -3 | tr '\n' ' ')"
 fi
-PYTEST_OUT="$("$ROOT/scripts/compose.sh" exec -T -e TP_UI_BASE_URL="$TP_UI_BASE_URL" -e TP_EXPERT_PASSWORD="$TP_EXPERT_PASSWORD" -e TP_UI_REQUIRED=1 intelligence python -m pytest tests/ -q 2>&1)"
+PYTEST_OUT="$(dc exec -T -e TP_UI_BASE_URL="$TP_UI_BASE_URL" -e TP_EXPERT_PASSWORD="$TP_EXPERT_PASSWORD" -e TP_UI_REQUIRED=1 intelligence python -m pytest tests/ -q 2>&1)"
 PYTEST_RC=$?
 PYTEST_SUMMARY="$(printf '%s' "$PYTEST_OUT" | grep -E '[0-9]+ passed' | tail -1)"
 if [ "$PYTEST_RC" = "0" ] && [ -n "$PYTEST_SUMMARY" ]; then pass "pytest: $PYTEST_SUMMARY"; else fail "pytest: код $PYTEST_RC, ${PYTEST_SUMMARY:-нет сводки}"; fi

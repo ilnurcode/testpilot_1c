@@ -360,3 +360,46 @@ def test_navigation_retries_same_address_after_chrome_error_race(monkeypatch):
     page = _FakePage(react)
     assert navigate(page, 'http://127.0.0.1:8098') == 'http://host.docker.internal:8098'
     assert page.visits == ['http://host.docker.internal:8098', 'http://host.docker.internal:8098']
+
+
+def test_negative_section_assertion_requires_live_workspace(monkeypatch):
+    """B3: отсутствие раздела на странице 401 — сбой прогона, а не подтверждённое «раздела нет»."""
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            denied = self.path.startswith('/deny')
+            body = ('<html><body><h1>Требуется авторизация</h1></body></html>' if denied else
+                    "<html><body><div id='funcPanel'>Начальная страница</div></body></html>")
+            self.send_response(401 if denied else 200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(body.encode('utf-8'))
+
+        def log_message(self, format, *args):
+            pass
+
+    srv = HTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr(probe, 'is_containerized', lambda: False)
+    monkeypatch.setattr(WebClientRunner, 'handle_login', lambda self, page: None)
+    monkeypatch.setenv('TP_ALLOW_LOCAL_TARGETS', '1')
+    base = f'http://127.0.0.1:{srv.server_address[1]}'
+    assertion = {'id': 'neg', 'scope': 'connectivity', 'check': 'web_section_visible',
+                 'engine': 'playwright', 'operator': 'exists', 'selector': {'section': 'Продажи'},
+                 'expected': {'type': 'boolean', 'value': False}, 'required': True}
+    try:
+        denied = WebClientRunner(Profile(odata_url=base + '/deny', web_url=base + '/deny'),
+                                 default_timeout=100)
+        error = denied.run_scenario('Страница 401', [], assertions=[assertion])
+        assert error.assertions['neg']['status'] == 'error'
+        assert 'рабочая область 1С не открыта' in error.assertions['neg']['error']
+
+        live = WebClientRunner(Profile(odata_url=base + '/workspace', web_url=base + '/workspace'),
+                               default_timeout=100)
+        confirmed = live.run_scenario('Живая рабочая область', [], assertions=[assertion])
+        assert confirmed.assertions['neg']['value'] is False
+        assert 'не подтверждён' in confirmed.assertions['neg']['error']
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        thread.join()

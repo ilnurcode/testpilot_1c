@@ -15,8 +15,10 @@ from fastapi.responses import Response
 from pydantic import Field,ValidationError
 from sqlalchemy import select,func,delete,update,and_,or_,Integer
 from sqlalchemy.orm import defer
+from testpilot import secrets
 from testpilot.common import analyst,expert,user,require,upload_body
-from testpilot.contracts import Model,Text,Configuration,ImpactPackage
+from testpilot.target_policy import TargetDenied, check_target
+from testpilot.contracts import Model,Text,Configuration,ImpactPackage,now,checksum
 from testpilot.db import (session,ProjectRow,UploadRow,UploadAnalysisRow,VersionRow,AnalysisRow,AffectedRow,audit,uid,
                           AISuiteRow,EvidenceRow,PackageRow,PlanRow,AuditRow,
                           TestRow,CoverageRow,PriorityRow,ResultRow,DefectRow,RunRow)
@@ -38,11 +40,137 @@ class AnalysisInput(Model):
     max_depth: int=Field(default=10,ge=0,le=100)
 
 
+def stored_password_state(s, p) -> dict:
+    """Наличие секрета без его выдачи: только булевы признаки (ORM-поля, без запросов)."""
+    encrypted = bool(p.auth_secret)
+    legacy = bool(p.auth_password)
+    return {'has_password': encrypted or legacy, 'encrypted': encrypted,
+            'legacy_plaintext': legacy and not encrypted}
+
+
+def load_connection_password(s, p) -> tuple[str | None, str | None]:
+    """(пароль, предупреждение). Legacy-текст не используется; без ключа — отказ."""
+    if p.auth_secret:
+        return secrets.open_sealed(
+            p.auth_secret,
+            context=secrets.project_secret_context(p.id),
+        ), None
+    if p.auth_password:
+        # Не fail-open: открытый текст не отдаётся для отправки даже с предупреждением.
+        raise secrets.SecretsError(
+            'Пароль подключения сохранён открытым текстом (legacy) и не используется. '
+            'Сделайте backup и выполните scripts\\secrets_key.py --migrate-legacy --confirmed, '
+            'либо повторно введите пароль владельцем.'
+        )
+    return None, None
+
+
+def canonical_principal(username: str | None) -> str | None:
+    """Нормализованный principal для идентичности цели: без учётных данных и регистра."""
+    if not username:
+        return None
+    import unicodedata
+    return unicodedata.normalize('NFC', username.strip())
+
+
+def connection_revision(s, p) -> str:
+    """Версия соединения: меняется при смене публикации, principal или секрета.
+
+    Секрет не хешируется и не раскрывается: берутся только схема и время обновления.
+    """
+    material = {
+        'odata_url': p.odata_url or None,
+        'web_url': p.web_url or None,
+        'principal': canonical_principal(p.auth_username),
+        'has_password': bool(p.auth_secret or p.auth_password),
+        'secret_scheme': p.auth_secret_scheme,
+        'secret_updated_at': p.auth_secret_updated_at,
+        'legacy_plaintext': bool(p.auth_password) and not p.auth_secret,
+    }
+    return checksum(material)[:16]
+
+
+def require_schema_head(s=Depends(session)):
+    """Понятный 503 при pending/ahead/недоступной БД до запросов к изменённым таблицам."""
+    from testpilot.schema_state import describe, schema_error_message
+    try:
+        state = describe(s.connection())
+    except Exception:
+        raise HTTPException(503, 'База данных недоступна: проверьте, что PostgreSQL запущен. Схема не проверена.')
+    if state['state'] != 'ok':
+        raise HTTPException(503, schema_error_message(state))
+    return state
+
+
+def connection_public_identity(s, p) -> dict:
+    """Публичная часть соединения для consent/approval: без секрета и password-hash."""
+    state = stored_password_state(s, p)
+    return {
+        'odata_url': p.odata_url or None,
+        'web_url': p.web_url or None,
+        'auth_username': canonical_principal(p.auth_username),
+        'has_password': bool(state['has_password']),
+        'connection_revision': connection_revision(s, p),
+    }
+
+
+def target_identity(s, p) -> str:
+    """Каноническая идентичность цели: публикация + principal + версия соединения.
+
+    Не включает project_id, секрет и его хеш: две записи с одинаковым подключением
+    дают одинаковую идентичность, а изменение настроек — новую.
+    """
+    public = connection_public_identity(s, p)
+    return checksum({
+        'publication': {'odata_url': public['odata_url'], 'web_url': public['web_url']},
+        'principal': public['auth_username'],
+        'connection_revision': public['connection_revision'],
+    })
+
+
+class RekeyRequired(RuntimeError):
+    """Сохранённый секрет не расшифровывается текущим протектором: нужна явная перезапись."""
+
+
+def store_connection_password(s, p, plaintext: str | None, *, clear: bool, rekey_confirm: bool = False) -> None:
+    """Записывает секрет только в зашифрованном виде; открытый текст не сохраняется.
+
+    Если у проекта уже есть auth_secret и он не расшифровывается текущим протектором,
+    замена запрещена без явного rekey_confirm: иначе чужой/потерянный ключ молча
+    уничтожил бы единственную копию пароля. Недоступный ключ остаётся 503 через seal().
+    """
+    if clear:
+        p.auth_secret = None
+        p.auth_secret_scheme = None
+        p.auth_secret_updated_at = None
+        p.auth_password = None
+        return
+    if p.auth_secret and not rekey_confirm and secrets.available():
+        try:
+            secrets.open_sealed(p.auth_secret, context=secrets.project_secret_context(p.id))
+        except secrets.SecretsError as error:
+            raise RekeyRequired(
+                'Сохранённый пароль подключения не расшифровывается текущим ключом секретов. '
+                'Перезапись без подтверждения запрещена: сделайте backup и повторите запрос '
+                'с rekey_confirm=true, чтобы заменить секрет осознанно.'
+            ) from error
+    envelope, scheme = secrets.seal(
+        plaintext or '',
+        context=secrets.project_secret_context(p.id),
+    )
+    p.auth_secret = envelope
+    p.auth_secret_scheme = scheme
+    p.auth_secret_updated_at = now()
+    # Legacy-поле не пишется; очистка старых значений — только явной проверенной миграцией.
+    p.auth_password = None
+
+
 class ConnectionInput(Model):
     odata_url: str|None=None
     web_url: str|None=None
     auth_username: str|None=None
     auth_password: str|None=None
+    rekey_confirm: bool=False
 
 def project_or_404(s,pid,lock=False):
     q=select(ProjectRow).where(ProjectRow.id==pid)
@@ -59,8 +187,12 @@ def upload_or_404(s,pid,upload_id):
 
 UPLOAD_FIELDS=('id','project_id','number','filename','kind','component','label','size_bytes','checksum','status','message','version_id','baseline_id','created_by','created_at','summary')
 RUN_COUNT_KEYS=('passed','failed','error','skipped')
-# Прогоном считается только выполненный план: draft ещё не запускался.
-EXECUTED_SUITE_STATUSES=('completed','error')
+# Терминальные статусы попытки прогона: отмена и прерывание — тоже выполненные попытки,
+# иначе последний прогон молча показывает более старый completed и скрывает отмену/сбой.
+# queued/running — активная попытка, а не терминальный прогон (отдельный active_run по
+# контракту с Interface; до согласования в last_run не подмешиваются).
+EXECUTED_SUITE_STATUSES=('completed','error','cancelled','interrupted')
+ACTIVE_SUITE_STATUSES=('queued','running')
 
 def upload_payload(values):
     payload={k:values[k] for k in UPLOAD_FIELDS}
@@ -78,19 +210,19 @@ def last_run_payload(suite_id,status,payload,created_at):
             'finished_at':(payload or {}).get('finished_at'),'created_at':created_at}
 
 
-def project_payload(p,*,upload_count,size_bytes,latest_upload,last_run=None,has_draft_plan=False):
-    return {'id':p.id,'name':p.name,'description':p.description,'configuration_id':p.configuration_id,'created_by':p.created_by,'created_at':p.created_at,'upload_count':upload_count,'size_bytes':int(size_bytes),'latest_upload':latest_upload,'last_run':last_run,'has_draft_plan':bool(has_draft_plan),'connection_settings':{'odata_url':p.odata_url,'web_url':p.web_url,'auth_username':p.auth_username,'has_password':bool(p.auth_password)}}
+def project_payload(p,*,upload_count,size_bytes,latest_upload,last_run=None,has_draft_plan=False,has_password=False):
+    return {'id':p.id,'name':p.name,'description':p.description,'configuration_id':p.configuration_id,'created_by':p.created_by,'created_at':p.created_at,'upload_count':upload_count,'size_bytes':int(size_bytes),'latest_upload':latest_upload,'last_run':last_run,'has_draft_plan':bool(has_draft_plan),'connection_settings':{'odata_url':p.odata_url,'web_url':p.web_url,'auth_username':p.auth_username,'has_password':bool(has_password)}}
 
 
 def project_has_draft(s,pid):
     return bool(s.scalar(select(func.count()).select_from(AISuiteRow).where(AISuiteRow.project_id==pid,AISuiteRow.status=='draft')))
 
 
-def project_dict(s,p,last_run=None):
+def project_dict(s,p,last_run=None,has_password=False):
     count,size=s.execute(select(func.count(UploadRow.id),func.coalesce(func.sum(UploadRow.size_bytes),0)).where(UploadRow.project_id==p.id)).one()
     last=s.scalar(metadata_query().where(UploadRow.project_id==p.id).order_by(UploadRow.number.desc()).limit(1))
     return project_payload(p,upload_count=count,size_bytes=int(size),latest_upload=upload_dict(last) if last else None,last_run=last_run,
-                           has_draft_plan=project_has_draft(s,p.id))
+                           has_draft_plan=project_has_draft(s,p.id),has_password=has_password)
 
 
 def project_last_run(s,pid):
@@ -239,8 +371,9 @@ def list_projects(q:str|None=None,only_with_issues:bool=False,limit:int=50,offse
     if conditions:stmt=stmt.where(*conditions)
     total=int(s.scalar(select(func.count()).select_from(stmt.with_only_columns(ProjectRow.id).subquery())) or 0)
     page=stmt.order_by(ProjectRow.created_at.desc(),ProjectRow.id.desc()).limit(limit).offset(offset)
+    rows=list(s.execute(page).all())
     projects=[]
-    for row in s.execute(page).all():
+    for row in rows:
         values=row._mapping
         project=values[ProjectRow]
         upload=None
@@ -250,7 +383,8 @@ def list_projects(q:str|None=None,only_with_issues:bool=False,limit:int=50,offse
                                         latest_upload=upload,
                                         last_run=last_run_payload(values['run_suite_id'],values['run_status'],
                                                                   values['run_payload'],values['run_created_at']),
-                                        has_draft_plan=bool(values['draft_count'])))
+                                        has_draft_plan=bool(values['draft_count']),
+                                        has_password=bool(project.auth_secret or project.auth_password)))
     return {'items':projects,'total':total,'limit':limit,'offset':offset}
 
 
@@ -259,7 +393,8 @@ def get_project(pid:str,actor=Depends(user),s=Depends(session,scope='function'))
     p=project_or_404(s,pid)
     uploads=list(s.scalars(metadata_query().where(UploadRow.project_id==pid).order_by(UploadRow.number.desc())))
     runs=list(s.scalars(select(UploadAnalysisRow).where(UploadAnalysisRow.project_id==pid).order_by(UploadAnalysisRow.created_at.desc())))
-    return {**project_dict(s,p,last_run=project_last_run(s,pid)),'uploads':[upload_dict(r) for r in uploads],
+    return {**project_dict(s,p,last_run=project_last_run(s,pid),
+                           has_password=bool(p.auth_secret or p.auth_password)),'uploads':[upload_dict(r) for r in uploads],
             'analyses':[{'analysis_id':r.analysis_id,'upload_id':r.upload_id,'baseline_id':r.baseline_id,'mode':r.mode,'created_at':r.created_at,'affected_count':len(s.get(AnalysisRow,r.analysis_id).package['affected_objects'])} for r in runs]}
 
 
@@ -342,24 +477,37 @@ async def analyze_upload(pid:str,upload_id:str,q:AnalysisInput,actor=Depends(ana
 
 
 @router.put('/{pid}/connection')
-def update_connection(pid:str,q:ConnectionInput,actor=Depends(analyst),s=Depends(session,scope='function')):
+def update_connection(pid:str,q:ConnectionInput,actor=Depends(analyst),s=Depends(session,scope='function'),_schema=Depends(require_schema_head)):
     p=project_or_404(s,pid,lock=True)
     if q.odata_url and q.odata_url.strip():
-        try:p.odata_url=validated_url(q.odata_url.strip())
+        try:
+            value=validated_url(q.odata_url.strip())
+            p.odata_url=check_target(value,purpose='odata_url')
+        except TargetDenied as e:raise HTTPException(422,f'odata_url отклонён до сохранения: {e}')
         except ValueError as e:raise HTTPException(422,f'Некорректный odata_url: {e}')
     else:p.odata_url=None
     if q.web_url and q.web_url.strip():
-        try:p.web_url=validated_url(q.web_url.strip())
+        try:
+            value=validated_url(q.web_url.strip())
+            p.web_url=check_target(value,purpose='web_url')
+        except TargetDenied as e:raise HTTPException(422,f'web_url отклонён до сохранения: {e}')
         except ValueError as e:raise HTTPException(422,f'Некорректный web_url: {e}')
     else:p.web_url=None
     p.auth_username=q.auth_username.strip() if q.auth_username and q.auth_username.strip() else None
     if q.auth_password is not None:
-        p.auth_password=q.auth_password if q.auth_password else None
+        try:
+            store_connection_password(s,p,q.auth_password,clear=bool(not q.auth_password),
+                                      rekey_confirm=bool(q.rekey_confirm))
+        except RekeyRequired as e:
+            raise HTTPException(409,str(e)) from e
+        except secrets.SecretsError as e:
+            raise HTTPException(503,f'Секрет подключения недоступен: {e}') from e
     if not p.auth_username:
-        p.auth_password=None
+        store_connection_password(s,p,None,clear=True)
     s.flush()
-    audit(s,'impact',actor,'update_connection',p.id,{'has_odata':bool(p.odata_url),'has_web':bool(p.web_url),'has_username':bool(p.auth_username)})
-    return {'ok':True,'connection_settings':{'odata_url':p.odata_url,'web_url':p.web_url,'auth_username':p.auth_username,'has_password':bool(p.auth_password)}}
+    state=stored_password_state(s,p)
+    audit(s,'impact',actor,'update_connection',p.id,{'has_odata':bool(p.odata_url),'has_web':bool(p.web_url),'has_username':bool(p.auth_username),'encrypted_secret':state['encrypted'],'rekey_confirmed':bool(q.rekey_confirm)})
+    return {'ok':True,'connection_settings':{'odata_url':p.odata_url,'web_url':p.web_url,'auth_username':p.auth_username,'has_password':state['has_password'],'password_encrypted':state['encrypted']}}
 
 
 def _resolve_probe_url(url: str | None) -> str | None:
@@ -371,24 +519,44 @@ def _resolve_probe_url(url: str | None) -> str | None:
     return url
 
 @router.post('/{pid}/connection/probe')
-async def probe_connection(pid:str,actor=Depends(analyst),s=Depends(session,scope='function')):
+async def probe_connection(pid:str,actor=Depends(analyst),s=Depends(session,scope='function'),_schema=Depends(require_schema_head)):
     p=project_or_404(s,pid)
-    odata_url=_resolve_probe_url(p.odata_url or os.environ.get('TP_1C_ODATA_URL'))
-    if not odata_url:
-        raise HTTPException(400,'URL публикации OData не настроен в проекте и не задан в TP_1C_ODATA_URL')
-    web_url=_resolve_probe_url(p.web_url or os.environ.get('TP_1C_WEB_URL') or None)
-    username=p.auth_username or os.environ.get('TP_1C_USERNAME') or None
-    password=(p.auth_password if p.auth_password is not None else os.environ.get('TP_1C_PASSWORD', '')) if username else None
-    authorization=os.environ.get('TP_1C_AUTHORIZATION') or None if not username else None
+    declared_odata=p.odata_url or None
+    declared_web=p.web_url or None
+    if not declared_odata and not declared_web:
+        raise HTTPException(422,'Задайте odata_url или web_url подключения проекта')
+    try:
+        if declared_odata:
+            check_target(validated_url(declared_odata),purpose='odata_url')
+        if declared_web:
+            check_target(validated_url(declared_web),purpose='web_url')
+    except TargetDenied as e:
+        raise HTTPException(422,f'Диагностика не выполнялась: {e}')
+    except ValueError as e:
+        raise HTTPException(422,f'Некорректный URL подключения: {e}')
+    odata_url=_resolve_probe_url(declared_odata)
+    web_url=_resolve_probe_url(declared_web)
+    username=p.auth_username or None
+    password=None
+    password_warnings=[]
+    if username:
+        try:
+            password, warning = load_connection_password(s,p)
+        except secrets.SecretsError as e:
+            raise HTTPException(503,f'Секрет подключения недоступен: {e}')
+        if warning: password_warnings.append(warning)
+    authorization=None
     ca_file=os.environ.get('TP_1C_CA_FILE') or None
     try:
         profile=Profile(odata_url=odata_url,web_url=web_url,username=username,password=password,authorization=authorization,ca_file=ca_file)
     except ValueError as e:
         raise HTTPException(422,f'Ошибка конфигурации подключения: {e}')
     try:
-        return await asyncio.to_thread(probe,profile)
+        result = await asyncio.to_thread(probe,profile)
+        result.setdefault('warnings',[]).extend(password_warnings)
+        return result
     except Exception as e:
-        return {'odata':{'status':'connection_error','message':str(e)},'web':{'status':'connection_error','message':str(e)},'code_changes_detected':False,'tests_executed':0,'warnings':[f'Ошибка диагностики: {e}']}
+        return {'odata':{'status':'connection_error','message':str(e)},'web':{'status':'connection_error','message':str(e)},'code_changes_detected':False,'tests_executed':0,'warnings':password_warnings+[f'Ошибка диагностики: {e}']}
 
 
 @router.get('/{pid}/connection/enable-odata-script')
